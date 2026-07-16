@@ -1,112 +1,396 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="auto">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HyGrow-IoT Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#ffffff">
+    <title>HyGrow - System Monitor</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <div id="sidebar">
-        <div class="brand">HyGrow IoT</div>
-        <button class="nav-btn active" data-target="page-dashboard">Dashboard</button>
-        <button class="nav-btn" data-target="page-tds">TDS Quality</button>
-        <button class="nav-btn" data-target="page-dht">Air Temp & Hum</button>
-        <button class="nav-btn" data-target="page-wtemp">Water Temp</button>
-        <button class="nav-btn" data-target="page-light">Light (BH1750)</button>
-        <button class="nav-btn" data-target="page-wl">Water Level ⚠️</button>
-        <button class="nav-btn" data-target="page-ph">pH Sensor ⚠️</button>
-        <button class="nav-btn" data-target="page-settings">Settings</button>
-        <button class="nav-btn" data-target="page-terminal">Terminal</button>
-    </div>
+    <!-- Mobile Navigation Header -->
+    <header id="mobile-header" class="mobile-header">
+        <button id="menu-toggle" class="menu-toggle" aria-label="Toggle navigation menu">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <h1 class="header-title">HyGrow</h1>
+        <button id="header-theme-toggle" class="header-theme-toggle" aria-label="Toggle theme">
+            <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="3" y2="12"></line>
+                <line x1="21" y1="12" x2="23" y2="12"></line>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+        </button>
+    </header>
 
-    <div id="content">
+    <!-- Sidebar Navigation -->
+    <aside id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+            <div class="brand-container">
+                <div class="brand-logo">H</div>
+                <div class="brand-text">
+                    <div class="brand-title">HyGrow</div>
+                    <div class="brand-subtitle">Monitor</div>
+                </div>
+            </div>
+            <button id="close-menu" class="close-menu" aria-label="Close menu">&times;</button>
+        </div>
+
+        <nav class="nav-menu">
+            <button class="nav-btn active" data-target="page-dashboard" aria-current="page">
+                <span class="nav-icon">▣</span>
+                <span class="nav-label">Dashboard</span>
+            </button>
+            <button class="nav-btn" data-target="page-tds">
+                <span class="nav-icon">◆</span>
+                <span class="nav-label">TDS Quality</span>
+            </button>
+            <button class="nav-btn" data-target="page-dht">
+                <span class="nav-icon">▲</span>
+                <span class="nav-label">Air Sensors</span>
+            </button>
+            <button class="nav-btn" data-target="page-wtemp">
+                <span class="nav-icon">◇</span>
+                <span class="nav-label">Water Temp</span>
+            </button>
+            <button class="nav-btn" data-target="page-light">
+                <span class="nav-icon">●</span>
+                <span class="nav-label">Light Level</span>
+            </button>
+            <button class="nav-btn" data-target="page-wl">
+                <span class="nav-icon">⊡</span>
+                <span class="nav-label">Water Level</span>
+            </button>
+            <button class="nav-btn" data-target="page-ph">
+                <span class="nav-icon">◉</span>
+                <span class="nav-label">pH Sensor</span>
+            </button>
+            <div class="nav-divider"></div>
+            <button class="nav-btn" data-target="page-settings">
+                <span class="nav-icon">⚙</span>
+                <span class="nav-label">Settings</span>
+            </button>
+            <button class="nav-btn" data-target="page-terminal">
+                <span class="nav-icon">›</span>
+                <span class="nav-label">Terminal</span>
+            </button>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="status-badge">
+                <span class="status-dot"></span>
+                <span class="status-text">Connected</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Overlay for Mobile Menu -->
+    <div id="menu-overlay" class="menu-overlay"></div>
+
+    <!-- Main Content Area -->
+    <main id="content" class="content">
         <div id="incomplete-banner" class="warning-banner">
-            ⚠️ WARNING: INCOMPLETE CODE FOR THIS SENSOR. DATA WILL NOT BE SENT TO FIREBASE.
+            <span class="warning-text">⚠ Incomplete sensor code - data will not sync to Firebase</span>
         </div>
 
+        <!-- Dashboard Page -->
         <div id="page-dashboard" class="page active">
-            <h1>System Overview</h1>
-            <div class="grid">
-                <div class="card"><h3>TDS Quality</h3><div class="value"><span id="dash-tds">--</span> ppm</div></div>
-                <div class="card"><h3>Air Temp</h3><div class="value"><span id="dash-temp">--</span> °C</div></div>
-                <div class="card"><h3>Humidity</h3><div class="value"><span id="dash-hum">--</span> %</div></div>
-                <div class="card"><h3>Water Temp</h3><div class="value"><span id="dash-wt">--</span> °C</div></div>
-                <div class="card"><h3>Light</h3><div class="value"><span id="dash-lux">--</span> lux</div></div>
+            <div class="page-header">
+                <h1>System Dashboard</h1>
+                <p class="page-subtitle">Real-time hydroponic monitoring</p>
+            </div>
+
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-top">
+                        <span class="metric-label">TDS Quality</span>
+                        <span class="metric-unit">ppm</span>
+                    </div>
+                    <div class="metric-value"><span id="dash-tds">--</span></div>
+                    <div class="metric-bar">
+                        <div class="metric-bar-fill" id="bar-tds" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-top">
+                        <span class="metric-label">Temperature</span>
+                        <span class="metric-unit">°C</span>
+                    </div>
+                    <div class="metric-value"><span id="dash-temp">--</span></div>
+                    <div class="metric-bar">
+                        <div class="metric-bar-fill" id="bar-temp" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-top">
+                        <span class="metric-label">Humidity</span>
+                        <span class="metric-unit">%</span>
+                    </div>
+                    <div class="metric-value"><span id="dash-hum">--</span></div>
+                    <div class="metric-bar">
+                        <div class="metric-bar-fill" id="bar-hum" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-top">
+                        <span class="metric-label">Water Temp</span>
+                        <span class="metric-unit">°C</span>
+                    </div>
+                    <div class="metric-value"><span id="dash-wt">--</span></div>
+                    <div class="metric-bar">
+                        <div class="metric-bar-fill" id="bar-wt" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-top">
+                        <span class="metric-label">Light Level</span>
+                        <span class="metric-unit">lux</span>
+                    </div>
+                    <div class="metric-value"><span id="dash-lux">--</span></div>
+                    <div class="metric-bar">
+                        <div class="metric-bar-fill" id="bar-lux" style="width: 0%"></div>
+                    </div>
+                </div>
             </div>
         </div>
 
+        <!-- TDS Quality Page -->
         <div id="page-tds" class="page">
-            <div class="card toggle-container">
-                <h2>TDS Quality (GPIO 2)</h2>
-                <label class="switch"><input type="checkbox" id="tog-2" onchange="toggleSensor(2, this.checked)"><span class="slider"></span></label>
+            <div class="page-header">
+                <h1>Water Conductivity</h1>
+                <p class="page-subtitle">TDS (Total Dissolved Solids) - GPIO 2</p>
             </div>
-            <div class="card">
-                <h3>Live Value: <span id="val-tds">--</span> ppm</h3>
+
+            <div class="control-card">
+                <div class="control-header">
+                    <h2>TDS Monitor</h2>
+                    <label class="switch">
+                        <input type="checkbox" id="tog-2" onchange="toggleSensor(2, this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="live-value-display">
+                    <div class="live-value"><span id="val-tds">--</span><span class="unit">ppm</span></div>
+                </div>
+            </div>
+
+            <div class="chart-card">
                 <canvas id="chart-tds"></canvas>
             </div>
         </div>
 
+        <!-- Air Temp & Humidity Page -->
         <div id="page-dht" class="page">
-            <div class="card toggle-container">
-                <h2>Air Temp & Humidity (GPIO 6)</h2>
-                <label class="switch"><input type="checkbox" id="tog-3" onchange="toggleSensor(3, this.checked)"><span class="slider"></span></label>
+            <div class="page-header">
+                <h1>Air Environment</h1>
+                <p class="page-subtitle">Temperature & Humidity - GPIO 6</p>
             </div>
-            <div class="card">
-                <h3>Live Temp: <span id="val-temp">--</span> °C | Live Hum: <span id="val-hum">--</span> %</h3>
+
+            <div class="control-card">
+                <div class="control-header">
+                    <h2>Air Sensors</h2>
+                    <label class="switch">
+                        <input type="checkbox" id="tog-3" onchange="toggleSensor(3, this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="dual-value-display">
+                    <div class="dual-value">
+                        <div class="value-item">
+                            <span class="value-label">Temperature</span>
+                            <span class="value-large"><span id="val-temp">--</span>°C</span>
+                        </div>
+                        <div class="value-divider"></div>
+                        <div class="value-item">
+                            <span class="value-label">Humidity</span>
+                            <span class="value-large"><span id="val-hum">--</span>%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chart-card">
                 <canvas id="chart-temp"></canvas>
             </div>
         </div>
 
+        <!-- Water Temp Page -->
         <div id="page-wtemp" class="page">
-            <div class="card toggle-container">
-                <h2>Water Temp - DS18B20 (GPIO 4)</h2>
-                <label class="switch"><input type="checkbox" id="tog-5" onchange="toggleSensor(5, this.checked)"><span class="slider"></span></label>
+            <div class="page-header">
+                <h1>Water Temperature</h1>
+                <p class="page-subtitle">DS18B20 Sensor - GPIO 4</p>
             </div>
-            <div class="card">
-                <h3>Live Value: <span id="val-wt">--</span> °C</h3>
+
+            <div class="control-card">
+                <div class="control-header">
+                    <h2>Water Temperature</h2>
+                    <label class="switch">
+                        <input type="checkbox" id="tog-5" onchange="toggleSensor(5, this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="live-value-display">
+                    <div class="live-value"><span id="val-wt">--</span><span class="unit">°C</span></div>
+                </div>
+            </div>
+
+            <div class="chart-card">
                 <canvas id="chart-wt"></canvas>
             </div>
         </div>
 
+        <!-- Light Page -->
         <div id="page-light" class="page">
-            <div class="card toggle-container">
-                <h2>Light - BH1750 (I2C)</h2>
-                <label class="switch"><input type="checkbox" id="tog-1" onchange="toggleSensor(1, this.checked)"><span class="slider"></span></label>
+            <div class="page-header">
+                <h1>Ambient Light</h1>
+                <p class="page-subtitle">BH1750 Sensor - I2C</p>
             </div>
-            <div class="card">
-                <h3>Live Value: <span id="val-lux">--</span> lux</h3>
+
+            <div class="control-card">
+                <div class="control-header">
+                    <h2>Light Level</h2>
+                    <label class="switch">
+                        <input type="checkbox" id="tog-1" onchange="toggleSensor(1, this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="live-value-display">
+                    <div class="live-value"><span id="val-lux">--</span><span class="unit">lux</span></div>
+                </div>
+            </div>
+
+            <div class="chart-card">
                 <canvas id="chart-lux"></canvas>
             </div>
         </div>
 
+        <!-- Water Level Page -->
         <div id="page-wl" class="page incomplete-page">
-            <div class="card toggle-container">
-                <h2>Water Level (GPIO 1)</h2>
-                <label class="switch"><input type="checkbox" id="tog-0" onchange="toggleSensor(0, this.checked)"><span class="slider"></span></label>
+            <div class="page-header">
+                <h1>Water Level</h1>
+                <p class="page-subtitle">Reservoir Level - GPIO 1</p>
+            </div>
+
+            <div class="control-card">
+                <div class="control-header">
+                    <h2>Water Level Sensor</h2>
+                    <label class="switch">
+                        <input type="checkbox" id="tog-0" onchange="toggleSensor(0, this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="placeholder-message">
+                    <p>Sensor implementation in progress</p>
+                </div>
             </div>
         </div>
 
+        <!-- pH Sensor Page -->
         <div id="page-ph" class="page incomplete-page">
-            <div class="card toggle-container">
-                <h2>pH Sensor (GPIO 20)</h2>
-                <label class="switch"><input type="checkbox" id="tog-4" onchange="toggleSensor(4, this.checked)"><span class="slider"></span></label>
+            <div class="page-header">
+                <h1>pH Level</h1>
+                <p class="page-subtitle">Lab-grade pH - GPIO 20</p>
+            </div>
+
+            <div class="control-card">
+                <div class="control-header">
+                    <h2>pH Sensor</h2>
+                    <label class="switch">
+                        <input type="checkbox" id="tog-4" onchange="toggleSensor(4, this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="placeholder-message">
+                    <p>Sensor implementation in progress</p>
+                </div>
             </div>
         </div>
 
+        <!-- Settings Page -->
         <div id="page-settings" class="page">
-            <h1>System Settings</h1>
-            <div class="card toggle-container">
-                <h2>Enable Demo Mode (Mock Data)</h2>
-                <label class="switch"><input type="checkbox" id="tog-demo" onchange="toggleDemo(this.checked)"><span class="slider"></span></label>
+            <div class="page-header">
+                <h1>Settings</h1>
+                <p class="page-subtitle">System configuration and preferences</p>
+            </div>
+
+            <div class="settings-grid">
+                <div class="settings-card">
+                    <div class="settings-header">
+                        <h2>Theme</h2>
+                        <p class="settings-description">Choose your preferred color scheme</p>
+                    </div>
+                    <div class="theme-selector">
+                        <button class="theme-option active" data-theme="auto" title="System Default">
+                            <span class="theme-name">Auto</span>
+                        </button>
+                        <button class="theme-option" data-theme="light" title="Light Mode">
+                            <span class="theme-name">Light</span>
+                        </button>
+                        <button class="theme-option" data-theme="dark" title="Dark Mode">
+                            <span class="theme-name">Dark</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <div class="settings-header">
+                        <h2>Demo Mode</h2>
+                        <p class="settings-description">Generate mock sensor data for testing</p>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="tog-demo" onchange="toggleDemo(this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div class="settings-card info-card">
+                    <h3>System Information</h3>
+                    <div class="info-row">
+                        <span class="info-label">Board</span>
+                        <span class="info-value">ESP32-S3</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Sensors Active</span>
+                        <span class="info-value">6</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Status</span>
+                        <span class="info-value connected">Connected</span>
+                    </div>
+                </div>
             </div>
         </div>
 
+        <!-- Terminal Page -->
         <div id="page-terminal" class="page">
-            <h1>System Logs</h1>
-            <div id="term-out"></div>
+            <div class="page-header">
+                <h1>System Console</h1>
+                <p class="page-subtitle">Real-time diagnostic messages and logs</p>
+            </div>
+
+            <div class="terminal-card">
+                <div class="terminal-header">
+                    <span class="terminal-title">Console Output</span>
+                    <button class="terminal-btn" id="clear-logs" title="Clear logs">Clear</button>
+                </div>
+                <div id="term-out" class="terminal-output"></div>
+            </div>
         </div>
-    </div>
+    </main>
 
     <script src="js/charts.js"></script>
     <script src="js/app.js"></script>
