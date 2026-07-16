@@ -1,0 +1,7 @@
+# Ignore the real secrets file
+secrets.h
+
+# Standard Arduino/ESP32 build artifacts
+build/
+*.bin
+*.elf

@@ -1,114 +1,130 @@
-# ESP32-S3 Modular Sensor → Firestore Pipeline
+# HyGrow-IoT: Advanced ESP32-S3 Dual-Core Sensor Pipeline
 
-A robust, modular IoT firmware for the ESP32-S3 that reads data from 6 different water/environmental sensors and transmits the data asynchronously to Firebase Firestore.
+![ESP32-S3](https://img.shields.io/badge/Platform-ESP32--S3-blue)
+![FreeRTOS](https://img.shields.io/badge/OS-FreeRTOS-orange)
+![Firebase](https://img.shields.io/badge/Database-Firestore-yellow)
+![Status](https://img.shields.io/badge/Status-Active-success)
 
-## Features
+A robust, professional-grade IoT firmware for the ESP32-S3. HyGrow-IoT reads real-time environmental and hydroponic data from 6 different sensors, processes it asynchronously, and transmits it to Firebase Firestore.
 
-- **6 Supported Sensors**: Water Level, Light (BH1750), TDS, Air Temp/Humidity (DHT22), pH, Water Temp (DS18B20).
-- **Asynchronous Firestore Uploads**: Uses the modern `FirebaseClient` library to upload data without blocking sensor reads.
-- **Built-in RGB Error Feedback**: Uses the ESP32-S3's onboard WS2812 NeoPixel to display specific color codes if a sensor disconnects or fails.
-- **Vapor Pressure Deficit (VPD)**: Automatically calculates VPD in kPa based on air temperature and relative humidity.
-- **Demo Mode**: A built-in mode to generate realistic mock data for testing your Firebase database without having physical sensors connected.
-- **Anti-Ground Looping Sequence**: Sensors are read sequentially with intentional delays to minimize electrical interference between analog probes submerged in the same water.
-- **Corrosion Resistance**: The analog water level sensor is only powered on during active reads to drastically reduce electrolytic corrosion on the copper traces.
+This project utilizes a **Dual-Core FreeRTOS Architecture** and a **LittleFS-hosted Web Application** to provide a 100% offline-capable diagnostic dashboard, dynamic state configuration, and zero-blocking hardware reads.
 
 ---
 
-## Hardware & Wiring
+## 🌟 Key Features
 
-### Supported Board
-- **ESP32-S3 N16R8** DevKit (or compatible ESP32-S3 boards)
+* **Dual-Core Processing (FreeRTOS):**
+  * **Core 0:** Handles WiFi, the LittleFS Web Server, WebSockets, and asynchronous Firebase uploads.
+  * **Core 1:** Exclusively dedicated to precise hardware timing, sensor reads, and VPD calculations without network-induced latency.
+* **Offline-Capable SPA Web Dashboard:** A beautiful, responsive, dark-mode Single Page Application hosted directly on the ESP32's flash memory. View real-time graphs, system logs, and toggle sensors dynamically.
+* **Dynamic NVS Configuration:** Toggle Demo Mode, turn individual sensors ON/OFF, and update WiFi credentials via the Web UI. Settings are saved to Non-Volatile Storage (NVS) and persist across reboots.
+* **Asynchronous Firestore Uploads:** Uses the modern `FirebaseClient` library to stream dynamic payloads to the cloud.
+* **Smart RGB Error Feedback:** Uses the ESP32-S3's onboard WS2812 NeoPixel to display system health and cycle through specific color codes for disconnected/failed hardware.
+* **Vapor Pressure Deficit (VPD):** Automatically calculates VPD (kPa) based on air temperature and relative humidity for precision greenhouse monitoring.
 
-### Pin Assignments
-*(Configurable in `config.h`)*
+---
 
-| Sensor | Protocol / Type | ESP32-S3 Pin | Notes |
+## 🛠 Hardware & Wiring
+
+**Supported Board:** ESP32-S3 N16R8 DevKit
+
+This project is optimized for modular sensor kits that include built-in resistors and signal conditioning (such as terminal adapters and pull-ups). This allows for **direct connection** to the ESP32-S3 without requiring additional breadboard circuitry.
+
+### Specific Sensor Hardware Used
+
+| Sensor Module & Purchase Link | Protocol | ESP32-S3 Pin | Notes |
 |---|---|---|---|
-| **Water Level** | Analog | GPIO 1 | Signal pin |
-| **Water Level Power** | Digital Out | GPIO 5 | Provides 3.3V only during active reading |
-| **BH1750 Light** | I2C (SDA) | GPIO 8 | |
-| **BH1750 Light** | I2C (SCL) | GPIO 9 | |
-| **TDS Sensor** | Analog | GPIO 2 | |
-| **DHT22** | Digital (1-Wire) | GPIO 6 | Temp & Humidity |
-| **pH Sensor** | Analog | GPIO 20 | **Warning**: ADC2 pin. May conflict with WiFi on older ESP-IDF cores. |
-| **DS18B20 Water Temp** | OneWire | GPIO 4 | **Requires a 4.7kΩ pull-up resistor** to 3.3V |
-| **RGB LED** | NeoPixel | GPIO 48 | Built-in to the DevKit board |
+| **[Water Level Sensor](https://amzn.in/d/0cKf4nuQ)** | Analog | GPIO 1 (Sig)<br>GPIO 5 (Pwr) | Powered dynamically via GPIO 5 to drastically reduce electrolytic corrosion on the copper traces. |
+| **[BH1750 Light Sensor](https://amzn.in/d/09NZHxCq)** | I2C | GPIO 8 (SDA)<br>GPIO 9 (SCL) | Digital ambient light detection. |
+| **[DFRobot Gravity Analog TDS](https://robocraze.com/products/dfrobot-gravity-analog-tds-water-quality-sensor-meter-for-arduino)** | Analog | GPIO 2 | Uses 30-sample median filtering in code for noise reduction. |
+| **[Hexonix DHT22 AM2302](https://amzn.in/d/07a1dbpF)** | Digital | GPIO 6 | Temperature & Humidity. Module includes built-in pull-up resistor. |
+| **[DFRobot Gravity Lab pH V2](https://robu.in/product/dfrobot-gravity-lab-grade-analog-ph-sensor-meter-kit-v2/)** | Analog | GPIO 20 | Lab-grade analog pH sensing. Native 3.3V support! *(Warning: ADC2 pin)* |
+| **[amiciSense DS18B20 Kit](https://amzn.in/d/0exQsfGD)** | OneWire | GPIO 4 | Waterproof temp probe. Kit includes the terminal adapter which houses the necessary 4.7kΩ pull-up resistor. |
+| **Built-in RGB LED** | NeoPixel | GPIO 48 | Onboard WS2812 used for system health visualization. |
 
-> **Power Supply Note:** All sensors share a common 3.3V and GND, except for the pH sensor which may require 5V depending on your specific module. Check your sensor's datasheet.
+> **⚡ Power Note:** Thanks to the V2 specifications of the DFRobot modules, **every single sensor in this project shares a unified 3.3V and GND rail**. No 5V logic-level shifting is required, allowing for incredibly clean and straightforward wiring directly to the ESP32-S3's 3.3V output!
 
 ---
 
-## Operating Modes
+## ⚙️ Arduino IDE Board Settings (ESP32-S3 N16R8)
 
-This firmware features two modes, toggled via `#define DEMO_MODE` in `config.h`.
+To successfully flash this firmware and utilize the Web UI on the N16R8 variant, configure your Arduino IDE **Tools** menu exactly as follows:
 
-### Real Mode (`DEMO_MODE 0`)
-- **Interval**: Data is sent to Firestore every **20 seconds**.
-- **Execution**: Physical sensors are initialized and read.
-- **Sequential Reading**: To reduce electrical interference (ground loops) between the TDS, pH, and Water Level sensors when submerged in the same liquid, the code enforces a `500ms` delay between analog reads. 
-
-> **Important Note on Ground Loops:** While a software delay helps mitigate instantaneous CPU and ADC noise, it does **not** electrically isolate the probes. If your pH and TDS readings fluctuate wildly when placed in the same water, you will need a hardware analog isolator (e.g., DFRobot Gravity Analog Signal Isolator) for true electrical isolation.
-
-### Demo Mode (`DEMO_MODE 1`)
-- **Interval**: Data is sent to Firestore every **2 seconds**.
-- **Execution**: Physical hardware reads are completely bypassed. The ESP32 generates realistic, slightly randomized mock data for all 6 sensors.
-- **Purpose**: Ideal for testing UI, database structure, and connectivity without needing to wire up the entire hardware array.
-
----
-
-## Vapor Pressure Deficit (VPD)
-
-The firmware automatically calculates the Vapor Pressure Deficit (VPD) in **kPa**. VPD is a crucial metric for greenhouse and indoor agriculture that measures the difference between the amount of moisture in the air and how much moisture the air can hold when it is saturated.
-
-The calculation uses the Tetens formula:
-1. `SVP = 0.61078 * exp((17.27 * T) / (T + 237.3))`
-2. `AVP = SVP * (RH / 100.0)`
-3. `VPD = SVP - AVP`
+* **Board:** ESP32S3 Dev Module
+* **USB CDC On Boot:** Enabled *(Required to see the Web UI IP address in Serial Monitor)*
+* **CPU Frequency:** 240MHz (WiFi)
+* **USB DFU On Boot:** Disabled
+* **Erase All Flash Before Sketch Upload:** Enabled *(Recommended for fresh installs)*
+* **Events Run On:** Core 0
+* **Flash Mode:** QIO 80MHz
+* **Flash Size:** 16MB (128Mb)
+* **JTAG Adapter:** Disabled
+* **Arduino Runs On:** Core 1
+* **USB Firmware MSC On Boot:** Disabled
+* **Partition Scheme:** Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)
+  *(💡 Pro-Tip: Because you have a 16MB board, you can safely upgrade this to "16M Flash (3MB APP/9.9MB FATFS)" to unlock massive storage for future Web UI updates).*
+* **PSRAM:** OPI PSRAM *(Crucial for the N16R8 board)*
+* **Upload Mode:** UART0 / Hardware CDC
+* **Upload Speed:** 921600
+* **USB Mode:** Hardware CDC and JTAG
 
 ---
 
-## LED Error Color Codes
+## 🚀 Setup & Installation
 
-The built-in NeoPixel LED gives immediate visual feedback on system health. If multiple sensors fail, the LED will cycle through their respective colors.
+### 1. Library Dependencies
+Open **Sketch > Include Library > Manage Libraries** and install the following libraries. The versions listed below are the exact versions tested and verified for this firmware:
 
-- 🔴 **Red**: Water Level failure
-- 🟡 **Yellow**: BH1750 Light failure
-- 🟣 **Purple**: TDS failure
-- 🟠 **Orange**: DHT22 failure
-- 🔵 **Blue**: pH Sensor failure
-- 🩵 **Cyan**: DS18B20 Water Temp failure
-- ⚪ **White (Blinking)**: Firebase / WiFi connection failure
-- 🟢 **Green (Solid)**: All systems operational
+**Core Frameworks & Networking:**
+* `FirebaseClient` by Mobizt (v2.2.13)
+* `ESP Async WebServer` by ESP32Async (v3.11.2)
+* `Async TCP` by ESP32Async (v3.4.10) - *Dependency for WebServer*
+* `ArduinoJson` by Benoit Blanchon (v7.4.3)
+
+**Hardware & Sensors:**
+* `Adafruit NeoPixel` by Adafruit (v1.15.5)
+* `BH1750` by Christopher Laws (v1.3.0)
+* `DHT sensor library` by Adafruit (v1.4.7)
+* `Adafruit Unified Sensor` by Adafruit (v1.1.15) - *Dependency for DHT*
+* `DallasTemperature` by Miles Burton (v4.0.6)
+* `OneWire` by Paul Stoffregen (v2.3.8) - *Dependency for DallasTemperature*
+
+### 2. Configure Credentials (Securely)
+This project uses a standard `.gitignore` approach to keep your credentials safe.
+1. Locate `secrets.h.example` in the root directory.
+2. Copy the file and rename the copy to `secrets.h`.
+3. Populate `secrets.h` with your WiFi and Firebase credentials.
+*(Note: `secrets.h` is ignored by Git, ensuring you never accidentally commit your passwords).*
+
+### 3. Flash the Firmware
+Click the standard **Upload** arrow in the Arduino IDE to compile and upload the C++ code to the ESP32.
+
+### 4. Upload the Web UI (LittleFS) - *CRITICAL STEP*
+The C++ code alone will not serve the web interface. You must upload the `data/` folder to the ESP32's flash memory.
+* **Arduino IDE v2.x:** Press `Ctrl+Shift+P` (or `Cmd+Shift+P`), type "Upload LittleFS to Pico/ESP8266/ESP32", and execute. *(Requires the [arduino-littlefs-upload](https://github.com/earlephilhower/arduino-littlefs-upload) extension).*
+* **PlatformIO:** Run the `Upload Filesystem Image` task.
 
 ---
 
-## Setup & Installation
+## 💻 The Web Diagnose Dashboard
 
-### 1. Configure Firebase
-1. Create a project in the [Firebase Console](https://console.firebase.google.com/).
-2. Navigate to **Firestore Database** and create a database (Start in Test Mode).
-3. Navigate to **Authentication**, enable the **Email/Password** provider, and add a test user.
-4. Get your **Web API Key** from Project Settings.
+Once booted, open the Arduino Serial Monitor (115200 baud). The ESP32 will output an IP address (e.g., `http://192.168.1.50`). Open this in your browser to access the SPA Dashboard.
 
-### 2. Configure the Code
-Open `config.h` and populate your credentials:
-```cpp
-#define WIFI_SSID              "YOUR_WIFI"
-#define WIFI_PASSWORD          "YOUR_PASSWORD"
-#define FIREBASE_API_KEY       "YOUR_API_KEY"
-#define FIREBASE_PROJECT_ID    "YOUR_PROJECT_ID"
-#define FIREBASE_USER_EMAIL    "test@example.com"
-#define FIREBASE_USER_PASSWORD "password123"
-```
+* **Real-Time Graphs:** View high-speed Canvas charts of your sensor data streamed via WebSockets.
+* **Hardware Toggles:** Turn physical sensors ON/OFF. The C++ backend instantly stops reading disabled sensors, and the Firebase payload dynamically shrinks to save bandwidth.
+* **Terminal:** View system logs, FreeRTOS cross-core events, and Firebase upload statuses entirely within the browser.
+* **Demo Mode:** Toggle Demo Mode via the settings page to generate realistic mock data (useful for testing UI/Database structures without water).
 
-### 3. Install Required Libraries
-In the Arduino IDE, open **Sketch > Include Library > Manage Libraries** and install:
-- `FirebaseClient` by Mobizt
-- `Adafruit NeoPixel` by Adafruit
-- `BH1750` by Christopher Laws
-- `DHT sensor library` by Adafruit (and `Adafruit Unified Sensor`)
-- `OneWire` by Paul Stoffregen
-- `DallasTemperature` by Miles Burton
+---
 
-### 4. Upload
-Select **ESP32S3 Dev Module** in the Arduino IDE. Ensure **USB CDC On Boot** is enabled so you can view the Serial Monitor logs at `115200` baud.
+## 🌈 LED Error Color Codes
+
+The onboard NeoPixel continuously monitors hardware health. If one or more sensors disconnect or fail, the LED cycles through specific diagnostic colors:
+
+* 🔴 **Red**: Water Level failure
+* 🟡 **Yellow**: BH1750 Light failure
+* 🟣 **Purple**: TDS failure
+* 🟠 **Orange**: DHT22 failure
+* 🔵 **Blue**: pH Sensor failure
+* 🩵 **Cyan**: DS18B20 Water Temp failure
+* 🟢 **Green / Blue / Red (Solid)**: System Healthy (Indicates Water/Air Temperature: Normal / Cold / Hot)
