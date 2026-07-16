@@ -111,7 +111,8 @@
             </div>
 
             <div class="metrics-grid">
-                <div class="metric-card">
+                <div class="metric-card" id="card-tds" data-sensor="2">
+                    <div class="metric-status" id="status-tds"></div>
                     <div class="metric-top">
                         <span class="metric-label">TDS Quality</span>
                         <span class="metric-unit">ppm</span>
@@ -120,9 +121,11 @@
                     <div class="metric-bar">
                         <div class="metric-bar-fill" id="bar-tds" style="width: 0%"></div>
                     </div>
+                    <button class="metric-toggle" id="toggle-tds" style="display: none;" onclick="toggleMetricSensor(2)">Turn ON</button>
                 </div>
 
-                <div class="metric-card">
+                <div class="metric-card" id="card-temp" data-sensor="3">
+                    <div class="metric-status" id="status-temp"></div>
                     <div class="metric-top">
                         <span class="metric-label">Temperature</span>
                         <span class="metric-unit">°C</span>
@@ -131,9 +134,11 @@
                     <div class="metric-bar">
                         <div class="metric-bar-fill" id="bar-temp" style="width: 0%"></div>
                     </div>
+                    <button class="metric-toggle" id="toggle-temp" style="display: none;" onclick="toggleMetricSensor(3)">Turn ON</button>
                 </div>
 
-                <div class="metric-card">
+                <div class="metric-card" id="card-hum" data-sensor="3">
+                    <div class="metric-status" id="status-hum"></div>
                     <div class="metric-top">
                         <span class="metric-label">Humidity</span>
                         <span class="metric-unit">%</span>
@@ -142,9 +147,11 @@
                     <div class="metric-bar">
                         <div class="metric-bar-fill" id="bar-hum" style="width: 0%"></div>
                     </div>
+                    <button class="metric-toggle" id="toggle-hum" style="display: none;" onclick="toggleMetricSensor(3)">Turn ON</button>
                 </div>
 
-                <div class="metric-card">
+                <div class="metric-card" id="card-wt" data-sensor="5">
+                    <div class="metric-status" id="status-wt"></div>
                     <div class="metric-top">
                         <span class="metric-label">Water Temp</span>
                         <span class="metric-unit">°C</span>
@@ -153,9 +160,11 @@
                     <div class="metric-bar">
                         <div class="metric-bar-fill" id="bar-wt" style="width: 0%"></div>
                     </div>
+                    <button class="metric-toggle" id="toggle-wt" style="display: none;" onclick="toggleMetricSensor(5)">Turn ON</button>
                 </div>
 
-                <div class="metric-card">
+                <div class="metric-card" id="card-light" data-sensor="1">
+                    <div class="metric-status" id="status-light"></div>
                     <div class="metric-top">
                         <span class="metric-label">Light Level</span>
                         <span class="metric-unit">lux</span>
@@ -164,6 +173,46 @@
                     <div class="metric-bar">
                         <div class="metric-bar-fill" id="bar-lux" style="width: 0%"></div>
                     </div>
+                    <button class="metric-toggle" id="toggle-light" style="display: none;" onclick="toggleMetricSensor(1)">Turn ON</button>
+                </div>
+
+                <div class="metric-card" id="card-wl" data-sensor="0">
+                    <div class="metric-status" id="status-wl"></div>
+                    <div class="metric-top">
+                        <span class="metric-label">Water Level</span>
+                        <span class="metric-unit">%</span>
+                    </div>
+                    <div class="metric-value"><span id="dash-wl">--</span></div>
+                    <div class="metric-bar">
+                        <div class="metric-bar-fill" id="bar-wl" style="width: 0%"></div>
+                    </div>
+                    <button class="metric-toggle" id="toggle-wl" style="display: none;" onclick="toggleMetricSensor(0)">Turn ON</button>
+                </div>
+
+                <div class="metric-card" id="card-ph" data-sensor="4">
+                    <div class="metric-status" id="status-ph"></div>
+                    <div class="metric-top">
+                        <span class="metric-label">pH Level</span>
+                        <span class="metric-unit">pH</span>
+                    </div>
+                    <div class="metric-value"><span id="dash-ph">--</span></div>
+                    <div class="metric-bar">
+                        <div class="metric-bar-fill" id="bar-ph" style="width: 0%"></div>
+                    </div>
+                    <button class="metric-toggle" id="toggle-ph" style="display: none;" onclick="toggleMetricSensor(4)">Turn ON</button>
+                </div>
+
+                <div class="metric-card" id="card-vpd" data-sensor="3">
+                    <div class="metric-status" id="status-vpd"></div>
+                    <div class="metric-top">
+                        <span class="metric-label">VPD</span>
+                        <span class="metric-unit">kPa</span>
+                    </div>
+                    <div class="metric-value"><span id="dash-vpd">--</span></div>
+                    <div class="metric-bar">
+                        <div class="metric-bar-fill" id="bar-vpd" style="width: 0%"></div>
+                    </div>
+                    <button class="metric-toggle" id="toggle-vpd" style="display: none;" onclick="toggleMetricSensor(3)">Turn ON</button>
                 </div>
             </div>
         </div>
@@ -357,15 +406,70 @@
                     </label>
                 </div>
 
+                <div class="settings-card">
+                    <div class="settings-header">
+                        <h2>WiFi Configuration</h2>
+                        <p class="settings-description">Connect to your network</p>
+                    </div>
+                    <form id="wifi-form" class="config-form">
+                        <div class="form-group">
+                            <label for="wifi-ssid">SSID</label>
+                            <input type="text" id="wifi-ssid" placeholder="Network name" maxlength="32">
+                        </div>
+                        <div class="form-group">
+                            <label for="wifi-password">Password</label>
+                            <input type="password" id="wifi-password" placeholder="Network password" maxlength="64">
+                        </div>
+                        <button type="button" class="config-btn" onclick="saveWiFiConfig()">Save WiFi</button>
+                    </form>
+                </div>
+
+                <div class="settings-card">
+                    <div class="settings-header">
+                        <h2>Firebase Configuration</h2>
+                        <p class="settings-description">Cloud data sync settings</p>
+                    </div>
+                    <form id="firebase-form" class="config-form">
+                        <div class="form-group">
+                            <label for="firebase-api-key">API Key</label>
+                            <input type="text" id="firebase-api-key" placeholder="Firebase API Key">
+                        </div>
+                        <div class="form-group">
+                            <label for="firebase-project">Project ID</label>
+                            <input type="text" id="firebase-project" placeholder="Project ID" maxlength="32">
+                        </div>
+                        <div class="form-group">
+                            <label for="firebase-collection">Collection</label>
+                            <input type="text" id="firebase-collection" placeholder="Collection name" maxlength="64">
+                        </div>
+                        <button type="button" class="config-btn" onclick="saveFirebaseConfig()">Save Firebase</button>
+                    </form>
+                </div>
+
+                <div class="settings-card">
+                    <div class="settings-header">
+                        <h2>Firmware Update</h2>
+                        <p class="settings-description">Update device firmware</p>
+                    </div>
+                    <div class="firmware-section">
+                        <div class="firmware-info">
+                            <p id="current-version">Current: v1.0.0</p>
+                            <p id="latest-version">Latest: Checking...</p>
+                        </div>
+                        <button class="config-btn" onclick="checkFirmwareUpdate()">Check Updates</button>
+                        <button class="config-btn secondary" id="update-btn" onclick="updateFirmware()" style="display: none;">Update Now</button>
+                    </div>
+                </div>
+
                 <div class="settings-card info-card">
                     <h3>System Information</h3>
                     <div class="info-row">
-                        <span class="info-label">Board</span>
-                        <span class="info-value">ESP32-S3</span>
+                        <span class="info-label">Device ID</span>
+                        <span class="info-value">ESP32S3_001</span>
                     </div>
                     <div class="info-row">
-                        <span class="info-label">Sensors Active</span>
-                        <span class="info-value">6</span>
+                        <span class="info-label">Board</span>
+                        <span class="info-value">ESP32-S3 N16R8</span>
                     </div>
                     <div class="info-row">
                         <span class="info-label">Status</span>

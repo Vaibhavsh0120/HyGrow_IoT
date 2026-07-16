@@ -25,49 +25,49 @@ html[data-theme="light"] {
     --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
 }
 
-/* Color System - Dark Theme */
+/* Color System - Dark Theme (Pure Black) */
 html[data-theme="dark"] {
-    --bg-primary: #0f172a;
-    --bg-secondary: #1a254a;
-    --bg-tertiary: #1e293b;
-    --surface: rgba(30, 41, 59, 0.6);
-    --surface-strong: rgba(30, 41, 59, 0.9);
-    --border-color: rgba(226, 232, 240, 0.12);
-    --text-primary: #f8fafc;
-    --text-secondary: #cbd5e1;
-    --text-muted: #94a3b8;
+    --bg-primary: #000000;
+    --bg-secondary: #050505;
+    --bg-tertiary: #0f0f0f;
+    --surface: rgba(15, 15, 15, 0.85);
+    --surface-strong: rgba(20, 20, 20, 0.95);
+    --border-color: rgba(255, 255, 255, 0.06);
+    --text-primary: #fafafa;
+    --text-secondary: #d4d4d8;
+    --text-muted: #989898;
     --accent: #3b82f6;
     --accent-hover: #2563eb;
-    --accent-light: rgba(59, 130, 246, 0.15);
+    --accent-light: rgba(59, 130, 246, 0.12);
     --status-ok: #10b981;
     --status-warn: #f59e0b;
     --status-error: #ef4444;
-    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.8);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.85);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.9);
 }
 
 /* Auto theme detection */
 @media (prefers-color-scheme: dark) {
     html[data-theme="auto"] {
-        --bg-primary: #0f172a;
-        --bg-secondary: #1a254a;
-        --bg-tertiary: #1e293b;
-        --surface: rgba(30, 41, 59, 0.6);
-        --surface-strong: rgba(30, 41, 59, 0.9);
-        --border-color: rgba(226, 232, 240, 0.12);
-        --text-primary: #f8fafc;
-        --text-secondary: #cbd5e1;
-        --text-muted: #94a3b8;
+        --bg-primary: #000000;
+        --bg-secondary: #050505;
+        --bg-tertiary: #0f0f0f;
+        --surface: rgba(15, 15, 15, 0.85);
+        --surface-strong: rgba(20, 20, 20, 0.95);
+        --border-color: rgba(255, 255, 255, 0.06);
+        --text-primary: #fafafa;
+        --text-secondary: #d4d4d8;
+        --text-muted: #989898;
         --accent: #3b82f6;
         --accent-hover: #2563eb;
-        --accent-light: rgba(59, 130, 246, 0.15);
+        --accent-light: rgba(59, 130, 246, 0.12);
         --status-ok: #10b981;
         --status-warn: #f59e0b;
         --status-error: #ef4444;
-        --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-        --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
-        --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+        --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.8);
+        --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.85);
+        --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.9);
     }
 }
 
@@ -401,17 +401,77 @@ body {
 
 .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
     gap: 16px;
 }
 
 .metric-card {
     background: var(--surface);
-    backdrop-filter: blur(8px);
     border: 1px solid var(--border-color);
-    border-radius: 16px;
+    border-radius: 12px;
     padding: 16px;
     transition: all 0.2s ease;
+    position: relative;
+}
+
+.metric-card:hover {
+    background: var(--surface-strong);
+    border-color: var(--accent-light);
+}
+
+.metric-status {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--status-ok);
+}
+
+.metric-status.off {
+    background: var(--status-error);
+}
+
+.metric-status.on {
+    background: var(--status-ok);
+}
+
+.metric-status.error {
+    background: var(--status-warn);
+    animation: pulse 1.5s infinite;
+}
+
+.metric-toggle.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.metric-toggle {
+    display: none;
+    width: 100%;
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.metric-toggle:hover {
+    background: var(--accent-hover);
+}
+
+.metric-toggle.show {
+    display: block;
 }
 
 .metric-card:hover {
@@ -565,7 +625,7 @@ canvas {
     display: block;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════════════��═══════════
    WARNING BANNER
    ═══════════════════════════════════════════════════════════════════════ */
 
@@ -861,13 +921,102 @@ canvas {
     opacity: 0.5;
 }
 
+/* Configuration Forms */
+.config-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.form-group label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.form-group input {
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    transition: border-color 0.2s;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--bg-secondary);
+}
+
+.config-btn {
+    padding: 10px 16px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+    font-size: 0.9rem;
+}
+
+.config-btn:hover {
+    background: var(--accent-hover);
+}
+
+.config-btn.secondary {
+    background: var(--status-ok);
+}
+
+.config-btn.secondary:hover {
+    background: #059669;
+}
+
+.firmware-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.firmware-info {
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+
+.firmware-info p {
+    margin: 4px 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    TABLET RESPONSIVE (1024px and below)
    ═══════════════════════════════════════════════════════════════════════ */
 
 @media (max-width: 1024px) {
     .metrics-grid {
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+    }
+
+    .metric-card {
+        padding: 14px;
+    }
+
+    .metric-value {
+        font-size: 1.5rem;
     }
 
     .sidebar {
@@ -875,7 +1024,15 @@ canvas {
     }
 
     .content {
-        padding: 24px;
+        padding: 20px;
+    }
+
+    .page-header h1 {
+        font-size: 1.75rem;
+    }
+
+    .settings-grid {
+        grid-template-columns: repeat(2, 1fr);
     }
 }
 
@@ -928,16 +1085,24 @@ canvas {
     }
 
     .metrics-grid {
-        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
     }
 
     .metric-card {
-        padding: 12px;
+        padding: 10px;
     }
 
     .metric-value {
-        font-size: 1.25rem;
+        font-size: 1.2rem;
+    }
+
+    .metric-label {
+        font-size: 0.7rem;
+    }
+
+    .metric-unit {
+        font-size: 0.65rem;
     }
 
     .chart-card {
@@ -996,23 +1161,48 @@ canvas {
 
     .metrics-grid {
         grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+
+    .metric-card {
+        padding: 8px;
     }
 
     .metric-label {
-        font-size: 0.7rem;
+        font-size: 0.65rem;
     }
 
     .metric-value {
-        font-size: 1.1rem;
+        font-size: 1rem;
+    }
+
+    .metric-unit {
+        font-size: 0.6rem;
     }
 
     .content {
         padding: 12px;
+        gap: 12px;
     }
 
-    .metric-top {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 4px;
+    .page-header h1 {
+        font-size: 1.1rem;
+    }
+
+    .page-subtitle {
+        font-size: 0.75rem;
+    }
+
+    .control-card {
+        padding: 12px;
+    }
+
+    .chart-card {
+        min-height: 250px;
+        padding: 10px;
+    }
+
+    canvas {
+        height: 200px;
     }
 }
