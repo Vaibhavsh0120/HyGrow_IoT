@@ -1,19 +1,39 @@
+#include "sensors.h"
+#include "../core/state.h"
 #include <OneWire.h>
 #include <DallasTemperature.h>
-#include "../../config.h"
 
-OneWire oneWire(PIN_DS18B20);
-DallasTemperature ds18b20(&oneWire);
+// Dynamically allocate objects so we can assign pins from NVS at runtime
+OneWire* oneWire = nullptr;
+DallasTemperature* waterTempSensor = nullptr;
 
-void init_wtemp() {
-    ds18b20.begin();
+void initWaterTemp() {
+    if (currentConfig.pin_wt >= 0) {
+        oneWire = new OneWire(currentConfig.pin_wt);
+        waterTempSensor = new DallasTemperature(oneWire);
+        waterTempSensor->begin();
+        webLog(1, "info", "DS18B20 initialized on pin " + String(currentConfig.pin_wt));
+    } else {
+        webLog(1, "warn", "DS18B20 sensor disabled (pin set to -1)");
+    }
 }
 
-bool read_wtemp(float &temp) {
-    ds18b20.requestTemperatures();
-    float t = ds18b20.getTempCByIndex(0);
-    if (t == DEVICE_DISCONNECTED_C) return false;
+float readWaterTemp() {
+    // 1. Guard check: return 0.0 immediately if the sensor pin is disabled
+    if (currentConfig.pin_wt < 0 || waterTempSensor == nullptr) {
+        return 0.0;
+    }
 
-    temp = t;
-    return true;
+    // 2. Request temperatures on the OneWire bus
+    waterTempSensor->requestTemperatures();
+    float tempC = waterTempSensor->getTempCByIndex(0);
+
+    // 3. Error Handling
+    if (tempC == DEVICE_DISCONNECTED_C) {
+        webLog(1, "error", "DS18B20 sensor disconnected or not found!");
+        // Returning 0.0 signals the backend/UI that the read failed
+        return 0.0;
+    }
+
+    return tempC;
 }
