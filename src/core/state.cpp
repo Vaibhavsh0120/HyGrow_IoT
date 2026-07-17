@@ -46,12 +46,13 @@ static void loadStr(const char *key, char *dst, size_t dstSize, const char *def)
 void state_init()
 {
   // LittleFS (web assets)
+  // NOTE: Do NOT auto-format on a failed mount here. Silently retrying with
+  // LittleFS.begin(true) used to mask a failed/empty mount by reporting
+  // littlefs_ok = true even though the web asset partition was just wiped.
+  // We now report the real mount result and let the halt gate in the .ino
+  // (setup()) catch a bad mount and stop, instead of continuing silently
+  // into a broken state.
   currentVitals.littlefs_ok = LittleFS.begin(false);
-  if (!currentVitals.littlefs_ok)
-  {
-    // try format-on-fail once
-    currentVitals.littlefs_ok = LittleFS.begin(true);
-  }
 
   // NVS
   prefs.begin(NVS_NS, false);

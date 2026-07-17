@@ -20,8 +20,12 @@ struct SensorData
 };
 
 // ── Initialization Functions ──
+// init_light() returns true only if a BH1750 actually ACKed on the I2C
+// bus, so the orchestrator can auto-disable it when nothing is wired up.
+// The others stay void: they have no reliable "is it there" probe at
+// init time (they already degrade gracefully per-read via errors[]).
 void init_wl();
-void init_light();
+bool init_light();
 void init_tds();
 void init_dht();
 void init_ph();

@@ -82,8 +82,12 @@ void initNetworkTask()
         webLog(0, LOG_INFO, "Wi-Fi Connected. IP: " + WiFi.localIP().toString());
     }
 
-    // 2. Web Server & File System Mount
-    if (!LittleFS.begin())
+    // 2. Web Server & File System
+    // NOTE: LittleFS is already mounted once in state_init() (see src/core/state.cpp),
+    // and a bad mount there now halts boot before this task ever runs. Calling
+    // LittleFS.begin() again here was redundant — it just re-returned true on an
+    // already-mounted filesystem. We reuse the vitals flag set by state_init() instead.
+    if (!currentVitals.littlefs_ok)
     {
         webLog(0, LOG_ERR, "LittleFS Mount Failed!");
     }
