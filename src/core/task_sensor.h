@@ -3,6 +3,10 @@
 
 #include <Arduino.h>
 
+// Compatibility helpers used by the main sketch task wrapper.
+void initSensorTask();
+void sensorTaskLoop();
+
 // Starts the FreeRTOS sensor task pinned to Core 1.
 // Reads every currentConfig.interval_read_ms, applies calibration,
 // updates currentSensors, and stamps last_ok_ms / last_err per sensor.

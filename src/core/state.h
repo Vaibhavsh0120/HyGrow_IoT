@@ -5,7 +5,8 @@
 #include "../../config.h"
 
 // ---------- Runtime config (mirrors NVS) ----------
-struct ConfigState {
+struct ConfigState
+{
   // WiFi
   char wifi_ssid[33];
   char wifi_pass[65];
@@ -20,9 +21,9 @@ struct ConfigState {
   char device_id[32];
 
   // Timing (ms)
-  uint32_t interval_read_ms;   // sensor sample period
-  uint32_t interval_ws_ms;     // websocket push period
-  uint32_t interval_fb_ms;     // firestore push period
+  uint32_t interval_read_ms; // sensor sample period
+  uint32_t interval_ws_ms;   // websocket push period
+  uint32_t interval_fb_ms;   // firestore push period
 
   // Calibration
   float ph_offset;
@@ -43,7 +44,8 @@ struct ConfigState {
 };
 
 // ---------- Live telemetry (latest read) ----------
-struct SensorState {
+struct SensorState
+{
   float temp_c;
   float humidity;
   float water_temp_c;
@@ -60,35 +62,45 @@ struct SensorState {
 };
 
 // ---------- Diagnostics ----------
-struct VitalsState {
-  int32_t  rssi;
+struct VitalsState
+{
+  int32_t rssi;
   uint32_t heap_free;
   uint32_t heap_min_free;
   uint32_t uptime_s;
-  bool     wifi_connected;
-  bool     ap_active;
-  char     ip[16];
-  char     ap_ip[16];
-  bool     firebase_ready;
-  bool     littlefs_ok;
+  bool wifi_connected;
+  bool ap_active;
+  char ip[16];
+  char ap_ip[16];
+  bool firebase_ready;
+  bool littlefs_ok;
 };
 
 // ---------- Globals (defined in state.cpp) ----------
-extern ConfigState  currentConfig;
-extern SensorState  currentSensors;
-extern VitalsState  currentVitals;
+extern ConfigState currentConfig;
+extern SensorState currentSensors;
+extern VitalsState currentVitals;
 
 // Reported by each sensor .cpp at compile time; assembled in sensors.cpp
 extern const bool sensor_impl[S_COUNT];
 
+// Sensor helper forward declarations expected by the task layer
+bool sensor_dht_read(float &temp_c, float &humidity_pct);
+bool sensor_ds18b20_read(float &temp_c);
+bool sensor_tds_read(float water_temp_c, float tds_k, float &tds_ppm);
+bool sensor_ph_read(float ph_offset, float ph_slope, float &ph_value);
+bool sensor_lux_read(float &lux);
+bool sensor_wl_read(float &percent);
+void sensors_init_all();
+
 // ---------- API ----------
-void state_init();                 // mount NVS, load config (defaults from config.h if unset)
-bool state_save();                 // persist currentConfig to NVS
-void state_factory_reset();        // wipe NVS + reboot
+void state_init();          // mount NVS, load config (defaults from config.h if unset)
+bool state_save();          // persist currentConfig to NVS
+void state_factory_reset(); // wipe NVS + reboot
 
 // Log helper — core is 0 (network) or 1 (sensor); level is LOG_INFO/WARN/ERR
-void webLog(uint8_t core, uint8_t level, const String& msg);
+void webLog(uint8_t core, uint8_t level, const String &msg);
 // Back-compat single-arg form (defaults core=0, level=LOG_INFO)
-void webLog(const String& msg);
+void webLog(const String &msg);
 
 #endif // STATE_H

@@ -6,9 +6,11 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Preferences.h>
+#include <WebServer.h>
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
+WebServer otaServer(81);
 
 unsigned long lastVitalsTime = 0;
 unsigned long lastDataTime = 0;
@@ -17,54 +19,65 @@ unsigned long lastDataTime = 0;
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 
-void initNetworkTask() {
+void initNetworkTask()
+{
     webLog(0, LOG_INFO, "Initializing Network Task...");
 
     // 1. Wi-Fi Setup with SoftAP Fallback
     WiFi.mode(WIFI_STA);
-    if (String(currentConfig.wifi_ssid).length() > 0) {
+    if (String(currentConfig.wifi_ssid).length() > 0)
+    {
         WiFi.begin(currentConfig.wifi_ssid, currentConfig.wifi_pass);
         webLog(0, LOG_INFO, "Connecting to Wi-Fi: " + String(currentConfig.wifi_ssid));
 
         unsigned long startAttempt = millis();
         // 15-second timeout for STA
-        while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
+        while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000)
+        {
             delay(500);
         }
     }
 
-    if (WiFi.status() != WL_CONNECTED) {
+    if (WiFi.status() != WL_CONNECTED)
+    {
         webLog(0, LOG_WARN, "STA connection failed. Starting SoftAP fallback.");
         WiFi.mode(WIFI_AP_STA); // Keep STA active in background to allow dynamic reconnects if possible
         WiFi.softAP("HyGrow-Setup", currentConfig.ap_pass);
         webLog(0, LOG_INFO, "SoftAP IP: " + WiFi.softAPIP().toString());
-    } else {
+    }
+    else
+    {
         webLog(0, LOG_INFO, "Wi-Fi Connected. IP: " + WiFi.localIP().toString());
     }
 
     // 2. Web Server & File System Mount
-    if (!LittleFS.begin()) {
+    if (!LittleFS.begin())
+    {
         webLog(0, LOG_ERR, "LittleFS Mount Failed!");
-    } else {
+    }
+    else
+    {
         server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
     }
 
     // 3. ElegantOTA Mount
-    ElegantOTA.begin(&server);
-    ElegantOTA.onStart([]() { webLog(0, LOG_INFO, "OTA Update Started"); });
-    ElegantOTA.onProgress([](size_t current, size_t final) {
+    otaServer.begin();
+    ElegantOTA.begin(&otaServer);
+    ElegantOTA.onStart([]()
+                       { webLog(0, LOG_INFO, "OTA Update Started"); });
+    ElegantOTA.onProgress([](size_t current, size_t final)
+                          {
         // Throttle logs to prevent WS flood, log every 10%
         static int lastPercent = 0;
         int percent = (current * 100) / final;
         if (percent - lastPercent >= 10) {
             webLog(0, LOG_INFO, "OTA Progress: " + String(percent) + "%");
             lastPercent = percent;
-        }
-    });
-    ElegantOTA.onEnd([](bool success) {
+        } });
+    ElegantOTA.onEnd([](bool success)
+                     {
         if(success) webLog(0, LOG_INFO, "OTA Update Complete. Rebooting...");
-        else webLog(0, LOG_ERR, "OTA Update Failed");
-    });
+        else webLog(0, LOG_ERR, "OTA Update Failed"); });
 
     // 4. WebSocket Mount
     ws.onEvent(onWsEvent);
@@ -75,27 +88,32 @@ void initNetworkTask() {
     webLog(0, LOG_INFO, "Web Server started on port 80");
 }
 
-void networkTaskLoop() {
+void networkTaskLoop()
+{
     ElegantOTA.loop();
     ws.cleanupClients();
 
     unsigned long currentMillis = millis();
 
     // 1-second cadence for Vitals
-    if (currentMillis - lastVitalsTime >= 1000) {
+    if (currentMillis - lastVitalsTime >= 1000)
+    {
         lastVitalsTime = currentMillis;
         broadcastVitals();
     }
 
     // Dynamic cadence for Data Push based on configuration
-    if (currentMillis - lastDataTime >= currentConfig.interval_ws_ms) {
+    if (currentMillis - lastDataTime >= currentConfig.interval_ws_ms)
+    {
         lastDataTime = currentMillis;
         broadcastData();
     }
 }
 
-void broadcastVitals() {
-    if (ws.count() == 0) return;
+void broadcastVitals()
+{
+    if (ws.count() == 0)
+        return;
 
     StaticJsonDocument<256> doc;
     doc["type"] = "vitals";
@@ -111,8 +129,10 @@ void broadcastVitals() {
     ws.textAll(payload);
 }
 
-void broadcastConfig() {
-    if (ws.count() == 0) return;
+void broadcastConfig()
+{
+    if (ws.count() == 0)
+        return;
 
     DynamicJsonDocument doc(1024);
     doc["type"] = "config";
@@ -142,8 +162,10 @@ void broadcastConfig() {
     ws.textAll(payload);
 }
 
-void broadcastData() {
-    if (ws.count() == 0) return;
+void broadcastData()
+{
+    if (ws.count() == 0)
+        return;
 
     StaticJsonDocument<512> doc;
     doc["type"] = "data";
@@ -164,41 +186,52 @@ void broadcastData() {
     ws.textAll(payload);
 }
 
-void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
-    if (type == WS_EVT_CONNECT) {
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len)
+{
+    if (type == WS_EVT_CONNECT)
+    {
         webLog(0, LOG_INFO, "WS Client Connected: " + String(client->id()));
         broadcastConfig(); // Sync UI immediately
-    } else if (type == WS_EVT_DISCONNECT) {
+    }
+    else if (type == WS_EVT_DISCONNECT)
+    {
         webLog(0, LOG_INFO, "WS Client Disconnected: " + String(client->id()));
-    } else if (type == WS_EVT_DATA) {
+    }
+    else if (type == WS_EVT_DATA)
+    {
         handleWebSocketMessage(arg, data, len);
     }
 }
 
-void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
-    AwsFrameInfo *info = (AwsFrameInfo*)arg;
-    if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
+void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
+{
+    AwsFrameInfo *info = (AwsFrameInfo *)arg;
+    if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT)
+    {
         data[len] = 0;
-        String msg = (char*)data;
+        String msg = (char *)data;
 
         StaticJsonDocument<512> doc;
         DeserializationError err = deserializeJson(doc, msg);
 
-        if (err) {
+        if (err)
+        {
             webLog(0, LOG_ERR, "WS Parse Error: " + String(err.c_str()));
             return;
         }
 
         String cmd = doc["command"].as<String>();
 
-        if (cmd == "save_wifi") {
+        if (cmd == "save_wifi")
+        {
             strlcpy(currentConfig.wifi_ssid, doc["ssid"] | "", sizeof(currentConfig.wifi_ssid));
             strlcpy(currentConfig.wifi_pass, doc["pass"] | "", sizeof(currentConfig.wifi_pass));
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "WiFi config saved. Reboot to apply.");
         }
-        else if (cmd == "save_firebase") {
+        else if (cmd == "save_firebase")
+        {
             strlcpy(currentConfig.fb_api_key, doc["api"] | "", sizeof(currentConfig.fb_api_key));
             strlcpy(currentConfig.fb_project, doc["proj"] | "", sizeof(currentConfig.fb_project));
             strlcpy(currentConfig.fb_email, doc["email"] | "", sizeof(currentConfig.fb_email));
@@ -208,7 +241,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
             broadcastConfig();
             webLog(0, LOG_INFO, "Firebase config updated.");
         }
-        else if (cmd == "save_pins") {
+        else if (cmd == "save_pins")
+        {
             currentConfig.pin_tds = doc["pin_tds"] | currentConfig.pin_tds;
             currentConfig.pin_dht = doc["pin_dht"] | currentConfig.pin_dht;
             currentConfig.pin_ph = doc["pin_ph"] | currentConfig.pin_ph;
@@ -220,29 +254,34 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
             broadcastConfig();
             webLog(0, LOG_INFO, "Pinout config saved. Reboot required.");
         }
-        else if (cmd == "calibrate_ph") {
+        else if (cmd == "calibrate_ph")
+        {
             currentConfig.ph_offset = doc["offset"] | currentConfig.ph_offset;
             currentConfig.ph_slope = doc["slope"] | currentConfig.ph_slope;
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "pH Calibration saved.");
         }
-        else if (cmd == "calibrate_tds") {
+        else if (cmd == "calibrate_tds")
+        {
             currentConfig.tds_k = doc["tds_k"] | currentConfig.tds_k;
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "TDS Calibration saved.");
         }
-        else if (cmd == "factory_reset") {
+        else if (cmd == "factory_reset")
+        {
             webLog(0, LOG_WARN, "Factory reset initiated. Wiping NVS...");
             state_factory_reset(); // This handles clear, end, and restart natively.
         }
-        else if (cmd == "reboot") {
+        else if (cmd == "reboot")
+        {
             webLog(0, LOG_WARN, "Manual reboot requested...");
             delay(1000);
             ESP.restart();
         }
-        else if (cmd == "request_vitals") {
+        else if (cmd == "request_vitals")
+        {
             broadcastVitals();
         }
     }

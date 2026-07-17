@@ -7,3 +7,9 @@
 
 void init_wl() { /* DO NOTHING */ }
 float read_wl() { return 0.0; }
+
+bool sensor_wl_read(float &percent)
+{
+    percent = read_wl();
+    return !isnan(percent);
+}
