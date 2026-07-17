@@ -1,92 +1,132 @@
-/*
- * ============================================================================
- * task_sensor.cpp — The Hardware & Timing Engine (Core 1)
- * ============================================================================
- */
-
 #include "task_sensor.h"
 #include "state.h"
 #include "../sensors/sensors.h"
-#include "../utils/led_status.h"
-#include <Arduino.h>
+#include <math.h>
 
-void sensor_task_loop(void *pvParameters) {
-    // 1. Initialize physical sensors
-    sensors_init();
+static TaskHandle_t s_sensorTask = nullptr;
+static volatile bool s_kick = false;
 
-    while(true) {
-        ConfigState localCfg;
-        SensorData  localData;
+// VPD (kPa) from temp (°C) and RH (%)
+static float computeVPD(float tC, float rh) {
+  if (isnan(tC) || isnan(rh)) return 0.0f;
+  float es = 0.6108f * expf((17.27f * tC) / (tC + 237.3f));
+  float ea = es * (rh / 100.0f);
+  float vpd = es - ea;
+  if (vpd < 0) vpd = 0;
+  return vpd;
+}
 
-        // 2. Safely copy the configuration state (so we know what is turned ON/OFF)
-        if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
-            localCfg = currentConfig;
-            xSemaphoreGive(stateMutex);
-        }
+static void markOk(SensorID id) {
+  currentSensors.last_ok_ms[id] = millis();
+  currentSensors.last_err[id][0] = '\0';
+}
 
-        // Initialize local errors to false
-        memset(localData.errors, 0, sizeof(localData.errors));
+static void markErr(SensorID id, const char* msg) {
+  strncpy(currentSensors.last_err[id], msg, sizeof(currentSensors.last_err[id]) - 1);
+  currentSensors.last_err[id][sizeof(currentSensors.last_err[id]) - 1] = '\0';
+}
 
-        // 3. Gather Data (Mock Data vs Real Hardware)
-        if (localCfg.demo_mode) {
-            // Generate realistic mock data for UI and Firebase testing
-            localData.wl_percent = random(40, 80) + (random(0, 100) / 100.0);
-            localData.light_lux  = random(500, 2000) + (random(0, 100) / 100.0);
-            localData.tds_ppm    = random(150, 300) + (random(0, 100) / 100.0);
-            localData.dht_temp   = random(22, 28) + (random(0, 100) / 100.0);
-            localData.dht_hum    = random(50, 70) + (random(0, 100) / 100.0);
-            localData.ph_val     = random(6, 8) + (random(0, 100) / 100.0);
-            localData.w_temp     = random(20, 26) + (random(0, 100) / 100.0);
-        } else {
-            // Read physical hardware (defined in src/sensors/sensors.cpp)
-            sensors_read_all(localData, localCfg);
-        }
-
-        // 4. Calculate VPD (Vapor Pressure Deficit) if DHT22 is active & healthy
-        if (localCfg.sensor_enabled[S_DHT] && !localData.errors[S_DHT]) {
-            float svp = 0.61078 * exp((17.27 * localData.dht_temp) / (localData.dht_temp + 237.3));
-            float avp = svp * (localData.dht_hum / 100.0);
-            localData.vpd_kpa = svp - avp;
-        } else {
-            localData.vpd_kpa = 0.0;
-        }
-
-        // 5. Advanced System-Level NeoPixel Logic
-        bool hasSystemErrors = false;
-        for (int i = 0; i < S_COUNT; i++) {
-            if (localCfg.sensor_enabled[i] && localData.errors[i]) {
-                hasSystemErrors = true;
-                break;
-            }
-        }
-
-        if (hasSystemErrors) {
-            // If any sensor is failing, cycle through their specific error colors (Red, Purple, etc.)
-            ledCycleErrors(localData.errors, localCfg.sensor_enabled);
-        } else {
-            // SYSTEM HEALTHY: Show Temperature Status (Cold/Normal/Hot)
-            if (localCfg.sensor_enabled[S_DHT] || localCfg.sensor_enabled[S_WTEMP]) {
-                float checkTemp = localCfg.sensor_enabled[S_WTEMP] ? localData.w_temp : localData.dht_temp;
-
-                if (checkTemp < 20.0) {
-                    ledSetSolid(0, 0, 255); // Blue = Cold
-                } else if (checkTemp > 35.0) {
-                    ledSetSolid(255, 0, 0); // Red = Hot
-                } else {
-                    ledSetSolid(0, 255, 0); // Green = Normal / Ideal
-                }
-            } else {
-                ledSetSolid(0, 255, 0); // Fallback Green
-            }
-        }
-
-        // 6. Safely push the fresh data to Global State for Core 0 to read
-        if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
-            currentData = localData;
-            xSemaphoreGive(stateMutex);
-        }
-
-        // 7. Wait exactly 2 seconds before reading again
-        vTaskDelay(pdMS_TO_TICKS(2000));
+static void readAll() {
+  // DHT (temp + humidity)
+  if (currentConfig.sensor_enabled[S_DHT] && sensor_impl[S_DHT]) {
+    float t = NAN, h = NAN;
+    if (sensor_dht_read(t, h)) {
+      currentSensors.temp_c   = t;
+      currentSensors.humidity = h;
+      currentSensors.vpd_kpa  = computeVPD(t, h);
+      markOk(S_DHT);
+    } else {
+      markErr(S_DHT, "read failed");
     }
+  }
+
+  // DS18B20 (water temp)
+  if (currentConfig.sensor_enabled[S_DS18B20] && sensor_impl[S_DS18B20]) {
+    float wt = NAN;
+    if (sensor_ds18b20_read(wt)) {
+      currentSensors.water_temp_c = wt;
+      markOk(S_DS18B20);
+    } else {
+      markErr(S_DS18B20, "read failed");
+    }
+  }
+
+  // TDS (needs water temp for compensation)
+  if (currentConfig.sensor_enabled[S_TDS] && sensor_impl[S_TDS]) {
+    float ppm = NAN;
+    if (sensor_tds_read(currentSensors.water_temp_c, currentConfig.tds_k, ppm)) {
+      currentSensors.tds_ppm = ppm;
+      markOk(S_TDS);
+    } else {
+      markErr(S_TDS, "read failed");
+    }
+  }
+
+  // pH
+  if (currentConfig.sensor_enabled[S_PH] && sensor_impl[S_PH]) {
+    float ph = NAN;
+    if (sensor_ph_read(currentConfig.ph_offset, currentConfig.ph_slope, ph)) {
+      currentSensors.ph_val = ph;
+      markOk(S_PH);
+    } else {
+      markErr(S_PH, "read failed");
+    }
+  }
+
+  // Lux
+  if (currentConfig.sensor_enabled[S_LUX] && sensor_impl[S_LUX]) {
+    float lx = NAN;
+    if (sensor_lux_read(lx)) {
+      currentSensors.lux = lx;
+      markOk(S_LUX);
+    } else {
+      markErr(S_LUX, "read failed");
+    }
+  }
+
+  // Water level
+  if (currentConfig.sensor_enabled[S_WL] && sensor_impl[S_WL]) {
+    float pct = NAN;
+    if (sensor_wl_read(pct)) {
+      currentSensors.wl_percent = pct;
+      markOk(S_WL);
+    } else {
+      markErr(S_WL, "read failed");
+    }
+  }
+}
+
+static void sensorTaskFn(void*) {
+  webLog(1, LOG_INFO, "Sensor task started on core " + String(xPortGetCoreID()));
+
+  // Initialize implemented sensors once
+  sensors_init_all();
+
+  uint32_t lastRead = 0;
+  for (;;) {
+    uint32_t now = millis();
+    if (s_kick || (now - lastRead) >= currentConfig.interval_read_ms) {
+      s_kick = false;
+      lastRead = now;
+      readAll();
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+void sensor_task_start() {
+  if (s_sensorTask) return;
+  xTaskCreatePinnedToCore(
+    sensorTaskFn,
+    "sensorTask",
+    8192,
+    nullptr,
+    1,               // priority
+    &s_sensorTask,
+    1                // Core 1
+  );
+}
+
+void sensor_task_kick() {
+  s_kick = true;
 }

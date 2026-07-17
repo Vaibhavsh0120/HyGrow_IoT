@@ -1,49 +1,94 @@
-/*
- * ============================================================================
- * state.h — Global State & IPC (Inter-Process Communication)
- * ============================================================================
- */
+#ifndef STATE_H
+#define STATE_H
 
-#pragma once
 #include <Arduino.h>
-#include <Preferences.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
 #include "../../config.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  System Configuration (Saved to NVS)
-// ─────────────────────────────────────────────────────────────────────────────
+// ---------- Runtime config (mirrors NVS) ----------
 struct ConfigState {
-    char wifi_ssid[32];
-    char wifi_password[64];
-    bool demo_mode;
-    bool sensor_enabled[S_COUNT];
+  // WiFi
+  char wifi_ssid[33];
+  char wifi_pass[65];
+  char ap_pass[65];
+
+  // Firebase
+  char fb_api_key[128];
+  char fb_project[64];
+  char fb_email[64];
+  char fb_pass[64];
+  char fb_collection[32];
+  char device_id[32];
+
+  // Timing (ms)
+  uint32_t interval_read_ms;   // sensor sample period
+  uint32_t interval_ws_ms;     // websocket push period
+  uint32_t interval_fb_ms;     // firestore push period
+
+  // Calibration
+  float ph_offset;
+  float ph_slope;
+  float tds_k;
+
+  // Pins (reboot required to apply)
+  uint8_t pin_dht;
+  uint8_t pin_ds18b20;
+  uint8_t pin_tds;
+  uint8_t pin_ph;
+  uint8_t pin_lux_sda;
+  uint8_t pin_lux_scl;
+  uint8_t pin_wl;
+
+  // Feature flags — user toggles per sensor
+  bool sensor_enabled[S_COUNT];
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Live Sensor Data (Updated by Core 1, Read by Core 0)
-// ─────────────────────────────────────────────────────────────────────────────
-struct SensorData {
-    float wl_percent;           // Water Level (0-100%)
-    float light_lux;            // BH1750 (Lux)
-    float tds_ppm;              // TDS (ppm)
-    float dht_temp;             // DHT22 Air Temp (°C)
-    float dht_hum;              // DHT22 Humidity (%)
-    float vpd_kpa;              // Vapor Pressure Deficit (kPa)
-    float ph_val;               // pH (0-14)
-    float w_temp;               // DS18B20 Water Temp (°C)
-    bool  errors[S_COUNT];      // True if sensor is disconnected/failed
+// ---------- Live telemetry (latest read) ----------
+struct SensorState {
+  float temp_c;
+  float humidity;
+  float water_temp_c;
+  float tds_ppm;
+  float lux;
+  float ph_val;
+  float wl_percent;
+  float vpd_kpa;
+
+  // Per-sensor last-good timestamp (millis); 0 = never
+  uint32_t last_ok_ms[S_COUNT];
+  // Per-sensor last error string ("" = ok)
+  char last_err[S_COUNT][48];
 };
 
-// Global Instances (Protected by stateMutex)
-extern ConfigState currentConfig;
-extern SensorData  currentData;
-extern SemaphoreHandle_t stateMutex;
+// ---------- Diagnostics ----------
+struct VitalsState {
+  int32_t  rssi;
+  uint32_t heap_free;
+  uint32_t heap_min_free;
+  uint32_t uptime_s;
+  bool     wifi_connected;
+  bool     ap_active;
+  char     ip[16];
+  char     ap_ip[16];
+  bool     firebase_ready;
+  bool     littlefs_ok;
+};
 
-// Core Functions
-void state_init();
-void state_save();
+// ---------- Globals (defined in state.cpp) ----------
+extern ConfigState  currentConfig;
+extern SensorState  currentSensors;
+extern VitalsState  currentVitals;
 
-// Cross-core logging function (Sends logs to Web UI Terminal)
-void webLog(const char* format, ...);
+// Reported by each sensor .cpp at compile time; assembled in sensors.cpp
+extern const bool sensor_impl[S_COUNT];
+
+// ---------- API ----------
+void state_init();                 // mount NVS, load config (defaults from config.h if unset)
+bool state_save();                 // persist currentConfig to NVS
+void state_factory_reset();        // wipe NVS + reboot
+
+// Log helper — core is 0 (network) or 1 (sensor); level is LOG_INFO/WARN/ERR
+void webLog(uint8_t core, uint8_t level, const String& msg);
+// Back-compat single-arg form (defaults core=0, level=LOG_INFO)
+void webLog(const String& msg);
+
+#endif // STATE_H
