@@ -128,7 +128,7 @@ void networkTaskLoop()
 void configureOtaRoutes()
 {
     server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request)
-              { request->send_P(200, "text/html", OTA_PAGE); });
+              { request->send(200, "text/html", OTA_PAGE); });
 
     server.on("/ota/upload", HTTP_POST, [](AsyncWebServerRequest *request)
               {

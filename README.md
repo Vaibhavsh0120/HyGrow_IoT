@@ -1,13 +1,11 @@
-# HyGrow-IoT: Advanced ESP32-S3 Dual-Core Sensor Pipeline
+# HyGrow-IoT: ESP32-S3 Hydroponics Monitor
 
 ![ESP32-S3](https://img.shields.io/badge/Platform-ESP32--S3-blue)
 ![FreeRTOS](https://img.shields.io/badge/OS-FreeRTOS-orange)
 ![Firebase](https://img.shields.io/badge/Database-Firestore-yellow)
 ![Status](https://img.shields.io/badge/Status-Active-success)
 
-A robust, professional-grade IoT firmware for the ESP32-S3. HyGrow-IoT reads real-time environmental and hydroponic data from 6 different sensors, processes it asynchronously, and transmits it to Firebase Firestore.
-
-This project uses a **Dual-Core FreeRTOS Architecture** and a **LittleFS-hosted Web Application** to provide a 100% offline-capable diagnostic dashboard, dynamic state configuration, and zero-blocking hardware reads.
+A compact ESP32-S3 firmware for monitoring hydroponic and environmental data from six sensors. It serves a local dashboard from LittleFS, supports native OTA updates, and can be built with either Arduino IDE, Arduino CLI, or PlatformIO.
 
 ---
 
@@ -34,14 +32,14 @@ This project is optimized for modular sensor kits that include built-in resistor
 ### Specific Sensor Hardware Used
 
 | Sensor Module & Purchase Link                                                                                                      | Protocol | ESP32-S3 Pin (Default)\*      | Notes                                                              |
-| ---------------------------------------------------------------------------------------------------------------------------------- | -------- | ----------------------------- | ------------------------------------------------------------------ |
-| **[Water Level Sensor](https://amzn.in/d/0cKf4nuQ)**                                                                               | Analog   | GPIO 1 (Sig) / GPIO 5 (Pwr)   | Powered dynamically to drastically reduce electrolytic corrosion.  |
-| **[BH1750 Light Sensor](https://amzn.in/d/09NZHxCq)**                                                                              | I2C      | GPIO 21 (SDA) / GPIO 22 (SCL) | Digital ambient light detection.                                   |
-| **[DFRobot Gravity Analog TDS](https://robocraze.com/products/dfrobot-gravity-analog-tds-water-quality-sensor-meter-for-arduino)** | Analog   | GPIO 14                       | Uses median filtering in code for noise reduction.                 |
-| **[Hexonix DHT22 AM2302](https://amzn.in/d/07a1dbpF)**                                                                             | Digital  | GPIO 4                        | Temperature & Humidity. Module includes built-in pull-up resistor. |
-| **[DFRobot Gravity Lab pH V2](https://robu.in/product/dfrobot-gravity-lab-grade-analog-ph-sensor-meter-kit-v2/)**                  | Analog   | GPIO 32                       | Lab-grade analog pH sensing. Native 3.3V support!                  |
-| **[amiciSense DS18B20 Kit](https://amzn.in/d/0exQsfGD)**                                                                           | OneWire  | GPIO 15                       | Waterproof temp probe. Kit includes the terminal adapter.          |
-| **Built-in RGB LED**                                                                                                               | NeoPixel | GPIO 48                       | Onboard WS2812 used for system health visualization.               |
+| ---------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------ | ------------------------------------------------------------------ |
+| **[Water Level Sensor](https://amzn.in/d/0cKf4nuQ)**                                                                               | Analog   | GPIO 1 (Sig) / GPIO 5 (Pwr)    | Powered dynamically to drastically reduce electrolytic corrosion. |
+| **[BH1750 Light Sensor](https://amzn.in/d/09NZHxCq)**                                                                              | I2C      | GPIO 21 (SDA) / GPIO 22 (SCL)  | Digital ambient light detection.                                   |
+| **[DFRobot Gravity Analog TDS](https://robocraze.com/products/dfrobot-gravity-analog-tds-water-quality-sensor-meter-for-arduino)** | Analog   | GPIO 14                        | Uses median filtering in code for noise reduction.                 |
+| **[Hexonix DHT22 AM2302](https://amzn.in/d/07a1dbpF)**                                                                             | Digital  | GPIO 4                         | Temperature & Humidity. Module includes built-in pull-up resistor.|
+| **[DFRobot Gravity Lab pH V2](https://robu.in/product/dfrobot-gravity-lab-grade-analog-ph-sensor-meter-kit-v2/)**                  | Analog   | GPIO 32                        | Lab-grade analog pH sensing. Native 3.3V support!                  |
+| **[amiciSense DS18B20 Kit](https://amzn.in/d/0exQsfGD)**                                                                           | OneWire  | GPIO 15                        | Waterproof temp probe. Kit includes the terminal adapter.          |
+| **Built-in RGB LED**                                                                                                               | NeoPixel | GPIO 48                        | Onboard WS2812 used for system health visualization.               |
 
 _\*Note: GPIO pins can now be dynamically reassigned in the Web UI Settings tab._
 
@@ -67,8 +65,9 @@ To successfully flash this firmware, configure your Arduino IDE **Tools** menu e
 The PlatformIO environment in [platformio.ini](platformio.ini) is configured to match the same board profile:
 
 - `src_dir = .` so PlatformIO builds the root Arduino sketch [HyGrow_IoT.ino](HyGrow_IoT.ino)
+- `default_envs = esp32-s3-n16r8`
 - `board = esp32-s3-devkitc-1`
-- `build_flags` enable USB CDC on boot and suppress PlatformIO warnings
+- `build_flags` enable USB CDC on boot
 - `board_build.flash_mode = qio`
 - `board_build.f_cpu = 240000000L`
 - `board_upload.flash_size = 16MB`
@@ -78,39 +77,80 @@ If you want an Arduino IDE build to match exactly, keep the board profile and th
 
 ---
 
-## 🚀 Setup & Installation
+## 🚀 Quick Start
 
-### 1. Library Dependencies
+### 1. Pick a build path
 
-Install the following libraries via the Arduino Library Manager:
+- **Arduino IDE:** open [HyGrow_IoT.ino](HyGrow_IoT.ino) and build with the board settings below.
+- **Arduino CLI:** install `arduino-cli`, then compile the sketch with the same ESP32-S3 options shown below.
+- **PlatformIO:** open the folder in VS Code and use the single environment named `esp32-s3-n16r8`.
 
-- `FirebaseClient` by Mobizt (v2.2.13)
-- `ESP Async WebServer` by ESP32Async (v3.11.2)
-- `Async TCP` by ESP32Async
-- `ArduinoJson` by Benoit Blanchon (v7.4.3)
-- `Adafruit NeoPixel` by Adafruit
-- `BH1750` by Christopher Laws
-- `DHT sensor library` by Adafruit
-- `DallasTemperature` by Miles Burton
+### 2. Install Arduino libraries
 
-### 2. Configure Fallback Credentials
+If you are using the Arduino IDE or Arduino CLI, install these libraries. Versions below are **pinned to the exact set verified working** on the `esp32-s3-n16r8` PlatformIO environment (via `platformio pkg list`) — match them in Arduino's Library Manager where possible to avoid API drift:
+
+| Library                  | Author            | Verified Version | Notes                              |
+| ------------------------ | ------------------ | ----------------- | ----------------------------------- |
+| ESPAsyncWebServer         | ESP32Async         | 3.11.2             | "ESP Async WebServer" in Lib Manager |
+| AsyncTCP                  | ESP32Async         | 3.4.10              | "Async TCP" in Lib Manager           |
+| ArduinoJson               | Benoit Blanchon    | 7.4.3               |                                      |
+| Adafruit NeoPixel         | Adafruit           | 1.15.5              |                                      |
+| Adafruit Unified Sensor   | Adafruit           | 1.1.15              | Dependency of DHT sensor library     |
+| DHT sensor library        | Adafruit           | 1.4.7                |                                      |
+| DallasTemperature         | Miles Burton       | 3.11.0               |                                      |
+| OneWire                   | Paul Stoffregen    | 2.3.8                | Dependency of DallasTemperature      |
+| BH1750                    | Christopher Laws   | 1.3.0                 |                                      |
+
+PlatformIO installs the async stack from `platformio.ini`, and the repository includes a local OneWire copy for PlatformIO/CLI builds.
+
+<details>
+<summary><strong>Verified PlatformIO toolchain (esp32-s3-n16r8)</strong> — click to expand</summary>
+
+Resolved via `platformio pkg list --environment esp32-s3-n16r8`:
+
+- Platform: `espressif32 @ 7.0.1`
+- `framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b`
+- `framework-espidf @ 4.60001.0`
+- `tool-cmake @ 3.30.2`
+- `tool-esp-rom-elfs @ 0.0.1+20241011`
+- `tool-esptoolpy @ 2.41100.0`
+- `tool-idf @ 1.0.1`
+- `tool-mconf @ 1.4060000.20190628`
+- `tool-ninja @ 1.9.0`
+- `toolchain-esp32ulp @ 1.23800.240113`
+- `toolchain-riscv32-esp @ 8.4.0+2021r2-patch5`
+- `toolchain-xtensa-esp-elf @ 15.2.0+20251204`
+- `toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5`
+
+If PlatformIO resolves a different platform/toolchain version and you hit a build issue, pin `platform = espressif32@7.0.1` in `platformio.ini` to match this known-good set.
+
+</details>
+
+### 3. Configure fallback credentials
 
 1. Locate `example.secrets.h` in the root directory.
-2. Copy and rename to `secrets.h`.
-3. Populate it with baseline defaults. _Note: These are only used on the very first boot. Once you save settings via the Web UI, the NVS memory permanently overrides `secrets.h`._
+2. Copy and rename it to `secrets.h`.
+3. Populate it with baseline defaults. These are only used on the first boot, because saved Web UI settings override them in NVS.
 
-### 3. Flash the Firmware
+### 4. Build and flash
 
-Choose one of the supported build paths:
+Use the Arduino IDE, Arduino CLI, or PlatformIO path that matches your setup, then upload the sketch and LittleFS data folder.
 
-- **Arduino IDE:** open the sketch in the IDE, select the ESP32-S3 board profile from the README, and click **Upload**.
-- **PlatformIO (VS Code):** the project now includes a [platformio.ini](platformio.ini) file, so you can open the folder in VS Code with the PlatformIO extension and build/upload from the PlatformIO toolbar.
+## 🚀 Setup & Installation
 
-### 4. Upload the Web UI (LittleFS) - _CRITICAL STEP_
+### 1. Upload the Web UI (LittleFS) - _CRITICAL STEP_
 
-The C++ code alone will not serve the web interface. You must upload the `data/` folder (which contains the compiled offline Tailwind CSS and Modular JS) to the ESP32's flash memory.
+The C++ code alone will not serve the web interface. Upload the `data/` folder, which contains the offline UI assets, to the ESP32's flash memory.
 
 - Press `Ctrl+Shift+P` (or `Cmd+Shift+P`), type "Upload LittleFS to Pico/ESP8266/ESP32", and execute.
+
+### Arduino CLI example
+
+If you prefer command-line builds, use the same ESP32-S3 board options shown above. Add the repo's `lib/` folder to the library search path so the checked-in OneWire copy is found during the build.
+
+```powershell
+arduino-cli compile --fqbn esp32:esp32:esp32s3:UploadSpeed=115200,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,CPUFreq=240,UploadMode=default --libraries .\lib .\HyGrow_IoT.ino
+```
 
 ---
 

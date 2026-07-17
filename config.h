@@ -61,7 +61,9 @@
 #define PIN_LUX_SDA DEFAULT_PIN_I2C_SDA
 #define PIN_LUX_SCL DEFAULT_PIN_I2C_SCL
 #define PIN_WL DEFAULT_PIN_WL_SIG
+#ifndef PIN_RGB_LED
 #define PIN_RGB_LED DEFAULT_PIN_RGB_LED
+#endif
 
 // ---------- Calibration defaults ----------
 // [NVS] ph_off / ph_slope  — linear model: pH = slope * raw_volt + offset
