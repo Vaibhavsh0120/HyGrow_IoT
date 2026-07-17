@@ -2,15 +2,46 @@
 #include "state.h"
 #include <WiFi.h>
 #include <AsyncTCP.h>
-#include <ElegantOTA.h>
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Preferences.h>
-#include <WebServer.h>
+#include <Update.h>
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
-WebServer otaServer(81);
+
+static const char OTA_PAGE[] PROGMEM = R"rawliteral(
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>HyGrow OTA Update</title>
+    <style>
+        :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+        body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b1220; color: #fff; }
+        .card { width: min(92vw, 560px); padding: 24px; border: 1px solid rgba(255,255,255,.12); border-radius: 20px; background: rgba(255,255,255,.06); backdrop-filter: blur(18px); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+        h1 { margin: 0 0 12px; font-size: 1.6rem; }
+        p { margin: 0 0 16px; line-height: 1.5; opacity: .88; }
+        input, button { width: 100%; box-sizing: border-box; border-radius: 14px; border: 1px solid rgba(255,255,255,.14); padding: 14px 16px; font: inherit; }
+        input { color: #fff; background: rgba(255,255,255,.06); margin-bottom: 12px; }
+        button { border: 0; background: linear-gradient(135deg, #4f9cff, #6fe7c8); color: #08111d; font-weight: 700; cursor: pointer; }
+        small { display: block; margin-top: 12px; opacity: .72; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>HyGrow Firmware Update</h1>
+        <p>Select a compiled <strong>.bin</strong> file and upload it to the ESP32-S3. The device will reboot automatically after the transfer completes.</p>
+        <form method="POST" action="/ota/upload" enctype="multipart/form-data">
+            <input type="file" name="update" accept=".bin" required>
+            <button type="submit">Upload Firmware</button>
+        </form>
+        <small>Keep the browser open until the upload finishes.</small>
+    </div>
+</body>
+</html>
+)rawliteral";
 
 unsigned long lastVitalsTime = 0;
 unsigned long lastDataTime = 0;
@@ -18,6 +49,7 @@ unsigned long lastDataTime = 0;
 // Internal helpers
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
+void configureOtaRoutes();
 
 void initNetworkTask()
 {
@@ -60,24 +92,8 @@ void initNetworkTask()
         server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
     }
 
-    // 3. ElegantOTA Mount
-    otaServer.begin();
-    ElegantOTA.begin(&otaServer);
-    ElegantOTA.onStart([]()
-                       { webLog(0, LOG_INFO, "OTA Update Started"); });
-    ElegantOTA.onProgress([](size_t current, size_t final)
-                          {
-        // Throttle logs to prevent WS flood, log every 10%
-        static int lastPercent = 0;
-        int percent = (current * 100) / final;
-        if (percent - lastPercent >= 10) {
-            webLog(0, LOG_INFO, "OTA Progress: " + String(percent) + "%");
-            lastPercent = percent;
-        } });
-    ElegantOTA.onEnd([](bool success)
-                     {
-        if(success) webLog(0, LOG_INFO, "OTA Update Complete. Rebooting...");
-        else webLog(0, LOG_ERR, "OTA Update Failed"); });
+    // 3. Native OTA Mount
+    configureOtaRoutes();
 
     // 4. WebSocket Mount
     ws.onEvent(onWsEvent);
@@ -90,7 +106,6 @@ void initNetworkTask()
 
 void networkTaskLoop()
 {
-    ElegantOTA.loop();
     ws.cleanupClients();
 
     unsigned long currentMillis = millis();
@@ -110,12 +125,58 @@ void networkTaskLoop()
     }
 }
 
+void configureOtaRoutes()
+{
+    server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request)
+              { request->send_P(200, "text/html", OTA_PAGE); });
+
+    server.on("/ota/upload", HTTP_POST, [](AsyncWebServerRequest *request)
+              {
+                  const bool success = !Update.hasError();
+                  AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", success ? "OK" : "FAIL");
+                  response->addHeader("Connection", "close");
+                  request->send(response);
+
+                  if (success)
+                  {
+                      webLog(0, LOG_INFO, "OTA Update Complete. Rebooting...");
+                      delay(500);
+                      ESP.restart();
+                  }
+                  else
+                  {
+                      webLog(0, LOG_ERR, "OTA Update Failed");
+                  } }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final)
+              {
+                  (void)request;
+                  (void)filename;
+
+                  if (index == 0)
+                  {
+                      webLog(0, LOG_INFO, "OTA Update Started");
+                      if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH))
+                      {
+                          Update.printError(Serial);
+                      }
+                  }
+
+                  if (len > 0 && Update.write(data, len) != len)
+                  {
+                      Update.printError(Serial);
+                  }
+
+                  if (final && !Update.end(true))
+                  {
+                      Update.printError(Serial);
+                  } });
+}
+
 void broadcastVitals()
 {
     if (ws.count() == 0)
         return;
 
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
     doc["type"] = "vitals";
     doc["rssi"] = WiFi.RSSI();
     doc["free_heap"] = ESP.getFreeHeap();
@@ -134,7 +195,7 @@ void broadcastConfig()
     if (ws.count() == 0)
         return;
 
-    DynamicJsonDocument doc(1024);
+    JsonDocument doc;
     doc["type"] = "config";
     doc["wifi_ssid"] = currentConfig.wifi_ssid;
     doc["fb_api"] = currentConfig.fb_api_key;
@@ -148,7 +209,7 @@ void broadcastConfig()
 
     // Send pins to JS UI for settings rendering
     // Order MUST match JS parser: TDS, DHT, pH, WaterTemp, WaterLevel, SDA, SCL
-    JsonArray pins = doc.createNestedArray("pins");
+    JsonArray pins = doc["pins"].to<JsonArray>();
     pins.add(currentConfig.pin_tds);
     pins.add(currentConfig.pin_dht);
     pins.add(currentConfig.pin_ph);
@@ -167,7 +228,7 @@ void broadcastData()
     if (ws.count() == 0)
         return;
 
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     doc["type"] = "data";
     doc["core_id_of_producer"] = 1; // Sensors run on core 1
 
@@ -211,7 +272,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
         data[len] = 0;
         String msg = (char *)data;
 
-        StaticJsonDocument<512> doc;
+        JsonDocument doc;
         DeserializationError err = deserializeJson(doc, msg);
 
         if (err)
