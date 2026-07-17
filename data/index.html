@@ -12,7 +12,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
 
-    <!-- Offline First Stylesheet (Contains your Tailwind compilation + liquid-glass) -->
+    <!-- Offline First Stylesheet -->
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body class="bg-[#000000] text-on-background font-body-md h-screen w-screen overflow-hidden flex relative tracking-wide">
@@ -39,9 +39,14 @@
                     <h2 class="font-headline-lg text-headline-lg text-white">System Overview</h2>
                     <p class="font-body-md text-body-md text-on-surface-variant mt-1">Real-time telemetry and vitals stream.</p>
                 </div>
-                <div class="flex items-center gap-2 liquid-glass px-4 py-2 rounded-2xl">
-                    <span id="vital-link-dot" class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
-                    <span id="vital-link-text" class="font-label-sm text-label-sm text-secondary">LIVE SYS.LINK</span>
+                <div class="flex flex-col sm:flex-row items-center gap-4">
+                    <button id="btn-export-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
+                        <span class="material-symbols-outlined text-[20px]">download</span> Export CSV
+                    </button>
+                    <div class="flex items-center gap-2 liquid-glass px-4 py-2 rounded-2xl w-full sm:w-auto justify-center">
+                        <span id="vital-link-dot" class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                        <span id="vital-link-text" class="font-label-sm text-label-sm text-secondary">LIVE SYS.LINK</span>
+                    </div>
                 </div>
             </header>
 
@@ -66,7 +71,6 @@
 
             <!-- Telemetry Grid (All 8 Data Points) -->
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 md:gap-8">
-                <!-- TDS -->
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">water_drop</span> TDS</span>
@@ -76,7 +80,6 @@
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-tds">--</span> <span class="text-headline-md text-white/50 ml-1">ppm</span></div>
                     </div>
                 </div>
-                <!-- pH -->
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">science</span> pH Level</span>
@@ -86,7 +89,6 @@
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-ph">--</span></div>
                     </div>
                 </div>
-                <!-- Air Temp -->
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">thermostat</span> Air Temp</span>
@@ -96,7 +98,6 @@
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-atemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
                     </div>
                 </div>
-                <!-- Humidity -->
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">cloud</span> Humidity</span>
@@ -106,7 +107,6 @@
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-hum">--</span> <span class="text-headline-md text-white/50 ml-1">%</span></div>
                     </div>
                 </div>
-                <!-- Water Temp -->
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">device_thermostat</span> Water Temp</span>
@@ -116,7 +116,6 @@
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-wtemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
                     </div>
                 </div>
-                <!-- Light -->
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">light_mode</span> Light</span>
@@ -126,7 +125,6 @@
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-lux">--</span> <span class="text-headline-md text-white/50 ml-1">lx</span></div>
                     </div>
                 </div>
-                <!-- Water Level -->
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">waves</span> Tank Level</span>
@@ -136,7 +134,6 @@
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-wl">--</span> <span class="text-headline-md text-white/50 ml-1">%</span></div>
                     </div>
                 </div>
-                <!-- VPD -->
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">air</span> VPD</span>
@@ -149,7 +146,7 @@
             </div>
         </section>
 
-        <!-- PAGE: Generic Sensor Detail (Used dynamically for TDS, Water Temp, Light, WL, pH) -->
+        <!-- PAGE: Generic Sensor Detail -->
         <section class="page-section flex-col gap-8 hidden" id="page-sensor">
             <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[rgba(255,255,255,0.08)] pb-4">
                 <div>
@@ -255,9 +252,6 @@
         <section class="page-section flex-col gap-8 hidden" id="page-8">
             <header class="flex justify-between items-end pb-4 border-b border-[rgba(255,255,255,0.08)]">
                 <h2 class="font-headline-lg text-headline-lg text-white">System Settings</h2>
-                <button id="btn-export-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
-                    <span class="material-symbols-outlined text-[20px]">download</span> Export CSV
-                </button>
             </header>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-8 pb-12">
 
@@ -316,11 +310,13 @@
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
-                                <span class="text-white font-label-md font-bold">BH1750 Light</span>
+                                <span class="text-white font-label-md font-bold">BH1750 Light (I2C)</span>
                             </div>
                             <div class="flex items-center gap-2">
-                                <span class="text-on-surface-variant font-label-sm">I2C SCL/SDA:</span>
-                                <span class="text-white text-sm">22 / 21</span>
+                                <span class="text-on-surface-variant font-label-sm">SDA/SCL:</span>
+                                <input id="cfg-pin-sda" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="8"/>
+                                <span class="text-on-surface-variant font-label-sm">/</span>
+                                <input id="cfg-pin-scl" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="9"/>
                             </div>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
@@ -360,6 +356,7 @@
                             </div>
                         </div>
                     </div>
+                    <button id="btn-save-pins" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Pinout Config (Requires Reboot)</button>
                 </div>
 
                 <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 items-start border border-error/30 md:col-span-2">

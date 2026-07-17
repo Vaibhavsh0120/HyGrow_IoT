@@ -11,16 +11,16 @@ const tabsData = {
     icons: ["monitoring", "water_drop", "thermostat", "device_thermostat", "light_mode", "waves", "science", "settings_input_component", "settings", "terminal", "system_update_alt"],
     activeStyle: "text-white font-bold bg-[rgba(255,255,255,0.1)] rounded-2xl shadow-inner",
     inactiveStyle: "text-on-surface-variant font-medium hover:bg-[rgba(255,255,255,0.05)] hover:text-white rounded-2xl transition-colors duration-200",
-    baseStyle: "flex items-center justify-center lg:justify-start gap-4 p-3 lg:px-4 lg:py-3 cursor-pointer transition-all duration-150 w-full",
-    // Default GPIOs: [Null, TDS, DHT, W_Temp, Light(I2C), W_Level, pH]
-    gpios: [null, 14, 4, 15, 21, 1, 32, null, null, null, null],
+    baseStyle: "flex items-center justify-start gap-4 p-3 lg:px-6 lg:py-3 cursor-pointer transition-all duration-150 w-full",
+    gpios: [null, 14, 4, 15, 8, 1, 32, null, null, null, null], // Includes SDA default for Light
     units: ["", "ppm", "", "°C", "lux", "%", "pH", "", "", "", ""]
 };
 
 let currentTabId = 0;
 let isTerminalPaused = false;
+let globalConfigCache = {}; // Cache config data for CSV export
 
-// Chart Buffers (Keep last 20 readings for the UI graphs: approx 20-40 seconds of history)
+// Chart Buffers (Keep last 20 readings for the UI graphs and CSV Export)
 const MAX_POINTS = 20;
 const sensorBuffers = {
     1: [], // TDS
@@ -28,7 +28,8 @@ const sensorBuffers = {
     3: [], // Water Temp
     4: [], // Light
     5: [], // Water Level
-    6: []  // pH
+    6: [], // pH
+    7: []  // VPD (internal array just for CSV export)
 };
 
 // Canvas instances
@@ -84,7 +85,6 @@ function switchTab(index, element) {
             page.classList.add('flex');
         }
     } else if (index === 2) {
-        // Dual Sensor Page
         dualSensorPage.classList.remove('hidden');
         dualSensorPage.classList.add('flex');
 
@@ -94,25 +94,27 @@ function switchTab(index, element) {
 
         setTimeout(resizeCanvas, 50);
     } else {
-        // Generic Single Sensor Page
         sensorPage.classList.remove('hidden');
         sensorPage.classList.add('flex');
         document.getElementById('sensor-name').innerText = tabsData.labels[index] + " Sensor";
         document.getElementById('sensor-icon').innerText = tabsData.icons[index];
 
-        // Retrieve pin state
         let pin = tabsData.gpios[index];
-        document.getElementById('sensor-pin').innerText = (pin === null || pin < 0) ? '-- (Disabled)' : pin;
+        // Special display case for I2C Light sensor
+        if (index === 4 && pin >= 0) {
+            document.getElementById('sensor-pin').innerText = `SDA: ${pin}`;
+        } else {
+            document.getElementById('sensor-pin').innerText = (pin === null || pin < 0) ? '-- (Disabled)' : pin;
+        }
+
         document.getElementById('sensor-toggle').checked = (pin >= 0);
 
-        // Show error flag if sensor is disabled
         if (pin < 0) {
             document.getElementById('sensor-error').classList.remove('hidden');
         } else {
             document.getElementById('sensor-error').classList.add('hidden');
         }
 
-        // Setup new canvas
         sensorCanvasContainer.innerHTML = '';
         currentSensorCanvas = document.createElement('canvas');
         currentSensorCanvas.className = 'w-full h-full absolute inset-0';
@@ -156,7 +158,6 @@ let gateway = `ws://${window.location.hostname}/ws`;
 let websocket;
 
 function initWebSocket() {
-    console.log('Connecting to WS:', gateway);
     websocket = new WebSocket(gateway);
     websocket.onopen = onOpen;
     websocket.onclose = onClose;
@@ -164,7 +165,6 @@ function initWebSocket() {
 }
 
 function onOpen(event) {
-    console.log('Connection opened');
     document.getElementById('vital-link-dot').classList.remove('bg-error');
     document.getElementById('vital-link-dot').classList.add('bg-secondary', 'animate-pulse');
     document.getElementById('vital-link-text').innerText = 'LIVE SYS.LINK';
@@ -172,7 +172,6 @@ function onOpen(event) {
 }
 
 function onClose(event) {
-    console.log('Connection closed');
     document.getElementById('vital-link-dot').classList.remove('bg-secondary', 'animate-pulse');
     document.getElementById('vital-link-dot').classList.add('bg-error');
     document.getElementById('vital-link-text').innerText = 'OFFLINE';
@@ -182,22 +181,12 @@ function onClose(event) {
 
 function onMessage(event) {
     let msg;
-    try {
-        msg = JSON.parse(event.data);
-    } catch (e) {
-        console.error("WS Parse Error:", e);
-        return;
-    }
+    try { msg = JSON.parse(event.data); } catch (e) { return; }
 
-    if (msg.type === "vitals") {
-        updateVitals(msg);
-    } else if (msg.type === "data") {
-        updateTelemetry(msg);
-    } else if (msg.type === "config") {
-        updateConfigForm(msg);
-    } else if (msg.type === "log") {
-        updateTerminal(msg);
-    }
+    if (msg.type === "vitals") updateVitals(msg);
+    else if (msg.type === "data") updateTelemetry(msg);
+    else if (msg.type === "config") updateConfigForm(msg);
+    else if (msg.type === "log") updateTerminal(msg);
 }
 
 // ============================================================================
@@ -206,8 +195,6 @@ function onMessage(event) {
 function updateVitals(msg) {
     document.getElementById('dash-rssi').innerText = `${msg.rssi} dBm`;
     document.getElementById('dash-heap').innerText = `${(msg.free_heap / 1024).toFixed(1)} KB`;
-
-    // Format Uptime
     let u = msg.uptime;
     let d = Math.floor(u / (3600*24));
     let h = Math.floor(u % (3600*24) / 3600);
@@ -216,7 +203,6 @@ function updateVitals(msg) {
 }
 
 function updateTelemetry(msg) {
-    // 1. Dashboard Values (All 8 sensors)
     if(document.getElementById('dash-val-tds')) document.getElementById('dash-val-tds').innerText = msg.tds.toFixed(0);
     if(document.getElementById('dash-val-ph')) document.getElementById('dash-val-ph').innerText = (msg.ph_val || 0).toFixed(2);
     if(document.getElementById('dash-val-atemp')) document.getElementById('dash-val-atemp').innerText = msg.temp.toFixed(1);
@@ -226,11 +212,9 @@ function updateTelemetry(msg) {
     if(document.getElementById('dash-val-wl')) document.getElementById('dash-val-wl').innerText = (msg.wl_percent || 0).toFixed(0);
     if(document.getElementById('dash-val-vpd')) document.getElementById('dash-val-vpd').innerText = (msg.vpd_kpa || 0).toFixed(2);
 
-    // Live Calibration Raw ADC Updates
     if(document.getElementById('cal-tds-raw')) document.getElementById('cal-tds-raw').innerText = msg.tds.toFixed(1);
     if(document.getElementById('cal-ph-raw')) document.getElementById('cal-ph-raw').innerText = (msg.ph_val || 0).toFixed(2);
 
-    // 2. Buffer Management
     const pushBuffer = (arr, val) => {
         arr.push(val);
         if(arr.length > MAX_POINTS) arr.shift();
@@ -243,8 +227,8 @@ function updateTelemetry(msg) {
     pushBuffer(sensorBuffers[4], msg.lux || 0);
     pushBuffer(sensorBuffers[5], msg.wl_percent || 0);
     pushBuffer(sensorBuffers[6], msg.ph_val || 0);
+    pushBuffer(sensorBuffers[7], msg.vpd_kpa || 0);
 
-    // 3. Redraw Active Canvas
     const sensorPage = document.getElementById('page-sensor');
     const dualSensorPage = document.getElementById('page-dual-sensor');
 
@@ -254,58 +238,61 @@ function updateTelemetry(msg) {
         }
         const unitStr = tabsData.units[currentTabId];
         const currentVal = sensorBuffers[currentTabId][sensorBuffers[currentTabId].length-1];
-        document.getElementById('sensor-current-val').innerHTML = `${currentVal.toFixed(1)} <span class="text-headline-md text-white/50 ml-1">${unitStr}</span>`;
+        if (currentVal !== undefined) {
+            document.getElementById('sensor-current-val').innerHTML = `${currentVal.toFixed(1)} <span class="text-headline-md text-white/50 ml-1">${unitStr}</span>`;
+        }
     }
     else if(dualSensorPage && !dualSensorPage.classList.contains('hidden') && currentTabId === 2) {
         if(typeof drawDualChart === 'function') {
             drawDualChart(ctxDual, canvasDual, sensorBuffers[2].hum, sensorBuffers[2].temp);
         }
-        document.getElementById('sensor-dual-temp').innerHTML = `${sensorBuffers[2].temp[sensorBuffers[2].temp.length-1].toFixed(1)} <span class="text-headline-md text-white/50 ml-1">°C</span>`;
-        document.getElementById('sensor-dual-hum').innerHTML = `${sensorBuffers[2].hum[sensorBuffers[2].hum.length-1].toFixed(0)} <span class="text-headline-md text-white/50 ml-1">%</span>`;
+        if (sensorBuffers[2].temp.length > 0) {
+            document.getElementById('sensor-dual-temp').innerHTML = `${sensorBuffers[2].temp[sensorBuffers[2].temp.length-1].toFixed(1)} <span class="text-headline-md text-white/50 ml-1">°C</span>`;
+            document.getElementById('sensor-dual-hum').innerHTML = `${sensorBuffers[2].hum[sensorBuffers[2].hum.length-1].toFixed(0)} <span class="text-headline-md text-white/50 ml-1">%</span>`;
+        }
     }
 }
 
 function updateConfigForm(msg) {
-    // Populate Settings Inputs
+    globalConfigCache = msg; // Cache for CSV export
+
     if(document.getElementById('cfg-wifi-ssid')) document.getElementById('cfg-wifi-ssid').value = msg.wifi_ssid || "";
     if(document.getElementById('cfg-fb-proj')) document.getElementById('cfg-fb-proj').value = msg.fb_proj || "";
     if(document.getElementById('cfg-fb-api')) document.getElementById('cfg-fb-api').value = msg.fb_api || "";
     if(document.getElementById('cfg-fb-email')) document.getElementById('cfg-fb-email').value = msg.fb_email || "";
     if(document.getElementById('cfg-fb-col')) document.getElementById('cfg-fb-col').value = msg.fb_col || "";
 
-    // Populate Calibration Inputs
     if(document.getElementById('cfg-tds-k')) document.getElementById('cfg-tds-k').value = (msg.tds_k || 1.0).toFixed(2);
     if(document.getElementById('cfg-ph-off')) document.getElementById('cfg-ph-off').value = (msg.ph_off || 0.0).toFixed(2);
     if(document.getElementById('cfg-ph-slope')) document.getElementById('cfg-ph-slope').value = (msg.ph_slope || 1.0).toFixed(2);
 
-    // Update GPIO defaults internally and on form
-    if(msg.pins && msg.pins.length >= 5) {
+    if(msg.pins && msg.pins.length >= 7) {
         tabsData.gpios[1] = msg.pins[0]; // TDS
         tabsData.gpios[2] = msg.pins[1]; // DHT
         tabsData.gpios[6] = msg.pins[2]; // pH
         tabsData.gpios[3] = msg.pins[3]; // W_Temp
         tabsData.gpios[5] = msg.pins[4]; // W_Level
+        tabsData.gpios[4] = msg.pins[5]; // Light SDA
 
         if(document.getElementById('cfg-pin-tds')) document.getElementById('cfg-pin-tds').value = msg.pins[0];
         if(document.getElementById('cfg-pin-dht')) document.getElementById('cfg-pin-dht').value = msg.pins[1];
         if(document.getElementById('cfg-pin-ph'))  document.getElementById('cfg-pin-ph').value = msg.pins[2];
         if(document.getElementById('cfg-pin-wt'))  document.getElementById('cfg-pin-wt').value = msg.pins[3];
         if(document.getElementById('cfg-pin-wl'))  document.getElementById('cfg-pin-wl').value = msg.pins[4];
+        if(document.getElementById('cfg-pin-sda')) document.getElementById('cfg-pin-sda').value = msg.pins[5];
+        if(document.getElementById('cfg-pin-scl')) document.getElementById('cfg-pin-scl').value = msg.pins[6];
     }
 }
 
 function updateTerminal(msg) {
     if (isTerminalPaused) return;
-
     const term = document.getElementById('terminal-output');
     if(!term) return;
-
-    if(term.children.length > 100) term.removeChild(term.firstChild); // Keep DOM light
+    if(term.children.length > 100) term.removeChild(term.firstChild);
 
     const log = document.createElement('div');
     const colorClass = msg.core === 0 ? "log-core-0" : "log-core-1";
     const levelClass = msg.level === "error" ? "text-error font-bold" : (msg.level === "warn" ? "text-secondary" : "");
-
     log.innerHTML = `<span class="${colorClass} opacity-80">[CORE ${msg.core}]</span> <span class="${levelClass}">${msg.msg}</span>`;
     term.appendChild(log);
     term.scrollTop = term.scrollHeight;
@@ -319,7 +306,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initWebSocket();
     setTimeout(resizeCanvas, 100);
 
-    // Network Save
     const btnSaveWifi = document.getElementById('btn-save-wifi');
     if(btnSaveWifi) {
         btnSaveWifi.addEventListener('click', () => {
@@ -333,7 +319,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Firebase Save
     const btnSaveFb = document.getElementById('btn-save-firebase');
     if(btnSaveFb) {
         btnSaveFb.addEventListener('click', () => {
@@ -351,7 +336,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Hardware Pins Save (Settings Form)
     const btnSavePins = document.getElementById('btn-save-pins');
     if(btnSavePins) {
         btnSavePins.addEventListener('click', () => {
@@ -361,7 +345,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 pin_dht: parseInt(document.getElementById('cfg-pin-dht').value),
                 pin_ph: parseInt(document.getElementById('cfg-pin-ph').value),
                 pin_wt: parseInt(document.getElementById('cfg-pin-wt').value),
-                pin_wl: parseInt(document.getElementById('cfg-pin-wl').value)
+                pin_wl: parseInt(document.getElementById('cfg-pin-wl').value),
+                pin_sda: parseInt(document.getElementById('cfg-pin-sda').value),
+                pin_scl: parseInt(document.getElementById('cfg-pin-scl').value)
             };
             websocket.send(JSON.stringify(payload));
             if(confirm("Pinout saved. The ESP32 must reboot to reassign hardware interrupts safely. Reboot now?")) {
@@ -370,14 +356,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Calibration Saves
     const btnCalTds = document.getElementById('btn-cal-tds');
     if(btnCalTds) {
         btnCalTds.addEventListener('click', () => {
-            const payload = {
-                command: "calibrate_tds",
-                tds_k: parseFloat(document.getElementById('cfg-tds-k').value)
-            };
+            const payload = { command: "calibrate_tds", tds_k: parseFloat(document.getElementById('cfg-tds-k').value) };
             websocket.send(JSON.stringify(payload));
             btnCalTds.innerText = "Saved!";
             setTimeout(() => { btnCalTds.innerText = "Save TDS Calibration"; }, 2000);
@@ -398,102 +380,91 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Danger Zone
     const btnReboot = document.getElementById('btn-reboot');
-    if(btnReboot) {
-        btnReboot.addEventListener('click', () => {
-            if(confirm("Are you sure you want to reboot the device?")) {
-                websocket.send(JSON.stringify({command: "reboot"}));
-            }
-        });
-    }
+    if(btnReboot) btnReboot.addEventListener('click', () => { if(confirm("Reboot the device?")) websocket.send(JSON.stringify({command: "reboot"})); });
 
     const btnReset = document.getElementById('btn-factory-reset');
-    if(btnReset) {
-        btnReset.addEventListener('click', () => {
-            if(confirm("DANGER! This will wipe all Wi-Fi, Firebase, and Calibration data. The device will become a local access point. Proceed?")) {
-                websocket.send(JSON.stringify({command: "factory_reset"}));
-            }
-        });
-    }
+    if(btnReset) btnReset.addEventListener('click', () => { if(confirm("DANGER! Wipe all NVS data?")) websocket.send(JSON.stringify({command: "factory_reset"})); });
 
-    // Terminal Controls
     const btnTermPause = document.getElementById('btn-term-pause');
-    if(btnTermPause) {
-        btnTermPause.addEventListener('click', () => {
-            isTerminalPaused = !isTerminalPaused;
-            btnTermPause.innerText = isTerminalPaused ? "Resume" : "Pause";
-            btnTermPause.classList.toggle('bg-white/30');
-        });
-    }
+    if(btnTermPause) btnTermPause.addEventListener('click', () => {
+        isTerminalPaused = !isTerminalPaused;
+        btnTermPause.innerText = isTerminalPaused ? "Resume" : "Pause";
+        btnTermPause.classList.toggle('bg-white/30');
+    });
 
     const btnTermClear = document.getElementById('btn-term-clear');
-    if(btnTermClear) {
-        btnTermClear.addEventListener('click', () => {
-            document.getElementById('terminal-output').innerHTML = '<div><span class="text-secondary opacity-70">[SYS]</span> Terminal cleared.</div>';
-        });
-    }
+    if(btnTermClear) btnTermClear.addEventListener('click', () => {
+        document.getElementById('terminal-output').innerHTML = '<div><span class="text-secondary opacity-70">[SYS]</span> Terminal cleared.</div>';
+    });
 
-    // CSV Export
+    // Advanced CSV Export (Bundles config and the 20-point buffers for all 8 sensors)
     const btnExport = document.getElementById('btn-export-csv');
     if(btnExport) {
         btnExport.addEventListener('click', () => {
-            if(typeof exportSeriesToCsv === 'function') {
-                exportSeriesToCsv('TDS_Log', sensorBuffers[1]);
-                exportSeriesToCsv('AirTemp_Log', sensorBuffers[2].temp);
-                exportSeriesToCsv('Humidity_Log', sensorBuffers[2].hum);
+            if(!sensorBuffers[1].length) { alert("Waiting for telemetry data..."); return; }
+
+            let csv = "data:text/csv;charset=utf-8,\n";
+            csv += "--- SYSTEM CONFIGURATION ---\n";
+            csv += `Firebase Project,${globalConfigCache.fb_proj || "N/A"}\n`;
+            csv += `Firestore Collection,${globalConfigCache.fb_col || "N/A"}\n`;
+            csv += `TDS Calibration (K),${globalConfigCache.tds_k || "1.0"}\n`;
+            csv += `pH Calibration (Offset),${globalConfigCache.ph_off || "0.0"}\n`;
+            csv += `pH Calibration (Slope),${globalConfigCache.ph_slope || "1.0"}\n\n`;
+
+            csv += "--- TELEMETRY HISTORY (Last 20 Reads) ---\n";
+            csv += "Index,TDS(ppm),AirTemp(C),Humidity(%),WaterTemp(C),Light(lux),WaterLevel(%),pH,VPD(kPa)\n";
+
+            for(let i=0; i < sensorBuffers[1].length; i++) {
+                csv += `${i},`;
+                csv += `${(sensorBuffers[1][i]||0).toFixed(1)},`;
+                csv += `${(sensorBuffers[2].temp[i]||0).toFixed(1)},`;
+                csv += `${(sensorBuffers[2].hum[i]||0).toFixed(1)},`;
+                csv += `${(sensorBuffers[3][i]||0).toFixed(1)},`;
+                csv += `${(sensorBuffers[4][i]||0).toFixed(1)},`;
+                csv += `${(sensorBuffers[5][i]||0).toFixed(1)},`;
+                csv += `${(sensorBuffers[6][i]||0).toFixed(2)},`;
+                csv += `${(sensorBuffers[7][i]||0).toFixed(2)}\n`;
             }
+
+            const link = document.createElement("a");
+            link.setAttribute("href", encodeURI(csv));
+            const d = new Date();
+            link.setAttribute("download", `hygrow_export_${d.getFullYear()}${(d.getMonth()+1)}${d.getDate()}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         });
     }
 
-    // ============================================================================
-    // Sensor Power Toggle Logic (From Individual Sensor Pages)
-    // ============================================================================
+    // Toggle logic includes SDA and SCL for I2C Light
     const handleToggle = (e, tabId) => {
         const isEnabled = e.target.checked;
-        let sensorKey = "";
-        let defaultPin = -1;
+        let payload = { command: "save_pins" };
+        let sensorName = "";
 
-        if (tabId === 1) { sensorKey = "pin_tds"; defaultPin = 14; }
-        else if (tabId === 2) { sensorKey = "pin_dht"; defaultPin = 4; }
-        else if (tabId === 3) { sensorKey = "pin_wt"; defaultPin = 15; }
-        else if (tabId === 4) { sensorKey = "pin_light"; defaultPin = 21; } // I2C Flag
-        else if (tabId === 5) { sensorKey = "pin_wl"; defaultPin = 1; }
-        else if (tabId === 6) { sensorKey = "pin_ph"; defaultPin = 32; }
+        if (tabId === 1) { payload.pin_tds = isEnabled ? 14 : -1; sensorName = "TDS"; }
+        else if (tabId === 2) { payload.pin_dht = isEnabled ? 4 : -1; sensorName = "DHT"; }
+        else if (tabId === 3) { payload.pin_wt = isEnabled ? 15 : -1; sensorName = "Water Temp"; }
+        else if (tabId === 4) { payload.pin_sda = isEnabled ? 8 : -1; payload.pin_scl = isEnabled ? 9 : -1; sensorName = "I2C Light"; }
+        else if (tabId === 5) { payload.pin_wl = isEnabled ? 1 : -1; sensorName = "Water Level"; }
+        else if (tabId === 6) { payload.pin_ph = isEnabled ? 32 : -1; sensorName = "pH"; }
 
-        if (sensorKey !== "") {
-            const targetPin = isEnabled ? defaultPin : -1;
-
-            // Build the payload (keeps other pins untouched by only updating the target)
-            const payload = {
-                command: "save_pins",
-                [sensorKey]: targetPin
-            };
-
+        if (sensorName !== "") {
             websocket.send(JSON.stringify(payload));
-
             const status = isEnabled ? "POWERED ON" : "POWERED OFF";
-            document.getElementById('terminal-output').innerHTML +=
-                `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor ${sensorKey} ${status}.</div>`;
-
+            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${sensorName} ${status}.</div>`;
             setTimeout(() => {
                 if(confirm(`Sensor power state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
                     websocket.send(JSON.stringify({command: "reboot"}));
-                } else {
-                    // Revert the toggle visually if they canceled the reboot
-                    e.target.checked = !isEnabled;
-                }
+                } else { e.target.checked = !isEnabled; }
             }, 300);
         }
     };
 
     const singleSensorToggle = document.getElementById('sensor-toggle');
-    if (singleSensorToggle) {
-        singleSensorToggle.addEventListener('change', (e) => handleToggle(e, currentTabId));
-    }
+    if (singleSensorToggle) singleSensorToggle.addEventListener('change', (e) => handleToggle(e, currentTabId));
 
     const dualSensorToggle = document.getElementById('dual-sensor-toggle');
-    if (dualSensorToggle) {
-        dualSensorToggle.addEventListener('change', (e) => handleToggle(e, 2));
-    }
+    if (dualSensorToggle) dualSensorToggle.addEventListener('change', (e) => handleToggle(e, 2));
 });

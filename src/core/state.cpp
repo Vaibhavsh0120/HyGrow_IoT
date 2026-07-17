@@ -60,14 +60,14 @@ void state_init() {
   currentConfig.ph_slope  = prefs.getFloat("ph_slope", DEFAULT_PH_SLOPE);
   currentConfig.tds_k     = prefs.getFloat("tds_k",    DEFAULT_TDS_K);
 
-  // Pins
-  currentConfig.pin_dht     = prefs.getUChar("pin_dht",     PIN_DHT);
-  currentConfig.pin_ds18b20 = prefs.getUChar("pin_ds",      PIN_DS18B20);
-  currentConfig.pin_tds     = prefs.getUChar("pin_tds",     PIN_TDS);
-  currentConfig.pin_ph      = prefs.getUChar("pin_ph",      PIN_PH);
-  currentConfig.pin_lux_sda = prefs.getUChar("pin_sda",     PIN_LUX_SDA);
-  currentConfig.pin_lux_scl = prefs.getUChar("pin_scl",     PIN_LUX_SCL);
-  currentConfig.pin_wl      = prefs.getUChar("pin_wl",      PIN_WL);
+  // Pins (Changed to getInt to support -1 disabled flag)
+  currentConfig.pin_dht     = prefs.getInt("pin_dht",     PIN_DHT);
+  currentConfig.pin_ds18b20 = prefs.getInt("pin_ds",      PIN_DS18B20);
+  currentConfig.pin_tds     = prefs.getInt("pin_tds",     PIN_TDS);
+  currentConfig.pin_ph      = prefs.getInt("pin_ph",      PIN_PH);
+  currentConfig.pin_lux_sda = prefs.getInt("pin_sda",     PIN_LUX_SDA);
+  currentConfig.pin_lux_scl = prefs.getInt("pin_scl",     PIN_LUX_SCL);
+  currentConfig.pin_wl      = prefs.getInt("pin_wl",      PIN_WL);
 
   // Feature flags — one NVS key per sensor: "en_0" .. "en_N"
   for (int i = 0; i < S_COUNT; ++i) {
@@ -102,13 +102,14 @@ bool state_save() {
   prefs.putFloat("ph_slope", currentConfig.ph_slope);
   prefs.putFloat("tds_k",    currentConfig.tds_k);
 
-  prefs.putUChar("pin_dht", currentConfig.pin_dht);
-  prefs.putUChar("pin_ds",  currentConfig.pin_ds18b20);
-  prefs.putUChar("pin_tds", currentConfig.pin_tds);
-  prefs.putUChar("pin_ph",  currentConfig.pin_ph);
-  prefs.putUChar("pin_sda", currentConfig.pin_lux_sda);
-  prefs.putUChar("pin_scl", currentConfig.pin_lux_scl);
-  prefs.putUChar("pin_wl",  currentConfig.pin_wl);
+  // Pins (Changed to putInt to support -1 disabled flag)
+  prefs.putInt("pin_dht", currentConfig.pin_dht);
+  prefs.putInt("pin_ds",  currentConfig.pin_ds18b20);
+  prefs.putInt("pin_tds", currentConfig.pin_tds);
+  prefs.putInt("pin_ph",  currentConfig.pin_ph);
+  prefs.putInt("pin_sda", currentConfig.pin_lux_sda);
+  prefs.putInt("pin_scl", currentConfig.pin_lux_scl);
+  prefs.putInt("pin_wl",  currentConfig.pin_wl);
 
   for (int i = 0; i < S_COUNT; ++i) {
     char k[8];

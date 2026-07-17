@@ -29,14 +29,14 @@ struct ConfigState {
   float ph_slope;
   float tds_k;
 
-  // Pins (reboot required to apply)
-  uint8_t pin_dht;
-  uint8_t pin_ds18b20;
-  uint8_t pin_tds;
-  uint8_t pin_ph;
-  uint8_t pin_lux_sda;
-  uint8_t pin_lux_scl;
-  uint8_t pin_wl;
+  // Pins (reboot required to apply) - changed to int to allow -1 (disabled)
+  int pin_dht;
+  int pin_ds18b20;
+  int pin_tds;
+  int pin_ph;
+  int pin_lux_sda;
+  int pin_lux_scl;
+  int pin_wl;
 
   // Feature flags — user toggles per sensor
   bool sensor_enabled[S_COUNT];
