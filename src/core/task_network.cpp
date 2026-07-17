@@ -1,189 +1,253 @@
-/*
- * ============================================================================
- * task_network.cpp — WiFi, WebServer, WebSockets, & Firebase (Core 0)
- * ============================================================================
- */
-
 #include "task_network.h"
+#include "state.h"
 #include <WiFi.h>
 #include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
+#include <ElegantOTA.h>
+#include <ArduinoJson.h>
 #include <LittleFS.h>
-#include <ArduinoJson.h>    // Install via Library Manager
-#include <FirebaseClient.h> // Install via Library Manager
+#include <Preferences.h>
 
-#include "state.h"
-#include "../../secrets.h"
-#include "../../config.h"
-
-// ── WebServer & WebSockets ──
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
-// ── Firebase Objects ──
-WiFiClientSecure sslClient;
-DefaultNetwork network;
-AsyncClientClass aClient(sslClient, getNetwork(network));
-FirebaseApp app;
-Firestore::Documents Docs;
-UserAuth userAuth(SECRET_FIREBASE_API_KEY, SECRET_FIREBASE_USER_EMAIL, SECRET_FIREBASE_USER_PASSWORD);
-AsyncResult fbResult;
+unsigned long lastVitalsTime = 0;
+unsigned long lastDataTime = 0;
 
-// ── Broadcast Log ──
-void broadcastLog(String msg) {
-    // Send standard log wrapper over WebSockets
-    String jsonLog = "{\"type\":\"log\",\"msg\":\"" + msg + "\"}";
-    ws.textAll(jsonLog);
-}
+// Internal helpers
+void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 
-// ── WebSocket Event Handler ──
-void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
-    if (type == WS_EVT_DATA) {
-        AwsFrameInfo *info = (AwsFrameInfo*)arg;
-        if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-            data[len] = 0;
-            String msg = (char*)data;
+void initNetworkTask() {
+    webLog(0, "info", "Initializing Network Task...");
 
-            // Parse incoming JSON from Web UI
-            JsonDocument doc;
-            DeserializationError error = deserializeJson(doc, msg);
-            if (!error) {
-                if (doc["cmd"] == "toggle_sensor") {
-                    int s_id = doc["id"];
-                    bool is_on = doc["state"];
+    // 1. Wi-Fi Setup with SoftAP Fallback
+    WiFi.mode(WIFI_STA);
+    if (String(currentConfig.wifi_ssid).length() > 0) {
+        WiFi.begin(currentConfig.wifi_ssid, currentConfig.wifi_pass);
+        webLog(0, "info", "Connecting to Wi-Fi: " + String(currentConfig.wifi_ssid));
 
-                    if (s_id >= 0 && s_id < S_COUNT) {
-                        if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
-                            currentConfig.sensor_enabled[s_id] = is_on;
-                            state_save(); // Save to NVS flash
-                            xSemaphoreGive(stateMutex);
-                        }
-                        webLog("[UI] Sensor %d toggled %s", s_id, is_on ? "ON" : "OFF");
-                    }
-                }
-                else if (doc["cmd"] == "toggle_demo") {
-                    bool is_demo = doc["state"];
-                    if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
-                        currentConfig.demo_mode = is_demo;
-                        state_save();
-                        xSemaphoreGive(stateMutex);
-                    }
-                    webLog("[UI] Demo Mode turned %s", is_demo ? "ON" : "OFF");
-                }
-            }
+        unsigned long startAttempt = millis();
+        // 15-second timeout for STA
+        while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
+            delay(500);
         }
     }
-}
 
-// ── Main Task Loop (Core 0) ──
-void network_task_loop(void *pvParameters) {
-    // 1. WiFi Initialization
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(currentConfig.wifi_ssid, currentConfig.wifi_password);
-
-    unsigned long wifiStart = millis();
-    while (WiFi.status() != WL_CONNECTED && (millis() - wifiStart < 15000)) {
-        vTaskDelay(pdMS_TO_TICKS(500));
+    if (WiFi.status() != WL_CONNECTED) {
+        webLog(0, "warn", "STA connection failed. Starting SoftAP fallback.");
+        WiFi.mode(WIFI_AP_STA); // Keep STA active in background to allow dynamic reconnects if possible
+        WiFi.softAP("HyGrow-Setup", currentConfig.ap_pass);
+        webLog(0, "info", "SoftAP IP: " + WiFi.softAPIP().toString());
+    } else {
+        webLog(0, "info", "Wi-Fi Connected. IP: " + WiFi.localIP().toString());
     }
 
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.print("\n>>> WEB DIAGNOSE READY: http://");
-        Serial.println(WiFi.localIP());
+    // 2. Web Server & File System Mount
+    if (!LittleFS.begin()) {
+        webLog(0, "error", "LittleFS Mount Failed!");
     } else {
-        Serial.println("\n>>> WIFI FAILED - Connect to Web UI via fallback AP or re-configure via serial.");
-        // Advanced: You could launch an Access Point here if WiFi fails
-    }
-
-    // 2. Initialize LittleFS
-    if (!LittleFS.begin(true)) {
-        Serial.println("CRITICAL: LittleFS Mount Failed! Web UI will not load.");
-    } else {
-        // Serve all static files in the /data folder automatically!
         server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
     }
 
-    // 3. Initialize WebSockets & Server
+    // 3. ElegantOTA Mount
+    ElegantOTA.begin(&server);
+    ElegantOTA.onStart([]() { webLog(0, "info", "OTA Update Started"); });
+    ElegantOTA.onProgress([](size_t current, size_t final) {
+        // Throttle logs to prevent WS flood, log every 10%
+        static int lastPercent = 0;
+        int percent = (current * 100) / final;
+        if (percent - lastPercent >= 10) {
+            webLog(0, "info", "OTA Progress: " + String(percent) + "%");
+            lastPercent = percent;
+        }
+    });
+    ElegantOTA.onEnd([](bool success) {
+        if(success) webLog(0, "info", "OTA Update Complete. Rebooting...");
+        else webLog(0, "error", "OTA Update Failed");
+    });
+
+    // 4. WebSocket Mount
     ws.onEvent(onWsEvent);
     server.addHandler(&ws);
+
+    // 5. Start Server
     server.begin();
+    webLog(0, "info", "Web Server started on port 80");
+}
 
-    // 4. Initialize Firebase
-    sslClient.setInsecure(); // Skip certificate checking for simplicity
-    initializeApp(aClient, app, getAuth(userAuth), fbResult);
-    app.getApp<Firestore::Documents>(Docs);
+void networkTaskLoop() {
+    ElegantOTA.loop();
+    ws.cleanupClients();
 
-    unsigned long lastFbSend = 0;
-    unsigned long lastWsUpdate = 0;
+    unsigned long currentMillis = millis();
 
-    // 5. Infinite Core 0 Loop
-    while (true) {
-        // Must be called continuously to maintain Firebase connection and async tasks
-        app.loop();
-        ws.cleanupClients();
+    // 1-second cadence for Vitals
+    if (currentMillis - lastVitalsTime >= 1000) {
+        lastVitalsTime = currentMillis;
+        broadcastVitals();
+    }
 
-        unsigned long now = millis();
+    // Dynamic cadence for Data Push based on currentConfig.int_ws
+    if (currentMillis - lastDataTime >= currentConfig.int_ws) {
+        lastDataTime = currentMillis;
+        broadcastData();
+    }
+}
 
-        // ── Real-Time WebSockets Update (Every 1 Second) ──
-        if (now - lastWsUpdate > 1000) {
-            lastWsUpdate = now;
+void broadcastVitals() {
+    if (ws.count() == 0) return;
 
-            ConfigState cfg; SensorData data;
-            if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
-                cfg = currentConfig; data = currentData;
-                xSemaphoreGive(stateMutex);
-            }
+    StaticJsonDocument<256> doc;
+    doc["type"] = "vitals";
+    doc["rssi"] = WiFi.RSSI();
+    doc["free_heap"] = ESP.getFreeHeap();
+    doc["min_free_heap"] = ESP.getMinFreeHeap();
+    doc["uptime"] = millis() / 1000;
+    doc["wifi_status"] = (WiFi.status() == WL_CONNECTED) ? "connected" : "ap_mode";
+    // Placeholder for Firebase state; wire to your actual Firebase client status
+    doc["firebase_ready"] = (WiFi.status() == WL_CONNECTED && String(currentConfig.fb_api).length() > 0);
 
-            // Build lightweight JSON for the Dashboard graphs
-            JsonDocument wsDoc;
-            wsDoc["type"] = "data";
-            wsDoc["tds"]  = data.tds_ppm;
-            wsDoc["temp"] = data.dht_temp;
-            wsDoc["hum"]  = data.dht_hum;
-            wsDoc["w_t"]  = data.w_temp;
-            wsDoc["lux"]  = data.light_lux;
+    String payload;
+    serializeJson(doc, payload);
+    ws.textAll(payload);
+}
 
-            String wsStr;
-            serializeJson(wsDoc, wsStr);
-            ws.textAll(wsStr);
+void broadcastConfig() {
+    if (ws.count() == 0) return;
+
+    DynamicJsonDocument doc(1024);
+    doc["type"] = "config";
+    doc["wifi_ssid"] = currentConfig.wifi_ssid;
+    doc["fb_api"] = currentConfig.fb_api;
+    doc["fb_proj"] = currentConfig.fb_proj;
+    doc["fb_email"] = currentConfig.fb_email;
+    doc["fb_col"] = currentConfig.fb_col;
+    doc["dev_id"] = currentConfig.dev_id;
+    doc["ph_off"] = currentConfig.ph_offset;
+    doc["ph_slope"] = currentConfig.ph_slope;
+    doc["tds_k"] = currentConfig.tds_k;
+    doc["int_read"] = currentConfig.int_read;
+    doc["int_ws"] = currentConfig.int_ws;
+    doc["int_fb"] = currentConfig.int_fb;
+
+    // Send pins to UI for settings rendering
+    JsonArray pins = doc.createNestedArray("pins");
+    pins.add(currentConfig.pin_tds);
+    pins.add(currentConfig.pin_ph);
+    // Add other pins here as needed...
+
+    String payload;
+    serializeJson(doc, payload);
+    ws.textAll(payload);
+}
+
+void broadcastData() {
+    if (ws.count() == 0) return;
+
+    StaticJsonDocument<512> doc;
+    doc["type"] = "data";
+    doc["core_id_of_producer"] = 1; // Sensors run on core 1
+
+    // Assuming a global currentData struct populated by the sensor task
+    doc["tds"] = currentData.tds;
+    doc["temp"] = currentData.air_temp;
+    doc["hum"] = currentData.air_hum;
+    doc["w_t"] = currentData.water_temp;
+    doc["lux"] = currentData.lux;
+
+    // UI required fields
+    doc["wl_percent"] = currentData.wl_percent;
+    doc["ph_val"] = currentData.ph_val;
+    doc["vpd_kpa"] = currentData.vpd_kpa;
+
+    JsonArray sensors_enabled = doc.createNestedArray("sensor_enabled");
+    sensors_enabled.add(currentConfig.pin_tds >= 0);
+    sensors_enabled.add(currentConfig.pin_ph >= 0);
+    // Add logic for other sensors
+
+    JsonArray errors = doc.createNestedArray("errors");
+    // Add error logic if hardware reads fail (e.g., NaN returned)
+
+    String payload;
+    serializeJson(doc, payload);
+    ws.textAll(payload);
+}
+
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len) {
+    if (type == WS_EVT_CONNECT) {
+        webLog(0, "info", "WS Client Connected: " + String(client->id()));
+        broadcastConfig(); // Sync UI immediately
+    } else if (type == WS_EVT_DISCONNECT) {
+        webLog(0, "info", "WS Client Disconnected: " + String(client->id()));
+    } else if (type == WS_EVT_DATA) {
+        handleWebSocketMessage(arg, data, len);
+    }
+}
+
+void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
+    AwsFrameInfo *info = (AwsFrameInfo*)arg;
+    if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
+        data[len] = 0;
+        String msg = (char*)data;
+
+        StaticJsonDocument<512> doc;
+        DeserializationError err = deserializeJson(doc, msg);
+
+        if (err) {
+            webLog(0, "error", "WS Parse Error: " + String(err.c_str()));
+            return;
         }
 
-        // ── Firebase Upload (Every 10 Seconds) ──
-        if (now - lastFbSend > 10000 && app.ready()) {
-            lastFbSend = now;
+        String cmd = doc["command"].as<String>();
 
-            ConfigState cfg; SensorData data;
-            if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
-                cfg = currentConfig; data = currentData;
-                xSemaphoreGive(stateMutex);
-            }
-
-            // DYNAMIC FIREBASE PAYLOAD: Only add keys if the sensor is ON
-            Document<Values::Value> doc;
-
-            if (cfg.sensor_enabled[S_TDS])   doc.add("tds_ppm", Values::Value(Values::DoubleValue(data.tds_ppm)));
-            if (cfg.sensor_enabled[S_LIGHT]) doc.add("light_lux", Values::Value(Values::DoubleValue(data.light_lux)));
-            if (cfg.sensor_enabled[S_WTEMP]) doc.add("water_temp_c", Values::Value(Values::DoubleValue(data.w_temp)));
-
-            if (cfg.sensor_enabled[S_DHT]) {
-                doc.add("air_temp_c", Values::Value(Values::DoubleValue(data.dht_temp)));
-                doc.add("humidity_percent", Values::Value(Values::DoubleValue(data.dht_hum)));
-                doc.add("vpd_kpa", Values::Value(Values::DoubleValue(data.vpd_kpa)));
-            }
-
-            // Incomplete Sensors: Will only be pushed if the user stubbornly turns them ON in the UI
-            if (cfg.sensor_enabled[S_WL]) doc.add("water_level_pct", Values::Value(Values::DoubleValue(data.wl_percent)));
-            if (cfg.sensor_enabled[S_PH]) doc.add("ph_value", Values::Value(Values::DoubleValue(data.ph_val)));
-
-            String docPath = String(FIRESTORE_COLLECTION) + "/" + DEVICE_ID;
-
-            // Patch document (Create or Update)
-            Docs.patch(aClient, Firestore::Parent(SECRET_FIREBASE_PROJECT_ID), docPath,
-                       PatchDocumentOptions(DocumentMask(), DocumentMask(), Precondition()), doc, fbResult);
-
-            webLog("[FIREBASE] Payload Synced");
+        if (cmd == "save_wifi") {
+            strlcpy(currentConfig.wifi_ssid, doc["ssid"] | "", sizeof(currentConfig.wifi_ssid));
+            strlcpy(currentConfig.wifi_pass, doc["pass"] | "", sizeof(currentConfig.wifi_pass));
+            saveConfig();
+            broadcastConfig();
+            webLog(0, "info", "WiFi config saved. Reboot to apply.");
         }
-
-        // Yield 10ms to the underlying FreeRTOS networking stack
-        vTaskDelay(pdMS_TO_TICKS(10));
+        else if (cmd == "save_firebase") {
+            strlcpy(currentConfig.fb_api, doc["api"] | "", sizeof(currentConfig.fb_api));
+            strlcpy(currentConfig.fb_proj, doc["proj"] | "", sizeof(currentConfig.fb_proj));
+            strlcpy(currentConfig.fb_email, doc["email"] | "", sizeof(currentConfig.fb_email));
+            strlcpy(currentConfig.fb_pass, doc["pass"] | "", sizeof(currentConfig.fb_pass));
+            strlcpy(currentConfig.fb_col, doc["col"] | "", sizeof(currentConfig.fb_col));
+            saveConfig();
+            broadcastConfig();
+            webLog(0, "info", "Firebase config updated.");
+            // Add Firebase re-init call here if doing hot-swaps
+        }
+        else if (cmd == "calibrate_ph") {
+            currentConfig.ph_offset = doc["offset"] | currentConfig.ph_offset;
+            currentConfig.ph_slope = doc["slope"] | currentConfig.ph_slope;
+            saveConfig();
+            broadcastConfig();
+            webLog(0, "info", "pH Calibration saved.");
+        }
+        else if (cmd == "calibrate_tds") {
+            currentConfig.tds_k = doc["tds_k"] | currentConfig.tds_k;
+            saveConfig();
+            broadcastConfig();
+            webLog(0, "info", "TDS Calibration saved.");
+        }
+        else if (cmd == "factory_reset") {
+            webLog(0, "warn", "Factory reset initiated. Wiping NVS...");
+            Preferences prefs;
+            prefs.begin("hygrow", false);
+            prefs.clear();
+            prefs.end();
+            webLog(0, "warn", "NVS wiped. Rebooting in 2s...");
+            delay(2000);
+            ESP.restart();
+        }
+        else if (cmd == "reboot") {
+            webLog(0, "warn", "Manual reboot requested...");
+            delay(1000);
+            ESP.restart();
+        }
+        else if (cmd == "request_vitals") {
+            broadcastVitals();
+        }
     }
 }

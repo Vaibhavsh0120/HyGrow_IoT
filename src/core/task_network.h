@@ -1,13 +1,20 @@
-/*
- * ============================================================================
- * task_network.h — Core 0 Task Declaration
- * ============================================================================
- */
-#pragma once
+#ifndef TASK_NETWORK_H
+#define TASK_NETWORK_H
+
 #include <Arduino.h>
+#include <ESPAsyncWebServer.h>
 
-// The FreeRTOS task loop for networking (Runs on Core 0)
-void network_task_loop(void *pvParameters);
+// Externally accessible web server instance
+extern AsyncWebServer server;
+extern AsyncWebSocket ws;
 
-// Called by webLog() in state.cpp to send logs to the UI Terminal
-void broadcastLog(String msg);
+// Core task functions
+void initNetworkTask();
+void networkTaskLoop();
+
+// WebSocket broadcasters
+void broadcastVitals();
+void broadcastConfig();
+void broadcastData();
+
+#endif // TASK_NETWORK_H

@@ -1,37 +1,49 @@
+#include "sensors.h"
+#include "../core/state.h"
 #include <Arduino.h>
-#include "../../config.h"
 
-static int analogBuffer[30];
+// Assuming a standard 12-bit ADC for ESP32 and 3.3V reference
+#define VREF 3.3
+#define ADC_RES 4095.0
 
-void init_tds() {
-    analogReadResolution(12);
+void initTDS() {
+    if (currentConfig.pin_tds >= 0) {
+        // Only initialize if a valid pin is assigned in Web Doctor settings
+        pinMode(currentConfig.pin_tds, INPUT);
+        webLog(1, "info", "TDS sensor initialized on pin " + String(currentConfig.pin_tds));
+    } else {
+        webLog(1, "warn", "TDS sensor disabled (pin set to -1)");
+    }
 }
 
-// Median filter (DFRobot's algorithm)
-int getMedianNum(int bArray[], int iFilterLen) {
-    int bTab[iFilterLen];
-    for (int i = 0; i < iFilterLen; i++) bTab[i] = bArray[i];
-    for (int j = 0; j < iFilterLen - 1; j++) {
-        for (int i = 0; i < iFilterLen - j - 1; i++) {
-            if (bTab[i] > bTab[i + 1]) {
-                int tmp = bTab[i]; bTab[i] = bTab[i + 1]; bTab[i + 1] = tmp;
-            }
-        }
+float readTDS(float currentWaterTemp) {
+    // 1. Guard check: return 0.0 immediately if the sensor pin is undefined/disabled
+    if (currentConfig.pin_tds < 0) {
+        return 0.0;
     }
-    return (iFilterLen & 1) ? bTab[(iFilterLen - 1) / 2] : (bTab[iFilterLen / 2] + bTab[iFilterLen / 2 - 1]) / 2;
-}
 
-float read_tds(float water_temp_c) {
-    // Read 30 samples fast for filtering
-    for(int i=0; i < 30; i++) {
-        analogBuffer[i] = analogRead(PIN_TDS_SIG);
-        delay(2);
+    // 2. Read the raw analog value
+    int analogValue = analogRead(currentConfig.pin_tds);
+    float voltage = analogValue * (VREF / ADC_RES);
+
+    // 3. Apply Temperature Compensation
+    // If the water temp sensor is returning 0 or fails, default to standard 25°C
+    if (currentWaterTemp <= 0.0) {
+        currentWaterTemp = 25.0;
     }
-    float medianRaw = getMedianNum(analogBuffer, 30);
-    float avgVoltage = medianRaw * (3.3f / 4095.0f);
-    float compCoeff = 1.0 + 0.02 * (water_temp_c - 25.0);
-    float compVoltage = avgVoltage / compCoeff;
+    float compensationCoefficient = 1.0 + 0.02 * (currentWaterTemp - 25.0);
+    float compensationVoltage = voltage / compensationCoefficient;
 
-    float tdsValue = (133.42 * pow(compVoltage, 3) - 255.86 * pow(compVoltage, 2) + 857.39 * compVoltage) * 0.5;
+    // 4. Calculate TDS value and apply the live calibration K-factor from NVS
+    // Standard gravity formula multiplied by our dynamic offset/multiplier
+    float tdsValue = (133.42 * pow(compensationVoltage, 3)
+                    - 255.86 * pow(compensationVoltage, 2)
+                    + 857.39 * compensationVoltage) * 0.5 * currentConfig.tds_k;
+
+    // 5. Sanity bounds check
+    if (tdsValue < 0.0) {
+        tdsValue = 0.0;
+    }
+
     return tdsValue;
 }

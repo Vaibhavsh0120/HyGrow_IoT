@@ -1,61 +1,62 @@
-/*
- * ============================================================================
- * HyGrow_IoT.ino — Dual-Core ESP32-S3 Sensor & Web Pipeline
- * ============================================================================
- * Core 0: WiFi, LittleFS WebServer, WebSockets, Firebase Uploads.
- * Core 1: Sensor Readings, Timing Loops, NeoPixel Status.
- * ============================================================================
- */
-
 #include <Arduino.h>
 #include "src/core/state.h"
 #include "src/core/task_network.h"
 #include "src/core/task_sensor.h"
 
-// FreeRTOS Task Handles
+// Task handles
 TaskHandle_t NetworkTaskHandle;
 TaskHandle_t SensorTaskHandle;
 
+// Task wrappers for FreeRTOS
+void networkTaskWrapper(void *parameter) {
+    initNetworkTask();
+    for (;;) {
+        networkTaskLoop();
+        vTaskDelay(10 / portTICK_PERIOD_MS); // Yield to IDLE task
+    }
+}
+
+void sensorTaskWrapper(void *parameter) {
+    initSensorTask();
+    for (;;) {
+        sensorTaskLoop();
+        vTaskDelay(10 / portTICK_PERIOD_MS); // Yield to IDLE task
+    }
+}
+
 void setup() {
-    // 1. Initialize Serial purely for boot debugging and Web UI IP address
     Serial.begin(115200);
-    delay(1000);
+    delay(1000); // Give serial monitor time to connect
+    Serial.println("\n--- HyGrow IoT Booting ---");
 
-    Serial.println("\n╔══════════════════════════════════════════════════════════════╗");
-    Serial.println("║                HyGrow-IoT Booting (Dual-Core)                ║");
-    Serial.println("╚══════════════════════════════════════════════════════════════╝\n");
+    // 1. Initialize NVS and load all variables into currentConfig
+    initState();
 
-    // 2. Initialize Global State (Mutexes & NVS Preferences)
-    state_init();
-
-    // 3. Create Network & Web UI Task on Core 0
-    // Stack size: 16384 bytes (Required for Firebase & WebServer)
+    // 2. Pin Network Task to Core 0 (Handles Wi-Fi, OTA, WebSockets, LittleFS)
+    // Increased stack size to 10240 to handle ElegantOTA and NVS operations safely
     xTaskCreatePinnedToCore(
-        network_task_loop,   // Task function
-        "NetworkTask",       // Task name
-        16384,               // Stack size
-        NULL,                // Parameters
-        1,                   // Priority
-        &NetworkTaskHandle,  // Task handle
-        0                    // Core ID (0 = Network/WiFi)
+        networkTaskWrapper,
+        "NetworkTask",
+        10240,
+        NULL,
+        1,
+        &NetworkTaskHandle,
+        0
     );
 
-    // 4. Create Hardware & Sensor Task on Core 1
-    // Stack size: 8192 bytes
+    // 3. Pin Sensor Task to Core 1 (Handles analog reads, DHT, I2C)
     xTaskCreatePinnedToCore(
-        sensor_task_loop,    // Task function
-        "SensorTask",        // Task name
-        8192,                // Stack size
-        NULL,                // Parameters
-        1,                   // Priority
-        &SensorTaskHandle,   // Task handle
-        1                    // Core ID (1 = Application/Hardware)
+        sensorTaskWrapper,
+        "SensorTask",
+        4096,
+        NULL,
+        1,
+        &SensorTaskHandle,
+        1
     );
-
-    // 5. Delete the setup task so FreeRTOS takes full control
-    vTaskDelete(NULL);
 }
 
 void loop() {
-    // Intentionally left empty. FreeRTOS handles the loops in the tasks.
+    // FreeRTOS handles the tasks. We can just suspend the main loop task to save resources.
+    vTaskDelete(NULL);
 }

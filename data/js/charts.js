@@ -1,38 +1,114 @@
-// Lightweight Canvas Line Chart Engine
-const historyData = { tds: [], temp: [], hum: [], wt: [], lux: [] };
-const MAX_POINTS = 15; // 15 seconds of history
+/**
+ * HyGrow IoT - Charting & Data Export Module
+ * Handles high-performance Canvas API rendering and CSV generation.
+ */
 
-function drawChart(canvasId, dataArr, color = '#3b82f6') {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return;
+// Draws a standard single-value line chart with a gradient fill
+function drawChart(context, cvs, dataArr, colorStr) {
+    if(!cvs || !cvs.width || !context) return;
+    const w = cvs.width / window.devicePixelRatio;
+    const h = cvs.height / window.devicePixelRatio;
 
-    const ctx = canvas.getContext('2d');
-    // Ensure internal resolution matches CSS display size
-    const w = canvas.width = canvas.offsetWidth;
-    const h = canvas.height = canvas.offsetHeight;
+    context.clearRect(0, 0, w, h);
 
-    ctx.clearRect(0, 0, w, h);
-    if (dataArr.length < 2) return;
+    context.beginPath();
+    context.strokeStyle = colorStr;
+    context.lineWidth = 4;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
 
-    // Auto-scaling logic
-    let max = Math.max(...dataArr);
-    let min = Math.min(...dataArr);
-    if (max === min) { max += 10; min -= 10; } // Prevent div by zero
-    const range = max - min;
+    const step = w / (dataArr.length - 1);
+    const max = Math.max(...dataArr, 10); // Minimum scale of 10 to prevent flatlining at 0
 
-    // Draw Graph
-    ctx.beginPath();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
-    ctx.lineJoin = 'round';
+    dataArr.forEach((val, i) => {
+        const x = i * step;
+        const y = h - ((val / max) * h * 0.8) - 20;
+        if(i === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+    });
 
-    for (let i = 0; i < dataArr.length; i++) {
-        const x = (i / (MAX_POINTS - 1)) * w;
-        // Pad 20px on top and bottom so lines don't hit the absolute edge
-        const y = h - (((dataArr[i] - min) / range) * (h - 40) + 20);
+    // Soft glow effect
+    context.shadowBlur = 20;
+    context.shadowColor = colorStr === '#afc6ff' ? 'rgba(175, 198, 255, 0.4)' : 'rgba(78, 222, 163, 0.4)';
+    context.stroke();
+    context.shadowBlur = 0;
 
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+    // Fill gradient under line
+    context.lineTo(w, h);
+    context.lineTo(0, h);
+    context.closePath();
+
+    const gradient = context.createLinearGradient(0, 0, 0, h);
+    let rgb = colorStr === '#afc6ff' ? '175, 198, 255' : '78, 222, 163';
+    gradient.addColorStop(0, `rgba(${rgb}, 0.15)`);
+    gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+
+    context.fillStyle = gradient;
+    context.fill();
+}
+
+// Draws a dual-line chart (specifically for Air Temp & Humidity)
+function drawDualChart(context, cvs, dataArr1, dataArr2) {
+    if(!cvs || !cvs.width || !context) return;
+    const w = cvs.width / window.devicePixelRatio;
+    const h = cvs.height / window.devicePixelRatio;
+
+    context.clearRect(0, 0, w, h);
+
+    // Draw Data Array 1 (Humidity - Primary Color #afc6ff)
+    context.beginPath();
+    context.strokeStyle = '#afc6ff';
+    context.lineWidth = 3;
+    const step = w / (dataArr1.length - 1);
+
+    dataArr1.forEach((val, i) => {
+        const x = i * step;
+        const y = h - ((val / 100) * h * 0.8) - 20; // Scaled to 0-100%
+        if(i === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+    });
+    context.stroke();
+
+    // Draw Data Array 2 (Temp - Secondary Color #4edea3)
+    context.beginPath();
+    context.strokeStyle = '#4edea3';
+    context.lineWidth = 3;
+
+    dataArr2.forEach((val, i) => {
+        const x = i * step;
+        const y = h - ((val / 50) * h * 0.8) - 20; // Scaled to 0-50°C
+        if(i === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+    });
+    context.stroke();
+}
+
+// Exports a given array of data to a CSV file (Offline capability)
+function exportSeriesToCsv(sensorName, dataArr) {
+    if (!dataArr || dataArr.length === 0) {
+        alert("No data available to export.");
+        return;
     }
-    ctx.stroke();
+
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Reading Index,Value\n"; // Header
+
+    dataArr.forEach((val, index) => {
+        // Because we don't have NTP time yet, we use a simple reading index
+        csvContent += `${index},${val.toFixed(2)}\n`;
+    });
+
+    // Create a hidden link to trigger the download
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+
+    // Timestamp for filename
+    const date = new Date();
+    const dateString = `${date.getFullYear()}${(date.getMonth()+1).toString().padStart(2, '0')}${date.getDate().toString().padStart(2, '0')}`;
+
+    link.setAttribute("download", `hygrow_${sensorName}_${dateString}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 }

@@ -1,502 +1,375 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="auto">
+<html class="dark" lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="theme-color" content="#ffffff">
-    <title>HyGrow - System Monitor</title>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>Web Doctor - Hydroponics IoT</title>
+
+    <!-- External Fonts/Icons (Local hosting recommended for strict offline) -->
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com" rel="preconnect"/>
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+
+    <!-- Offline First Stylesheet (Contains your Tailwind compilation + liquid-glass) -->
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-    <!-- Mobile Navigation Header -->
-    <header id="mobile-header" class="mobile-header">
-        <button id="menu-toggle" class="menu-toggle" aria-label="Toggle navigation menu">
-            <span></span>
-            <span></span>
-            <span></span>
-        </button>
-        <h1 class="header-title">HyGrow</h1>
-        <button id="header-theme-toggle" class="header-theme-toggle" aria-label="Toggle theme">
-            <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="5"></circle>
-                <line x1="12" y1="1" x2="12" y2="3"></line>
-                <line x1="12" y1="21" x2="12" y2="23"></line>
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-                <line x1="1" y1="12" x2="3" y2="12"></line>
-                <line x1="21" y1="12" x2="23" y2="12"></line>
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-            </svg>
-        </button>
-    </header>
+<body class="bg-[#000000] text-on-background font-body-md h-screen w-screen overflow-hidden flex relative tracking-wide">
 
-    <!-- Sidebar Navigation -->
-    <aside id="sidebar" class="sidebar">
-        <div class="sidebar-header">
-            <div class="brand-container">
-                <div class="brand-logo">H</div>
-                <div class="brand-text">
-                    <div class="brand-title">HyGrow</div>
-                    <div class="brand-subtitle">Monitor</div>
-                </div>
-            </div>
-            <button id="close-menu" class="close-menu" aria-label="Close menu">&times;</button>
+    <!-- SIDE NAVIGATION SHELL -->
+    <nav class="liquid-glass rounded-3xl h-[calc(100vh-2rem)] w-20 lg:w-72 flex flex-col fixed left-4 top-4 z-40 py-6 px-2 lg:px-4 transition-all duration-300" id="sideNav">
+        <!-- Header -->
+        <div class="mb-8 flex flex-col gap-2 items-center lg:items-start overflow-hidden">
+            <h1 class="text-headline-md font-headline-md font-bold text-primary dark:text-primary tracking-tight hidden lg:block whitespace-nowrap">Web Doctor 🩺</h1>
+            <span class="material-symbols-outlined text-[32px] text-primary lg:hidden block">health_and_safety</span>
+            <span class="font-label-sm text-label-sm text-on-surface-variant hidden lg:block">v4.2.0-stable</span>
         </div>
+        <!-- Main Tabs -->
+        <ul class="flex-1 flex flex-col gap-2 overflow-y-auto hide-scrollbar items-center lg:items-stretch" id="nav-tabs">
+            <!-- Tabs injected by JS -->
+        </ul>
+    </nav>
 
-        <nav class="nav-menu">
-            <button class="nav-btn active" data-target="page-dashboard" aria-current="page">
-                <span class="nav-icon">▣</span>
-                <span class="nav-label">Dashboard</span>
-            </button>
-            <button class="nav-btn" data-target="page-tds">
-                <span class="nav-icon">◆</span>
-                <span class="nav-label">TDS Quality</span>
-            </button>
-            <button class="nav-btn" data-target="page-dht">
-                <span class="nav-icon">▲</span>
-                <span class="nav-label">Air Sensors</span>
-            </button>
-            <button class="nav-btn" data-target="page-wtemp">
-                <span class="nav-icon">◇</span>
-                <span class="nav-label">Water Temp</span>
-            </button>
-            <button class="nav-btn" data-target="page-light">
-                <span class="nav-icon">●</span>
-                <span class="nav-label">Light Level</span>
-            </button>
-            <button class="nav-btn" data-target="page-wl">
-                <span class="nav-icon">⊡</span>
-                <span class="nav-label">Water Level</span>
-            </button>
-            <button class="nav-btn" data-target="page-ph">
-                <span class="nav-icon">◉</span>
-                <span class="nav-label">pH Sensor</span>
-            </button>
-            <div class="nav-divider"></div>
-            <button class="nav-btn" data-target="page-settings">
-                <span class="nav-icon">⚙</span>
-                <span class="nav-label">Settings</span>
-            </button>
-            <button class="nav-btn" data-target="page-terminal">
-                <span class="nav-icon">›</span>
-                <span class="nav-label">Terminal</span>
-            </button>
-        </nav>
+    <!-- MAIN CANVAS -->
+    <main class="ml-[96px] lg:ml-[320px] flex-1 h-screen overflow-y-auto p-4 md:p-8 relative z-10 transition-all duration-300">
 
-        <div class="sidebar-footer">
-            <div class="status-badge">
-                <span class="status-dot"></span>
-                <span class="status-text">Connected</span>
-            </div>
-        </div>
-    </aside>
-
-    <!-- Overlay for Mobile Menu -->
-    <div id="menu-overlay" class="menu-overlay"></div>
-
-    <!-- Main Content Area -->
-    <main id="content" class="content">
-        <div id="incomplete-banner" class="warning-banner">
-            <span class="warning-text">⚠ Incomplete sensor code - data will not sync to Firebase</span>
-        </div>
-
-        <!-- Dashboard Page -->
-        <div id="page-dashboard" class="page active">
-            <div class="page-header">
-                <h1>System Dashboard</h1>
-                <p class="page-subtitle">Real-time hydroponic monitoring</p>
-            </div>
-
-            <div class="metrics-grid">
-                <div class="metric-card" id="card-tds" data-sensor="2">
-                    <div class="metric-status" id="status-tds"></div>
-                    <div class="metric-top">
-                        <span class="metric-label">TDS Quality</span>
-                        <span class="metric-unit">ppm</span>
-                    </div>
-                    <div class="metric-value"><span id="dash-tds">--</span></div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill" id="bar-tds" style="width: 0%"></div>
-                    </div>
-                    <button class="metric-toggle" id="toggle-tds" style="display: none;" onclick="toggleMetricSensor(2)">Turn ON</button>
+        <!-- PAGE: Dashboard & Vitals -->
+        <section class="page-section flex flex-col gap-8" id="page-0">
+            <header class="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-[rgba(255,255,255,0.08)] pb-4">
+                <div>
+                    <h2 class="font-headline-lg text-headline-lg text-white">System Overview</h2>
+                    <p class="font-body-md text-body-md text-on-surface-variant mt-1">Real-time telemetry and vitals stream.</p>
                 </div>
-
-                <div class="metric-card" id="card-temp" data-sensor="3">
-                    <div class="metric-status" id="status-temp"></div>
-                    <div class="metric-top">
-                        <span class="metric-label">Temperature</span>
-                        <span class="metric-unit">°C</span>
-                    </div>
-                    <div class="metric-value"><span id="dash-temp">--</span></div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill" id="bar-temp" style="width: 0%"></div>
-                    </div>
-                    <button class="metric-toggle" id="toggle-temp" style="display: none;" onclick="toggleMetricSensor(3)">Turn ON</button>
+                <div class="flex items-center gap-2 liquid-glass px-4 py-2 rounded-2xl">
+                    <span id="vital-link-dot" class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                    <span id="vital-link-text" class="font-label-sm text-label-sm text-secondary">LIVE SYS.LINK</span>
                 </div>
+            </header>
 
-                <div class="metric-card" id="card-hum" data-sensor="3">
-                    <div class="metric-status" id="status-hum"></div>
-                    <div class="metric-top">
-                        <span class="metric-label">Humidity</span>
-                        <span class="metric-unit">%</span>
-                    </div>
-                    <div class="metric-value"><span id="dash-hum">--</span></div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill" id="bar-hum" style="width: 0%"></div>
-                    </div>
-                    <button class="metric-toggle" id="toggle-hum" style="display: none;" onclick="toggleMetricSensor(3)">Turn ON</button>
+            <!-- Vitals Row -->
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
+                <div class="liquid-glass rounded-3xl p-5 md:p-6 flex flex-col gap-2 relative overflow-hidden group">
+                    <div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">wifi</span> <span class="hidden sm:inline">Uplink Status</span></span>
+                    <div class="font-data-num text-[16px] md:text-data-num text-white" id="dash-rssi">-- dBm</div>
                 </div>
-
-                <div class="metric-card" id="card-wt" data-sensor="5">
-                    <div class="metric-status" id="status-wt"></div>
-                    <div class="metric-top">
-                        <span class="metric-label">Water Temp</span>
-                        <span class="metric-unit">°C</span>
-                    </div>
-                    <div class="metric-value"><span id="dash-wt">--</span></div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill" id="bar-wt" style="width: 0%"></div>
-                    </div>
-                    <button class="metric-toggle" id="toggle-wt" style="display: none;" onclick="toggleMetricSensor(5)">Turn ON</button>
+                <div class="liquid-glass rounded-3xl p-5 md:p-6 flex flex-col gap-2 relative overflow-hidden group">
+                    <div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">memory</span> <span class="hidden sm:inline">Heap Free</span></span>
+                    <div class="font-data-num text-[16px] md:text-data-num text-white" id="dash-heap">-- KB</div>
                 </div>
-
-                <div class="metric-card" id="card-light" data-sensor="1">
-                    <div class="metric-status" id="status-light"></div>
-                    <div class="metric-top">
-                        <span class="metric-label">Light Level</span>
-                        <span class="metric-unit">lux</span>
-                    </div>
-                    <div class="metric-value"><span id="dash-lux">--</span></div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill" id="bar-lux" style="width: 0%"></div>
-                    </div>
-                    <button class="metric-toggle" id="toggle-light" style="display: none;" onclick="toggleMetricSensor(1)">Turn ON</button>
-                </div>
-
-                <div class="metric-card" id="card-wl" data-sensor="0">
-                    <div class="metric-status" id="status-wl"></div>
-                    <div class="metric-top">
-                        <span class="metric-label">Water Level</span>
-                        <span class="metric-unit">%</span>
-                    </div>
-                    <div class="metric-value"><span id="dash-wl">--</span></div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill" id="bar-wl" style="width: 0%"></div>
-                    </div>
-                    <button class="metric-toggle" id="toggle-wl" style="display: none;" onclick="toggleMetricSensor(0)">Turn ON</button>
-                </div>
-
-                <div class="metric-card" id="card-ph" data-sensor="4">
-                    <div class="metric-status" id="status-ph"></div>
-                    <div class="metric-top">
-                        <span class="metric-label">pH Level</span>
-                        <span class="metric-unit">pH</span>
-                    </div>
-                    <div class="metric-value"><span id="dash-ph">--</span></div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill" id="bar-ph" style="width: 0%"></div>
-                    </div>
-                    <button class="metric-toggle" id="toggle-ph" style="display: none;" onclick="toggleMetricSensor(4)">Turn ON</button>
-                </div>
-
-                <div class="metric-card" id="card-vpd" data-sensor="3">
-                    <div class="metric-status" id="status-vpd"></div>
-                    <div class="metric-top">
-                        <span class="metric-label">VPD</span>
-                        <span class="metric-unit">kPa</span>
-                    </div>
-                    <div class="metric-value"><span id="dash-vpd">--</span></div>
-                    <div class="metric-bar">
-                        <div class="metric-bar-fill" id="bar-vpd" style="width: 0%"></div>
-                    </div>
-                    <button class="metric-toggle" id="toggle-vpd" style="display: none;" onclick="toggleMetricSensor(3)">Turn ON</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- TDS Quality Page -->
-        <div id="page-tds" class="page">
-            <div class="page-header">
-                <h1>Water Conductivity</h1>
-                <p class="page-subtitle">TDS (Total Dissolved Solids) - GPIO 2</p>
-            </div>
-
-            <div class="control-card">
-                <div class="control-header">
-                    <h2>TDS Monitor</h2>
-                    <label class="switch">
-                        <input type="checkbox" id="tog-2" onchange="toggleSensor(2, this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="live-value-display">
-                    <div class="live-value"><span id="val-tds">--</span><span class="unit">ppm</span></div>
+                <div class="liquid-glass rounded-3xl p-5 md:p-6 flex flex-col gap-2 relative overflow-hidden group col-span-2 md:col-span-1">
+                    <div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">schedule</span> Uptime</span>
+                    <div class="font-data-num text-[16px] md:text-data-num text-white" id="dash-uptime">--</div>
                 </div>
             </div>
 
-            <div class="chart-card">
-                <canvas id="chart-tds"></canvas>
-            </div>
-        </div>
-
-        <!-- Air Temp & Humidity Page -->
-        <div id="page-dht" class="page">
-            <div class="page-header">
-                <h1>Air Environment</h1>
-                <p class="page-subtitle">Temperature & Humidity - GPIO 6</p>
-            </div>
-
-            <div class="control-card">
-                <div class="control-header">
-                    <h2>Air Sensors</h2>
-                    <label class="switch">
-                        <input type="checkbox" id="tog-3" onchange="toggleSensor(3, this.checked)">
-                        <span class="slider"></span>
-                    </label>
+            <!-- Telemetry Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
+                <!-- Card TDS -->
+                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 md:h-56 relative group">
+                    <div class="flex justify-between items-center">
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">water_drop</span> TDS Level</span>
+                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                    </div>
+                    <div class="flex-1 flex items-end">
+                        <div class="font-display-lg-mobile md:font-display-lg text-display-lg-mobile md:text-display-lg text-secondary"><span id="dash-val-tds">--</span> <span class="text-headline-md text-white/50 ml-1">ppm</span></div>
+                    </div>
                 </div>
-                <div class="dual-value-display">
-                    <div class="dual-value">
-                        <div class="value-item">
-                            <span class="value-label">Temperature</span>
-                            <span class="value-large"><span id="val-temp">--</span>°C</span>
+                <!-- Card Temp -->
+                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 md:h-56 relative group">
+                    <div class="flex justify-between items-center">
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">thermostat</span> Air Temp</span>
+                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                    </div>
+                    <div class="flex-1 flex items-end">
+                        <div class="font-display-lg-mobile md:font-display-lg text-display-lg-mobile md:text-display-lg text-primary"><span id="dash-val-atemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
+                    </div>
+                </div>
+                <!-- Card Hum -->
+                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 md:h-56 relative group md:col-span-2 xl:col-span-1">
+                    <div class="flex justify-between items-center">
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">cloud</span> Humidity</span>
+                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                    </div>
+                    <div class="flex-1 flex items-end">
+                        <div class="font-display-lg-mobile md:font-display-lg text-display-lg-mobile md:text-display-lg text-primary"><span id="dash-val-hum">--</span> <span class="text-headline-md text-white/50 ml-1">%</span></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE: Generic Sensor Detail -->
+        <section class="page-section flex-col gap-8 hidden" id="page-sensor">
+            <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[rgba(255,255,255,0.08)] pb-4">
+                <div>
+                    <h2 class="font-headline-lg text-headline-lg text-white flex items-center gap-4">
+                        <span class="material-symbols-outlined text-[32px]" id="sensor-icon">sensors</span>
+                        <span id="sensor-name">Sensor Details</span>
+                    </h2>
+                    <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">GPIO PIN: <span class="text-primary" id="sensor-pin">--</span></p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input checked="" class="sr-only peer" id="sensor-toggle" type="checkbox"/>
+                    <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+                    <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
+                </label>
+            </header>
+            <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" id="sensor-error">
+                <span class="material-symbols-outlined">warning</span> Sensor module missing or offline.
+            </div>
+            <div class="flex-1 liquid-glass rounded-3xl p-6 md:p-8 flex flex-col relative min-h-[400px]">
+                <div class="absolute top-6 md:top-8 right-6 md:right-8 text-right z-10">
+                    <div class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-1">Current Reading</div>
+                    <div class="font-display-lg text-display-lg text-secondary" id="sensor-current-val">--</div>
+                </div>
+                <div class="flex-1 w-full mt-16 md:mt-12 relative" id="sensor-canvas-container">
+                    <!-- Canvas injected by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE: Dual Sensor (Air Temp & Hum) -->
+        <section class="page-section flex-col gap-8 hidden" id="page-dual-sensor">
+            <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[rgba(255,255,255,0.08)] pb-4">
+                <div>
+                    <h2 class="font-headline-lg text-headline-lg text-white flex items-center gap-4">
+                        <span class="material-symbols-outlined text-[32px]">thermostat</span>
+                        <span>Air Temp &amp; Humidity</span>
+                    </h2>
+                    <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">GPIO PIN: <span class="text-primary">4</span></p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input checked="" class="sr-only peer" id="dual-sensor-toggle" type="checkbox"/>
+                    <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+                    <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
+                </label>
+            </header>
+            <div class="flex-1 liquid-glass rounded-3xl p-6 md:p-8 flex flex-col relative min-h-[400px]">
+                <div class="absolute top-6 md:top-8 right-6 md:right-8 flex gap-8 z-10 text-right">
+                    <div>
+                        <div class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-1">Temperature</div>
+                        <div class="font-display-lg text-display-lg text-secondary" id="sensor-dual-temp">-- <span class="text-headline-md text-white/50 ml-1">°C</span></div>
+                    </div>
+                    <div>
+                        <div class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-1">Humidity</div>
+                        <div class="font-display-lg text-display-lg text-primary" id="sensor-dual-hum">-- <span class="text-headline-md text-white/50 ml-1">%</span></div>
+                    </div>
+                </div>
+                <div class="flex-1 w-full mt-24 md:mt-16 relative">
+                    <canvas class="w-full h-full absolute inset-0" id="telemetryChartDual"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE: Live Calibration -->
+        <section class="page-section flex-col gap-8 hidden" id="page-7">
+            <header class="flex justify-between items-end pb-4 border-b border-[rgba(255,255,255,0.08)]">
+                <h2 class="font-headline-lg text-headline-lg text-white">Live Calibration</h2>
+            </header>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- TDS Calibration -->
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                    <h3 class="font-headline-md text-headline-md text-white flex items-center gap-2"><span class="material-symbols-outlined">water_drop</span> TDS Sensor</h3>
+                    <div class="bg-white/5 p-4 rounded-2xl border border-white/10">
+                        <div class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-1">Raw ADC Value</div>
+                        <div class="font-display-lg-mobile text-white" id="cal-tds-raw">--</div>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">Target Buffer Value (ppm) / K-Factor</label>
+                        <input id="cfg-tds-k" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-lg" type="number" step="0.01" value="1.00"/>
+                    </div>
+                    <button id="btn-cal-tds" class="w-full bg-secondary-container text-on-secondary-container font-label-md py-3 rounded-xl hover:brightness-110 transition-all mt-auto shadow-lg">Save TDS Calibration</button>
+                </div>
+                <!-- pH Calibration -->
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                    <h3 class="font-headline-md text-headline-md text-white flex items-center gap-2"><span class="material-symbols-outlined">science</span> pH Sensor</h3>
+                    <div class="bg-white/5 p-4 rounded-2xl border border-white/10">
+                        <div class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-1">Raw ADC Value</div>
+                        <div class="font-display-lg-mobile text-white" id="cal-ph-raw">--</div>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">Offset</label>
+                        <input id="cfg-ph-off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-lg" step="0.01" type="number" value="0.0"/>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">Slope</label>
+                        <input id="cfg-ph-slope" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-lg" step="0.01" type="number" value="1.0"/>
+                    </div>
+                    <button id="btn-cal-ph" class="w-full bg-secondary-container text-on-secondary-container font-label-md py-3 rounded-xl hover:brightness-110 transition-all mt-auto shadow-lg">Save pH Calibration</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE: System Settings -->
+        <section class="page-section flex-col gap-8 hidden" id="page-8">
+            <header class="flex justify-between items-end pb-4 border-b border-[rgba(255,255,255,0.08)]">
+                <h2 class="font-headline-lg text-headline-lg text-white">System Settings</h2>
+                <button id="btn-export-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
+                    <span class="material-symbols-outlined text-[20px]">download</span> Export CSV
+                </button>
+            </header>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 pb-12">
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                    <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Network Settings</h3>
+                    <p class="text-on-surface-variant text-body-md mb-2">Configure device network connection (Wi-Fi).</p>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">SSID</label>
+                        <input id="cfg-wifi-ssid" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Network Name" type="text"/>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">Password</label>
+                        <input id="cfg-wifi-pass" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                    </div>
+                    <button id="btn-save-wifi" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Update Network</button>
+                </div>
+
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                    <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Cloud Provisioning</h3>
+                    <p class="text-on-surface-variant text-body-md mb-2">Configure connection to Firebase RTDB.</p>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">Project ID</label>
+                        <input id="cfg-fb-proj" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="e.g. my-iot-project" type="text"/>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">Web API Key</label>
+                        <input id="cfg-fb-api" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="AIzaSy..." type="password"/>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">Email</label>
+                        <input id="cfg-fb-email" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="device@project.com" type="email"/>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">Password</label>
+                        <input id="cfg-fb-pass" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                    </div>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">Firestore Collection</label>
+                        <input id="cfg-fb-col" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="sensor_data" type="text"/>
+                    </div>
+                    <button id="btn-save-firebase" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Credentials</button>
+                </div>
+
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 md:col-span-2">
+                    <h3 class="font-headline-md text-headline-md text-white">Sensor Implementation Config</h3>
+                    <p class="text-on-surface-variant text-body-md mb-2">Manage physical hardware pinouts and status. (-1 disables sensor)</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-white font-label-md font-bold">Water Level</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-on-surface-variant font-label-sm">GPIO:</span>
+                                <input id="cfg-pin-wl" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="-1"/>
+                            </div>
                         </div>
-                        <div class="value-divider"></div>
-                        <div class="value-item">
-                            <span class="value-label">Humidity</span>
-                            <span class="value-large"><span id="val-hum">--</span>%</span>
+                        <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-white font-label-md font-bold">BH1750 Light</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-on-surface-variant font-label-sm">I2C SCL/SDA:</span>
+                                <span class="text-white text-sm">22 / 21</span>
+                            </div>
+                        </div>
+                        <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-white font-label-md font-bold">TDS Sensor</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-on-surface-variant font-label-sm">GPIO:</span>
+                                <input id="cfg-pin-tds" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="14"/>
+                            </div>
+                        </div>
+                        <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-white font-label-md font-bold">DHT22 Air</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-on-surface-variant font-label-sm">GPIO:</span>
+                                <input id="cfg-pin-dht" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="4"/>
+                            </div>
+                        </div>
+                        <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-white font-label-md font-bold">pH Sensor</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-on-surface-variant font-label-sm">GPIO:</span>
+                                <input id="cfg-pin-ph" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="32"/>
+                            </div>
+                        </div>
+                        <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-white font-label-md font-bold">DS18B20 Water</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-on-surface-variant font-label-sm">GPIO:</span>
+                                <input id="cfg-pin-wt" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="15"/>
+                            </div>
                         </div>
                     </div>
+                    <button id="btn-save-pins" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Pinout Config (Requires Reboot)</button>
                 </div>
-            </div>
 
-            <div class="chart-card">
-                <canvas id="chart-temp"></canvas>
-            </div>
-        </div>
-
-        <!-- Water Temp Page -->
-        <div id="page-wtemp" class="page">
-            <div class="page-header">
-                <h1>Water Temperature</h1>
-                <p class="page-subtitle">DS18B20 Sensor - GPIO 4</p>
-            </div>
-
-            <div class="control-card">
-                <div class="control-header">
-                    <h2>Water Temperature</h2>
-                    <label class="switch">
-                        <input type="checkbox" id="tog-5" onchange="toggleSensor(5, this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="live-value-display">
-                    <div class="live-value"><span id="val-wt">--</span><span class="unit">°C</span></div>
-                </div>
-            </div>
-
-            <div class="chart-card">
-                <canvas id="chart-wt"></canvas>
-            </div>
-        </div>
-
-        <!-- Light Page -->
-        <div id="page-light" class="page">
-            <div class="page-header">
-                <h1>Ambient Light</h1>
-                <p class="page-subtitle">BH1750 Sensor - I2C</p>
-            </div>
-
-            <div class="control-card">
-                <div class="control-header">
-                    <h2>Light Level</h2>
-                    <label class="switch">
-                        <input type="checkbox" id="tog-1" onchange="toggleSensor(1, this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="live-value-display">
-                    <div class="live-value"><span id="val-lux">--</span><span class="unit">lux</span></div>
-                </div>
-            </div>
-
-            <div class="chart-card">
-                <canvas id="chart-lux"></canvas>
-            </div>
-        </div>
-
-        <!-- Water Level Page -->
-        <div id="page-wl" class="page incomplete-page">
-            <div class="page-header">
-                <h1>Water Level</h1>
-                <p class="page-subtitle">Reservoir Level - GPIO 1</p>
-            </div>
-
-            <div class="control-card">
-                <div class="control-header">
-                    <h2>Water Level Sensor</h2>
-                    <label class="switch">
-                        <input type="checkbox" id="tog-0" onchange="toggleSensor(0, this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="placeholder-message">
-                    <p>Sensor implementation in progress</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- pH Sensor Page -->
-        <div id="page-ph" class="page incomplete-page">
-            <div class="page-header">
-                <h1>pH Level</h1>
-                <p class="page-subtitle">Lab-grade pH - GPIO 20</p>
-            </div>
-
-            <div class="control-card">
-                <div class="control-header">
-                    <h2>pH Sensor</h2>
-                    <label class="switch">
-                        <input type="checkbox" id="tog-4" onchange="toggleSensor(4, this.checked)">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="placeholder-message">
-                    <p>Sensor implementation in progress</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Settings Page -->
-        <div id="page-settings" class="page">
-            <div class="page-header">
-                <h1>Settings</h1>
-                <p class="page-subtitle">System configuration and preferences</p>
-            </div>
-
-            <div class="settings-grid">
-                <div class="settings-card">
-                    <div class="settings-header">
-                        <h2>Theme</h2>
-                        <p class="settings-description">Choose your preferred color scheme</p>
-                    </div>
-                    <div class="theme-selector">
-                        <button class="theme-option active" data-theme="auto" title="System Default">
-                            <span class="theme-name">Auto</span>
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 items-start border border-error/30 md:col-span-2">
+                    <h3 class="font-headline-md text-headline-md text-error flex items-center gap-2"><span class="material-symbols-outlined">warning</span> Memory &amp; Power</h3>
+                    <p class="text-on-surface-variant text-body-md mb-2">Perform hard system resets. Use with caution.</p>
+                    <div class="flex flex-col sm:flex-row gap-4 w-full">
+                        <button id="btn-reboot" class="flex-1 bg-white/5 border border-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/10 transition-all flex items-center justify-center gap-2">
+                            <span class="material-symbols-outlined text-[20px]">restart_alt</span> Reboot Device
                         </button>
-                        <button class="theme-option" data-theme="light" title="Light Mode">
-                            <span class="theme-name">Light</span>
-                        </button>
-                        <button class="theme-option" data-theme="dark" title="Dark Mode">
-                            <span class="theme-name">Dark</span>
+                        <button id="btn-factory-reset" class="flex-1 bg-error-container/20 border border-error/50 text-error font-label-md py-3 rounded-xl hover:bg-error-container/40 transition-all flex items-center justify-center gap-2">
+                            <span class="material-symbols-outlined text-[20px]">delete_forever</span> Factory Reset
                         </button>
                     </div>
                 </div>
+            </div>
+        </section>
 
-                <div class="settings-card">
-                    <div class="settings-header">
-                        <h2>Demo Mode</h2>
-                        <p class="settings-description">Generate mock sensor data for testing</p>
-                    </div>
-                    <label class="switch">
-                        <input type="checkbox" id="tog-demo" onchange="toggleDemo(this.checked)">
-                        <span class="slider"></span>
-                    </label>
+        <!-- PAGE: Terminal -->
+        <section class="page-section h-full flex-col hidden" id="page-9">
+            <header class="flex justify-between items-end pb-4 mb-4 border-b border-[rgba(255,255,255,0.08)]">
+                <h2 class="font-headline-lg text-headline-lg text-white">System Terminal</h2>
+                <div class="flex gap-2">
+                    <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors" id="btn-term-pause">Pause</button>
+                    <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors" id="btn-term-clear">Clear</button>
                 </div>
-
-                <div class="settings-card">
-                    <div class="settings-header">
-                        <h2>WiFi Configuration</h2>
-                        <p class="settings-description">Connect to your network</p>
-                    </div>
-                    <form id="wifi-form" class="config-form">
-                        <div class="form-group">
-                            <label for="wifi-ssid">SSID</label>
-                            <input type="text" id="wifi-ssid" placeholder="Network name" maxlength="32">
-                        </div>
-                        <div class="form-group">
-                            <label for="wifi-password">Password</label>
-                            <input type="password" id="wifi-password" placeholder="Network password" maxlength="64">
-                        </div>
-                        <button type="button" class="config-btn" onclick="saveWiFiConfig()">Save WiFi</button>
-                    </form>
-                </div>
-
-                <div class="settings-card">
-                    <div class="settings-header">
-                        <h2>Firebase Configuration</h2>
-                        <p class="settings-description">Cloud data sync settings</p>
-                    </div>
-                    <form id="firebase-form" class="config-form">
-                        <div class="form-group">
-                            <label for="firebase-api-key">API Key</label>
-                            <input type="text" id="firebase-api-key" placeholder="Firebase API Key">
-                        </div>
-                        <div class="form-group">
-                            <label for="firebase-project">Project ID</label>
-                            <input type="text" id="firebase-project" placeholder="Project ID" maxlength="32">
-                        </div>
-                        <div class="form-group">
-                            <label for="firebase-collection">Collection</label>
-                            <input type="text" id="firebase-collection" placeholder="Collection name" maxlength="64">
-                        </div>
-                        <button type="button" class="config-btn" onclick="saveFirebaseConfig()">Save Firebase</button>
-                    </form>
-                </div>
-
-                <div class="settings-card">
-                    <div class="settings-header">
-                        <h2>Firmware Update</h2>
-                        <p class="settings-description">Update device firmware</p>
-                    </div>
-                    <div class="firmware-section">
-                        <div class="firmware-info">
-                            <p id="current-version">Current: v1.0.0</p>
-                            <p id="latest-version">Latest: Checking...</p>
-                        </div>
-                        <button class="config-btn" onclick="checkFirmwareUpdate()">Check Updates</button>
-                        <button class="config-btn secondary" id="update-btn" onclick="updateFirmware()" style="display: none;">Update Now</button>
-                    </div>
-                </div>
-
-                <div class="settings-card info-card">
-                    <h3>System Information</h3>
-                    <div class="info-row">
-                        <span class="info-label">Device ID</span>
-                        <span class="info-value">ESP32S3_001</span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label">Board</span>
-                        <span class="info-value">ESP32-S3 N16R8</span>
-                    </div>
-                    <div class="info-row">
-                        <span class="info-label">Status</span>
-                        <span class="info-value connected">Connected</span>
-                    </div>
+            </header>
+            <div class="flex-1 liquid-glass rounded-3xl p-4 overflow-hidden relative">
+                <div class="absolute inset-0 p-6 overflow-y-auto font-label-md text-label-sm text-primary flex flex-col gap-2" id="terminal-output">
+                    <div><span class="text-secondary opacity-70">[SYS]</span> Terminal initialized. Listening for WSS events...</div>
                 </div>
             </div>
-        </div>
+        </section>
 
-        <!-- Terminal Page -->
-        <div id="page-terminal" class="page">
-            <div class="page-header">
-                <h1>System Console</h1>
-                <p class="page-subtitle">Real-time diagnostic messages and logs</p>
-            </div>
-
-            <div class="terminal-card">
-                <div class="terminal-header">
-                    <span class="terminal-title">Console Output</span>
-                    <button class="terminal-btn" id="clear-logs" title="Clear logs">Clear</button>
+        <!-- PAGE: Firmware Management -->
+        <section class="page-section flex-col gap-8 hidden" id="page-10">
+            <header class="flex justify-between items-end pb-4 border-b border-[rgba(255,255,255,0.08)]">
+                <h2 class="font-headline-lg text-headline-lg text-white">Firmware Management</h2>
+            </header>
+            <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 max-w-2xl">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="font-headline-md text-headline-md text-white">Firmware Update</span>
+                    <span class="font-label-sm text-label-sm text-secondary bg-secondary/10 px-2 py-1 rounded-lg border border-secondary/20">OTA</span>
                 </div>
-                <div id="term-out" class="terminal-output"></div>
+                <div class="flex flex-col gap-4">
+                    <p class="text-on-surface-variant text-body-md mb-2">Launch the ElegantOTA portal to upload a compiled .bin file directly to the ESP32.</p>
+                    <button id="btn-ota-portal" onclick="window.open('/update', '_blank')" class="w-full bg-primary-container text-on-primary-container font-label-md text-label-md py-3 px-4 rounded-xl flex items-center justify-center gap-2 hover:brightness-110 transition-all shadow-lg">
+                        <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">system_update_alt</span>
+                        <span class="whitespace-nowrap">Open OTA Portal</span>
+                    </button>
+                </div>
             </div>
-        </div>
+        </section>
+
     </main>
 
+    <!-- Load Local Modular Scripts -->
     <script src="js/charts.js"></script>
     <script src="js/app.js"></script>
+
 </body>
 </html>
