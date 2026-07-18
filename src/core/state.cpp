@@ -106,17 +106,15 @@ void state_init()
   currentConfig.demo_mode        = prefs.getBool("demo", DEFAULT_DEMO_MODE);
   currentConfig.firebase_enabled = prefs.getBool("fb_en", DEFAULT_FIREBASE_ENABLED);
 
-  // Feature flags — one NVS key per sensor: "en_0" .. "en_N". Every sensor
-  // defaults to DEFAULT_SENSOR_ENABLED (true) except pH (S_PH), which uses
-  // its own DEFAULT_PH_SENSOR_ENABLED (false) — see config.h for why. This
-  // only matters on first boot / after a factory reset; once a value is
-  // saved to NVS, that saved value always wins over either default.
+  // Feature flags — one NVS key per sensor: "en_0" .. "en_N". Each sensor's
+  // default comes from DEFAULT_SENSOR_ENABLED[i] in config.h. This only
+  // matters on first boot / after a factory reset; once a value is saved to
+  // NVS, that saved value always wins over the compiled default.
   for (int i = 0; i < S_COUNT; ++i)
   {
     char k[8];
     snprintf(k, sizeof(k), "en_%d", i);
-    bool defaultForThisSensor = (i == S_PH) ? DEFAULT_PH_SENSOR_ENABLED : DEFAULT_SENSOR_ENABLED;
-    currentConfig.sensor_enabled[i] = prefs.getBool(k, defaultForThisSensor);
+    currentConfig.sensor_enabled[i] = prefs.getBool(k, DEFAULT_SENSOR_ENABLED[i]);
   }
 
   // Init telemetry

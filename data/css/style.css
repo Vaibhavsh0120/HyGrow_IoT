@@ -3,79 +3,93 @@
    ========================================================================== */
 
 /*
- * Offline-First Fonts (Part 5.10)
+ * Offline-First Fonts
  * ------------------------------------------------------------------------
- * These used to be loaded from fonts.googleapis.com/fonts.gstatic.com,
- * which directly contradicted the README's "Offline-First" / "no external
- * CDNs" claim: on a real SoftAP-only deployment with no uplink, those two
- * <link> tags in index.html simply fail, and the UI falls back to system
- * fonts and literal icon-ligature text (e.g. the word "wifi" printed
- * instead of the Wi-Fi icon).
+ * This device may only ever be reachable over its own SoftAP with no
+ * internet uplink at all, so every font/icon byte the UI needs ships in
+ * data/fonts/ and is loaded via @font-face below — no Google Fonts <link>,
+ * no CDN, no network request of any kind. index.html has no font-related
+ * <link> tag other than this stylesheet itself.
  *
- * @font-face below points at local files under data/fonts/, consistent
- * with how the rest of this stylesheet is already bundled locally instead
- * of pulled from a CDN. The two <link rel="stylesheet" href="https://fonts...">
- * tags have been removed from index.html.
- *
- * IMPORTANT — build step still required: the actual .woff2 binaries are
- * NOT included in this patch (they could not be fetched from this build
- * environment's sandboxed network, which only allows a small package-
- * registry allowlist and not fonts.gstatic.com). Before flashing
- * LittleFS, download these once and drop them in data/fonts/:
- *   - Space Grotesk (400/500/600/700)  -> https://fonts.google.com/specimen/Space+Grotesk
- *   - Inter (400/500/600)              -> https://fonts.google.com/specimen/Inter
- *   - Material Symbols Outlined (variable, FILL 0..1, weight 100..700)
- *                                       -> https://fonts.google.com/icons
- * google-webfonts-helper (https://gwfh.mranftl.com/fonts) is the easiest
- * way to get self-hostable woff2 files + matching @font-face CSS for the
- * first two. Until the files are added, the `local()` fallback below means
- * the UI degrades to system fonts / a literal icon-name fallback instead
- * of failing to load anything at all.
+ * Only two font families are ever actually rendered (see the `!important`
+ * rules further down that route every font-* utility class to one of
+ * them): 'Outfit' for headings/labels/body text, and 'JetBrains Mono' for
+ * telemetry numbers, vitals, and the terminal. 'Material Symbols Outlined'
+ * is the icon font. All four .woff2 files live in data/fonts/ and ship as
+ * part of the LittleFS image, so they're on the device from first boot —
+ * nothing to download, ever.
  */
 @font-face {
-    font-family: 'Space Grotesk';
-    font-style: normal;
-    font-weight: 400 700;
-    font-display: swap;
-    src:
-        local('Space Grotesk'),
-        url('../fonts/space-grotesk.woff2') format('woff2');
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/Outfit-Regular.woff2') format('woff2');
 }
 
 @font-face {
-    font-family: 'Inter';
-    font-style: normal;
-    font-weight: 400 600;
-    font-display: swap;
-    src:
-        local('Inter'),
-        url('../fonts/inter.woff2') format('woff2');
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../fonts/Outfit-Bold.woff2') format('woff2');
 }
 
 @font-face {
-    font-family: 'Material Symbols Outlined';
-    font-style: normal;
-    font-weight: 100 700;
-    font-display: block;
-    src:
-        local('Material Symbols Outlined'),
-        url('../fonts/material-symbols-outlined.woff2') format('woff2');
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/JetBrainsMono-Regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+  src: url('../fonts/material-symbols-outlined.woff2') format('woff2');
 }
 
 .material-symbols-outlined {
-    font-family: 'Material Symbols Outlined';
-    font-weight: normal;
-    font-style: normal;
-    font-size: 24px;
-    line-height: 1;
-    letter-spacing: normal;
-    text-transform: none;
-    display: inline-block;
-    white-space: nowrap;
-    word-wrap: normal;
-    direction: ltr;
-    font-feature-settings: 'liga';
-    -webkit-font-smoothing: antialiased;
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-feature-settings: 'liga';
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Headings, dashboard text handles, menu tabs, and body copy use Outfit.
+   This overrides the Tailwind-generated font-family declarations further
+   below in this file (which still say Space Grotesk / Inter from the
+   original design source) — Outfit and JetBrains Mono are the only two
+   families actually shipped, so every font-* utility class is routed to
+   one of them here regardless of what the compiled Tailwind output says. */
+[class*="font-headline"],
+[class*="font-label"],
+body {
+  font-family: 'Outfit', sans-serif !important;
+}
+
+[class*="font-body"] {
+  font-family: 'Outfit', sans-serif !important;
+  font-weight: 400;
+}
+
+/* Telemetry number readouts, grid metrics, vitals data, and terminal output use JetBrains Mono */
+[class*="font-data-num"],
+[class*="font-display"],
+#terminal-output {
+  font-family: 'JetBrains Mono', monospace !important;
 }
 
 /*

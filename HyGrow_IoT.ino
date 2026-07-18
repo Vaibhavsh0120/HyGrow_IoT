@@ -158,8 +158,9 @@ void setup()
     // available the moment the sensor task begins reporting health.
     ledStatusInit();
 
-    // 2. Pin Network Task to Core 0 (Handles Wi-Fi, OTA, WebSockets, LittleFS)
-    // Increased stack size to 10240 to handle ElegantOTA and NVS operations safely
+    // 2. Pin Network Task to Core 0 (Handles Wi-Fi, the web server, WebSockets, LittleFS)
+    // Stack size is 10240 to give HTTPClient/WiFiClientSecure (Firestore uploads)
+    // and NVS operations comfortable headroom.
     xTaskCreatePinnedToCore(
         networkTaskWrapper,
         "NetworkTask",

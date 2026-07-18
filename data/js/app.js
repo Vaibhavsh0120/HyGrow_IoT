@@ -484,7 +484,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 pass: document.getElementById('cfg-wifi-pass').value
             };
             websocket.send(JSON.stringify(payload));
-            btnSaveWifi.innerText = "Saved! Rebooting...";
+            btnSaveWifi.innerText = "Saved!";
+            setTimeout(() => { btnSaveWifi.innerText = "Update Network"; }, 2000);
+            if(confirm("Wi-Fi credentials saved. The ESP32 must reboot to connect with the new credentials. Reboot now?")) {
+                websocket.send(JSON.stringify({command: "reboot"}));
+            }
         });
     }
 

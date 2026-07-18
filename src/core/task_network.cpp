@@ -371,10 +371,9 @@ void broadcastConfig()
     doc["ph_slope"] = currentConfig.ph_slope;
     doc["tds_k"] = currentConfig.tds_k;
 
-    // Feature flags (Part 1) — no reboot required for any of these three.
+    // Feature flags — no reboot required for either of these.
     doc["demo"] = currentConfig.demo_mode;
     doc["fb_en"] = currentConfig.firebase_enabled;
-    doc["ota_en"] = currentConfig.ota_enabled;
 
     // Timing intervals (Part 5.8) — all three are already fully wired into
     // the firmware; this just exposes them for a "Timing" Settings card.
@@ -602,10 +601,9 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
         else if (cmd == "save_features")
         {
             // Any field the client omits leaves that flag unchanged — same
-            // "omit-to-leave-unchanged" pattern used by save_pins. None of
-            // these three require a reboot: demo_mode/firebase_enabled are
-            // checked live every cycle, ota_enabled is checked at
-            // request-handling time in configureOtaRoutes().
+            // "omit-to-leave-unchanged" pattern used by save_pins. Neither
+            // flag requires a reboot: both demo_mode and firebase_enabled
+            // are checked live, every cycle.
             currentConfig.demo_mode = doc["demo"] | currentConfig.demo_mode;
             currentConfig.firebase_enabled = doc["fb_en"] | currentConfig.firebase_enabled;
             state_save();

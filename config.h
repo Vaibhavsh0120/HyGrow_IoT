@@ -52,13 +52,6 @@
 #define DEFAULT_FIRESTORE_COLLECTION FALLBACK_FIRESTORE_COLLECTION // [NVS] fb_col
 #define SERIAL_BAUD_RATE 115200                                  // compile-time only
 
-// ---------- Firmware version ----------
-// Bump this on every release. Reported in vitals so the web UI can show it.
-#define FW_VERSION_MAJOR 1
-#define FW_VERSION_MINOR 1
-#define FW_VERSION_PATCH 0
-#define FW_VERSION_STRING "1.1.0"
-
 // ---------- WiFi / AP fallback ----------
 #define DEFAULT_STA_TIMEOUT_MS 15000                       // compile-time
 #define DEFAULT_AP_SSID "HyGrow-Setup"                     // compile-time
@@ -117,17 +110,6 @@
 // [NVS] tds_k  — scale factor applied on top of the polynomial output
 #define DEFAULT_TDS_K 1.0f
 
-// ---------- Feature flags ----------
-#define DEFAULT_DEMO_MODE false       // [NVS] demo
-#define DEFAULT_FIREBASE_ENABLED true // [NVS] fb_en
-#define DEFAULT_SENSOR_ENABLED true   // [NVS] s_en_<i> (per sensor) — applies to every
-                                       // sensor EXCEPT pH, which has its own override
-                                       // below. pH needs a calibrated probe in real
-                                       // liquid to read anything meaningful, so it
-                                       // ships off by default; every other sensor
-                                       // ships on.
-#define DEFAULT_PH_SENSOR_ENABLED false // [NVS] s_en_4 (S_PH) — off by default
-
 // ---------- Sensor IDs ----------
 // Order MUST match ERROR_COLORS[] in src/utils/led_status.cpp, and is
 // mirrored by TAB_TO_SENSOR_ID's string keys in data/js/app.js (JS uses
@@ -145,6 +127,27 @@ enum SensorID
     S_FIREBASE = 99 // pseudo-id used only for LED error signalling
 };
 
+// ---------- Feature flags ----------
+#define DEFAULT_DEMO_MODE false       // [NVS] demo
+#define DEFAULT_FIREBASE_ENABLED true // [NVS] fb_en
+
+// [NVS] s_en_<i> (per sensor) — one on/off default per SensorID, indexed
+// the same way as the enum above (S_WL, S_LIGHT, S_TDS, S_DHT, S_PH,
+// S_WTEMP). Only used on first boot / after a factory reset; once a value
+// is saved to NVS, that saved value always wins over this default.
+//
+// Every sensor ships ON except pH (S_PH), which ships OFF: pH needs a
+// probe calibrated in real liquid to read anything meaningful, so it stays
+// disabled until the user calibrates it and switches it on themselves.
+static constexpr bool DEFAULT_SENSOR_ENABLED[S_COUNT] = {
+    true,  // S_WL
+    true,  // S_LIGHT
+    true,  // S_TDS
+    true,  // S_DHT
+    false, // S_PH — off by default, see note above
+    true,  // S_WTEMP
+};
+
 // ---------- Log levels (for WS log frames) ----------
 #define LOG_INFO 0
 #define LOG_WARN 1
@@ -152,5 +155,7 @@ enum SensorID
 
 // ---------- Sanity checks ----------
 static_assert(S_COUNT == 6, "S_COUNT must stay in sync with SensorID enum");
+static_assert(sizeof(DEFAULT_SENSOR_ENABLED) / sizeof(DEFAULT_SENSOR_ENABLED[0]) == S_COUNT,
+              "DEFAULT_SENSOR_ENABLED must have exactly S_COUNT entries");
 
 #endif // HYGROW_CONFIG_H
