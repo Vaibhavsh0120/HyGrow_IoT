@@ -19,12 +19,23 @@ static const char *AUTH_NVS_NS = "hygrow_auth";
 static char s_adminPass[65] = {0};  // "" == unconfigured (no password set yet)
 static char s_sessionToken[33] = {0}; // "" == no valid session token issued
 
+// Crash/reboot diagnostics — its own tiny NVS namespace, independent of
+// both NVS_NS (ordinary config, wiped on factory reset) and AUTH_NVS_NS
+// (password/token, wiped on either reset type). A crash reason is exactly
+// the kind of thing you still want to see AFTER a factory reset wipes
+// everything else, so it deliberately lives outside that blast radius.
+static Preferences crashPrefs;
+static const char *CRASH_NVS_NS = "hygrow_crash";
+static char s_lastResetReason[64] = {0}; // "" == none recorded yet (first boot)
+
 // ----------------------------------------------------------------------------
 // webLog() — single source of truth for BOTH the Serial monitor and the web
 // Terminal (data/index.html Page 9). Every call site across the firmware
-// (sensor drivers, task_sensor.cpp, task_network.cpp, HyGrow_IoT.ino) already
-// goes through this one function, so fixing it here is enough to make the
-// two outputs match everywhere at once — no call sites need to change.
+// (sensor drivers, task_sensor.cpp, the split task_network.cpp/auth.cpp/
+// firebase.cpp/websocket.cpp/command_handlers.cpp files, HyGrow_IoT.ino)
+// already goes through this one function, so fixing it here is enough to
+// make the two outputs match everywhere at once — no call sites need to
+// change.
 // ----------------------------------------------------------------------------
 
 // Small ring buffer of recent log lines, kept purely in RAM (never persisted
@@ -111,7 +122,7 @@ void webLog(const String &msg) { webLog(0, LOG_INFO, msg); }
 // Replays the ring buffer to one newly-authenticated client, oldest first,
 // so its Terminal reads top-to-bottom the same way the Serial monitor's
 // scrollback would if you'd been connected since boot. Called from
-// handleAuthCommand() in task_network.cpp right after a client passes auth.
+// handleAuthCommand() in auth.cpp right after a client passes auth.
 void webLogSendBacklog(AsyncWebSocketClient *client)
 {
   if (!client || s_logCount == 0) return;
@@ -144,7 +155,7 @@ static void loadStr(Preferences &store, const char *key, char *dst, size_t dstSi
 }
 
 // Same [500, 60000]ms bounds save_intervals already enforces before writing
-// to NVS (task_network.cpp) — reapplied here at load time too, so a value
+// to NVS (command_handlers.cpp) — reapplied here at load time too, so a value
 // that predates that clamp (an older NVS blob) or got corrupted on the wire
 // can't leave e.g. interval_read_ms at 0. A 0ms read interval would make
 // sensorTaskLoop()'s "time since last read >= interval" check always true,
@@ -191,7 +202,7 @@ void state_init()
   loadStr(prefs, "fb_col", currentConfig.fb_collection, sizeof(currentConfig.fb_collection), DEFAULT_FB_COLLECTION);
   loadStr(prefs, "dev_id", currentConfig.device_id, sizeof(currentConfig.device_id), DEFAULT_DEVICE_ID);
 
-  // Timing. Clamped the same as save_intervals (task_network.cpp) so an old
+  // Timing. Clamped the same as save_intervals (command_handlers.cpp) so an old
   // pre-clamp NVS value or corrupted entry can't leave an interval at an
   // unsafe extreme (see clampInterval()'s comment above for why 0 is
   // dangerous specifically).
@@ -235,52 +246,88 @@ void state_init()
   // Init telemetry
   memset(&currentSensors, 0, sizeof(currentSensors));
   memset(&currentVitals, 0, sizeof(currentVitals));
+
+  // Crash/reboot diagnostics — mount the namespace and pull in whatever
+  // reason was recorded on the PREVIOUS boot, before state_log_reset_reason()
+  // (called from the .ino's setup(), right after this) overwrites it with
+  // the current one. See the long comment on both functions in state.h.
+  if (!crashPrefs.begin(CRASH_NVS_NS, false))
+  {
+    crashPrefs.clear();
+    crashPrefs.begin(CRASH_NVS_NS, false);
+  }
+  loadStr(crashPrefs, "reason", s_lastResetReason, sizeof(s_lastResetReason), "");
 }
 
 // ---------- Save ----------
+// Every Preferences::putX() call below returns the number of bytes it
+// actually wrote — 0 means the write failed (full/worn/corrupted NVS
+// partition, or the namespace handle isn't open in read-write mode). The
+// old version of this function ignored every one of those return values
+// and always reported success, so a failed save looked identical to a
+// successful one from the caller's (and therefore the user's) point of
+// view: the Web UI would cheerfully show "Saved!" while nothing had
+// actually reached flash. We now AND every result together into `ok` and
+// return that, so a single failed field fails the whole save — the
+// command handlers that call state_save() surface this as "Failed to
+// save" instead of a blind ack.
+//
+// Deliberately non-short-circuiting (plain `&=`, not `&&` with early
+// return): every field still gets its write attempted even if an earlier
+// one failed, so one bad key doesn't leave the rest silently unsaved too.
 bool state_save()
 {
-  prefs.putString("wifi_ssid", currentConfig.wifi_ssid);
-  prefs.putString("wifi_pass", currentConfig.wifi_pass);
-  prefs.putString("ap_pass", currentConfig.ap_pass);
+  bool ok = true;
 
-  prefs.putString("fb_api", currentConfig.fb_api_key);
-  prefs.putString("fb_proj", currentConfig.fb_project);
-  prefs.putString("fb_email", currentConfig.fb_email);
-  prefs.putString("fb_pass", currentConfig.fb_pass);
-  prefs.putString("fb_col", currentConfig.fb_collection);
-  prefs.putString("dev_id", currentConfig.device_id);
+  ok &= prefs.putString("wifi_ssid", currentConfig.wifi_ssid) > 0 || strlen(currentConfig.wifi_ssid) == 0;
+  ok &= prefs.putString("wifi_pass", currentConfig.wifi_pass) > 0 || strlen(currentConfig.wifi_pass) == 0;
+  ok &= prefs.putString("ap_pass", currentConfig.ap_pass) > 0 || strlen(currentConfig.ap_pass) == 0;
 
-  prefs.putUInt("int_read", currentConfig.interval_read_ms);
-  prefs.putUInt("int_ws", currentConfig.interval_ws_ms);
-  prefs.putUInt("int_vit", currentConfig.interval_vitals_ms);
-  prefs.putUInt("int_fb", currentConfig.interval_fb_ms);
+  ok &= prefs.putString("fb_api", currentConfig.fb_api_key) > 0 || strlen(currentConfig.fb_api_key) == 0;
+  ok &= prefs.putString("fb_proj", currentConfig.fb_project) > 0 || strlen(currentConfig.fb_project) == 0;
+  ok &= prefs.putString("fb_email", currentConfig.fb_email) > 0 || strlen(currentConfig.fb_email) == 0;
+  ok &= prefs.putString("fb_pass", currentConfig.fb_pass) > 0 || strlen(currentConfig.fb_pass) == 0;
+  ok &= prefs.putString("fb_col", currentConfig.fb_collection) > 0 || strlen(currentConfig.fb_collection) == 0;
+  ok &= prefs.putString("dev_id", currentConfig.device_id) > 0 || strlen(currentConfig.device_id) == 0;
 
-  prefs.putFloat("ph_off", currentConfig.ph_offset);
-  prefs.putFloat("ph_slope", currentConfig.ph_slope);
-  prefs.putFloat("tds_k", currentConfig.tds_k);
+  // Numeric/bool putX() calls write a fixed-size value that's never empty,
+  // so unlike the strings above, 0 bytes written always means a real
+  // failure here — no "empty string" carve-out needed.
+  ok &= prefs.putUInt("int_read", currentConfig.interval_read_ms) > 0;
+  ok &= prefs.putUInt("int_ws", currentConfig.interval_ws_ms) > 0;
+  ok &= prefs.putUInt("int_vit", currentConfig.interval_vitals_ms) > 0;
+  ok &= prefs.putUInt("int_fb", currentConfig.interval_fb_ms) > 0;
 
-  // Pins (Changed to putInt to support -1 disabled flag)
-  prefs.putInt("pin_dht", currentConfig.pin_dht);
-  prefs.putInt("pin_ds", currentConfig.pin_ds18b20);
-  prefs.putInt("pin_tds", currentConfig.pin_tds);
-  prefs.putInt("pin_ph", currentConfig.pin_ph);
-  prefs.putInt("pin_sda", currentConfig.pin_lux_sda);
-  prefs.putInt("pin_scl", currentConfig.pin_lux_scl);
-  prefs.putInt("pin_wl", currentConfig.pin_wl);
-  prefs.putInt("pin_wlp", currentConfig.pin_wl_power);
+  ok &= prefs.putFloat("ph_off", currentConfig.ph_offset) > 0;
+  ok &= prefs.putFloat("ph_slope", currentConfig.ph_slope) > 0;
+  ok &= prefs.putFloat("tds_k", currentConfig.tds_k) > 0;
+
+  // Pins (int, supports -1 disabled flag)
+  ok &= prefs.putInt("pin_dht", currentConfig.pin_dht) > 0;
+  ok &= prefs.putInt("pin_ds", currentConfig.pin_ds18b20) > 0;
+  ok &= prefs.putInt("pin_tds", currentConfig.pin_tds) > 0;
+  ok &= prefs.putInt("pin_ph", currentConfig.pin_ph) > 0;
+  ok &= prefs.putInt("pin_sda", currentConfig.pin_lux_sda) > 0;
+  ok &= prefs.putInt("pin_scl", currentConfig.pin_lux_scl) > 0;
+  ok &= prefs.putInt("pin_wl", currentConfig.pin_wl) > 0;
+  ok &= prefs.putInt("pin_wlp", currentConfig.pin_wl_power) > 0;
 
   for (int i = 0; i < S_COUNT; ++i)
   {
     char k[8];
     snprintf(k, sizeof(k), "en_%d", i);
-    prefs.putBool(k, currentConfig.sensor_enabled[i]);
+    ok &= prefs.putBool(k, currentConfig.sensor_enabled[i]) > 0;
   }
 
-  prefs.putBool("demo",   currentConfig.demo_mode);
-  prefs.putBool("fb_en", currentConfig.firebase_enabled);
+  ok &= prefs.putBool("demo", currentConfig.demo_mode) > 0;
+  ok &= prefs.putBool("fb_en", currentConfig.firebase_enabled) > 0;
 
-  return true;
+  if (!ok)
+  {
+    webLog(0, LOG_ERR, "state_save: one or more NVS writes failed — settings may not be fully persisted.");
+  }
+
+  return ok;
 }
 
 // ---------- Factory reset ----------
@@ -304,7 +351,7 @@ void state_factory_reset()
 // Single-owner auth (admin password + session token)
 // ============================================================================
 // There is exactly one account. The username is hardcoded to "admin" in the
-// WS auth handler (task_network.cpp) and is never stored anywhere — only the
+// WS auth handler (auth.cpp) and is never stored anywhere — only the
 // password (plaintext, by design: this is a LAN/SoftAP-only local appliance
 // with a single owner, not a multi-tenant networked service) and a random
 // session token live in NVS, in their own namespace (see the comment on the
@@ -393,4 +440,22 @@ void auth_reset()
   authPrefs.remove("token");
   s_adminPass[0] = '\0';
   s_sessionToken[0] = '\0';
+}
+
+// ============================================================================
+// Crash / reboot diagnostics
+// ============================================================================
+// Persists the CURRENT boot's reset reason to NVS so it survives to become
+// the "last reset reason" state_get_last_reset_reason() returns on the NEXT
+// boot. Called once from the .ino's setup(), immediately after state_init()
+// has already captured the previous value into s_lastResetReason above.
+void state_log_reset_reason(const char *reason)
+{
+  if (!reason) return;
+  crashPrefs.putString("reason", reason);
+}
+
+String state_get_last_reset_reason()
+{
+  return String(s_lastResetReason);
 }

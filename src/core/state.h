@@ -7,7 +7,8 @@
 // Forward declaration only — avoids pulling ESPAsyncWebServer.h (and its
 // AsyncTCP dependency) into every sensor_*.cpp that includes state.h just
 // for webLogSendBacklog()'s pointer parameter below. The real definition
-// lives in task_network.cpp/.h, which is where state.cpp gets it from.
+// lives in ESPAsyncWebServer.h, pulled in by task_network.h/task_network_internal.h,
+// which is where state.cpp gets it from.
 class AsyncWebSocketClient;
 
 // ---------- Runtime config (mirrors NVS) ----------
@@ -115,8 +116,32 @@ bool sensor_wl_read(float &percent);
 
 // ---------- API ----------
 void state_init();          // mount NVS, load config (defaults from config.h if unset)
-bool state_save();          // persist currentConfig to NVS
+// Persists currentConfig to NVS and returns true only if every field
+// actually made it to flash. Preferences::putX() returns the number of
+// bytes written (0 on failure, e.g. a full/worn/corrupted NVS partition),
+// so state_save() checks each call instead of assuming success — callers
+// (the command handlers in src/core/command_handlers.cpp) surface a real
+// "Failed to save" to the client instead of an unconditional ack.
+bool state_save();
 void state_factory_reset(); // wipe NVS + reboot
+
+// ---------- Crash / reboot diagnostics ----------
+// Persists WHY the device restarted (esp_reset_reason(), captured in the
+// .ino's setup()) into its own tiny NVS namespace, separate from both
+// NVS_NS (ordinary config) and AUTH_NVS_NS (password/token) — a crash
+// should never be lost alongside, or by, either of those. Call
+// state_log_reset_reason() once, early in setup(), with a human-readable
+// reason string; state_init() then makes the PREVIOUS boot's reason
+// available via state_get_last_reset_reason() before this call overwrites
+// it with the current one. This is what lets a browser opened well after a
+// crash still see (via the Terminal's log backlog) why the board came back
+// up, instead of that information only ever existing on a Serial monitor
+// that happened to be attached at the exact moment it happened.
+void state_log_reset_reason(const char *reason);
+// Returns the reset reason string recorded on the PREVIOUS boot (before
+// state_log_reset_reason() is called for the current one), or "" if none
+// was ever recorded (e.g. very first boot).
+String state_get_last_reset_reason();
 
 // ---------- Single-owner auth (admin password + session token) ----------
 // Deliberately its own tiny NVS namespace/lifecycle, NOT part of ConfigState/
@@ -124,7 +149,7 @@ void state_factory_reset(); // wipe NVS + reboot
 //   1. Every ordinary settings save (pins, Wi-Fi, calibration, ...) calls
 //      state_save() — if the password lived in ConfigState, every one of
 //      those saves would also rewrite the password blob for no reason.
-//   2. The BOOT-button "10s hold" reset (task_network.cpp) wipes ONLY the
+//   2. The BOOT-button "10s hold" reset (HyGrow_IoT.ino) wipes ONLY the
 //      admin password/token and explicitly must leave Wi-Fi, sensors, and
 //      calibration untouched. That's only possible if auth has its own
 //      NVS namespace, independent of the "hygrow" namespace state_save()
@@ -147,10 +172,10 @@ void auth_reset();                         // wipe ONLY the password + token (BO
 //      so a browser tab that (re)connects late still sees recent history
 //      instead of only whatever is logged AFTER it happens to be looking.
 //   3. Broadcasts a {"type":"log","core":...,"level":...,"msg":...} WS frame
-//      to already-authenticated clients (task_network.cpp defines ws and
-//      the auth gate) — this is a no-op if the network task hasn't started
-//      yet or no client is authenticated, both fine since Serial already
-//      has the message.
+//      to already-authenticated clients (`ws` is defined in task_network.cpp,
+//      the auth gate in auth.cpp/websocket.cpp) — this is a no-op if the
+//      network task hasn't started yet or no client is authenticated, both
+//      fine since Serial already has the message.
 // Levels never reach either output as bare numbers: state.cpp maps
 // LOG_INFO/WARN/ERR to "info"/"warn"/"error" for both Serial (as a
 // bracketed tag) and the WS frame, so the two views print identical text.
@@ -160,10 +185,11 @@ void webLog(const String &msg);
 
 // Replays the ring buffer of recent log lines to one client, in the order
 // they were originally logged. Called once, right after a client passes
-// auth (task_network.cpp) — that's the moment "sync" actually matters: a
-// browser opened after boot still gets to see what already happened
-// (Wi-Fi connect attempts, sensor init results, etc.), not just a blank
-// Terminal that only starts filling in from the moment it happened to log in.
+// auth (handleAuthCommand() in auth.cpp) — that's the moment "sync" actually
+// matters: a browser opened after boot still gets to see what already
+// happened (Wi-Fi connect attempts, sensor init results, etc.), not just a
+// blank Terminal that only starts filling in from the moment it happened to
+// log in.
 void webLogSendBacklog(AsyncWebSocketClient *client);
 
 #endif // STATE_H

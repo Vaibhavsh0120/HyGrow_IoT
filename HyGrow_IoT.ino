@@ -203,12 +203,30 @@ void setup()
     // 1. Initialize NVS and load all variables into currentConfig
     state_init();
 
+    // 1a''. Surface WHY the device restarted, in a way that survives past
+    // this boot's Serial session. state_init() (just above) already loaded
+    // the PREVIOUS boot's reason from its own NVS namespace before this
+    // call overwrites it with the current one — so a browser that opens
+    // the web Terminal well after a crash still sees, via the log ring
+    // buffer, that (e.g.) "the board came back up because of a PANIC",
+    // not just silence. webLog() itself already goes to Serial too, so
+    // this doesn't duplicate the resetReasonToString() print below; it's
+    // the boot BEFORE this one that's being reported here.
+    {
+        String lastReason = state_get_last_reset_reason();
+        if (lastReason.length() > 0)
+        {
+            webLog(0, LOG_WARN, "Previous boot ended with: " + lastReason);
+        }
+        state_log_reset_reason(resetReasonToString(reason));
+    }
+
     // 1a'. Mount the single-owner auth namespace and load the admin
     // password/session token into RAM. Deliberately separate from
     // state_init() above — see the long comment on the auth_*() decls in
     // state.h for why auth has its own NVS namespace and lifecycle. Must run
     // before the network task starts, since the WS gatekeeper
-    // (handleAuthCommand() in task_network.cpp) depends on it from the very
+    // (handleAuthCommand() in auth.cpp) depends on it from the very
     // first client connection.
     auth_init();
 

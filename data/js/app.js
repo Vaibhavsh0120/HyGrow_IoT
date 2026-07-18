@@ -663,6 +663,48 @@ function validateAllPinFields() {
     return problem === "";
 }
 
+// Client-side form validation (Part 2.3 / Forms) — stop users from saving
+// an empty Wi-Fi name or a Firebase Project ID that isn't shaped like a
+// real one. Module-scope for the same reason as validateAllPinFields()
+// above: updateConfigForm() re-runs these after a fresh "config" WS frame
+// repopulates the fields. The real safety boundary is server-side
+// (save_wifi/save_firebase in command_handlers.cpp) — this is a UX nicety
+// that fails fast without a round trip.
+const FIREBASE_PROJECT_ID_RE = /^[a-z0-9-]{6,30}$/;
+
+function validateWifiForm() {
+    const ssidEl = document.getElementById('cfg-wifi-ssid');
+    const err = document.getElementById('cfg-wifi-error');
+    if (!ssidEl) return true;
+    const problem = ssidEl.value.trim().length === 0;
+    ssidEl.classList.toggle('border-error', problem);
+    ssidEl.classList.toggle('text-error', problem);
+    if (err) {
+        err.innerText = 'Network name (SSID) cannot be empty.';
+        err.classList.toggle('hidden', !problem);
+    }
+    return !problem;
+}
+
+function validateFirebaseForm() {
+    const projEl = document.getElementById('cfg-fb-proj');
+    const err = document.getElementById('cfg-fb-error');
+    if (!projEl) return true;
+    const val = projEl.value.trim();
+    // Empty is allowed — that's how Firebase provisioning gets cleared.
+    // Only a non-empty value has to look like a real project ID (lowercase
+    // letters/digits/hyphens, 6-30 chars, no leading/trailing hyphen —
+    // Google's own Firebase project ID rules).
+    const problem = val.length > 0 && (!FIREBASE_PROJECT_ID_RE.test(val) || val.startsWith('-') || val.endsWith('-'));
+    projEl.classList.toggle('border-error', problem);
+    projEl.classList.toggle('text-error', problem);
+    if (err) {
+        err.innerText = 'Invalid Project ID. Use 6-30 lowercase letters, digits, or hyphens (no leading/trailing hyphen).';
+        err.classList.toggle('hidden', !problem);
+    }
+    return !problem;
+}
+
 function updateConfigForm(msg) {
     globalConfigCache = msg; // Cache for CSV export
 
@@ -671,6 +713,11 @@ function updateConfigForm(msg) {
     if(document.getElementById('cfg-fb-api')) document.getElementById('cfg-fb-api').value = msg.fb_api || "";
     if(document.getElementById('cfg-fb-email')) document.getElementById('cfg-fb-email').value = msg.fb_email || "";
     if(document.getElementById('cfg-fb-col')) document.getElementById('cfg-fb-col').value = msg.fb_col || "";
+
+    // Re-run form validation now that fresh values landed in these fields —
+    // same reasoning as the pin-field re-validation below.
+    if (typeof validateWifiForm === 'function') validateWifiForm();
+    if (typeof validateFirebaseForm === 'function') validateFirebaseForm();
 
     // Note: raw pH offset/slope and TDS K-factor are no longer shown as
     // editable fields — the guided calibration wizard (btn-cal-ph-7/4/save,
@@ -859,9 +906,27 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Client-side form validation (Part 2.3 / Forms) — stop users from
+    // saving an empty Wi-Fi name or a Firebase Project ID that isn't shaped
+    // like a real one. validateWifiForm()/validateFirebaseForm() themselves
+    // are defined at module scope (near validateAllPinFields) so
+    // updateConfigForm() can also re-run them after a fresh "config" frame
+    // repopulates these fields — just wire up the live listeners here.
+    const wifiSsidInput = document.getElementById('cfg-wifi-ssid');
+    if (wifiSsidInput) {
+        wifiSsidInput.addEventListener('input', validateWifiForm);
+        wifiSsidInput.addEventListener('change', validateWifiForm);
+    }
+    const fbProjInput = document.getElementById('cfg-fb-proj');
+    if (fbProjInput) {
+        fbProjInput.addEventListener('input', validateFirebaseForm);
+        fbProjInput.addEventListener('change', validateFirebaseForm);
+    }
+
     const btnSaveWifi = document.getElementById('btn-save-wifi');
     if(btnSaveWifi) {
         btnSaveWifi.addEventListener('click', () => {
+            if (!validateWifiForm()) return;
             const payload = {
                 command: "save_wifi",
                 ssid: document.getElementById('cfg-wifi-ssid').value,
@@ -889,6 +954,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnSaveFb = document.getElementById('btn-save-firebase');
     if(btnSaveFb) {
         btnSaveFb.addEventListener('click', () => {
+            if (!validateFirebaseForm()) return;
             const payload = {
                 command: "save_firebase",
                 proj: document.getElementById('cfg-fb-proj').value,
@@ -900,6 +966,7 @@ document.addEventListener('DOMContentLoaded', () => {
             runSaveButton(btnSaveFb, payload, "Credentials Saved", "Save Credentials");
         });
     }
+
 
     // ------------------------------------------------------------------
     // Client-side pin validation (Part 4 / 5.5) — validateAllPinFields()
@@ -951,9 +1018,44 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ------------------------------------------------------------------
+    // TDS Calibration — reject impossible values (Part 2.2). -100 ppm or
+    // 999999 ppm used to sail straight through to calibrate_tds and wreck
+    // the tds_k scale factor for every future reading. Bounds mirror the
+    // server-side check in calibrate_tds (command_handlers.cpp).
+    // ------------------------------------------------------------------
+    const TDS_TARGET_MIN = 0;
+    const TDS_TARGET_MAX = 10000;
+
+    function validateTdsTarget() {
+        const input = document.getElementById('cfg-tds-target');
+        const err = document.getElementById('cfg-tds-target-error');
+        const btn = document.getElementById('btn-cal-tds');
+        if (!input) return true;
+
+        const v = parseFloat(input.value);
+        const problem = isNaN(v) || v < TDS_TARGET_MIN || v > TDS_TARGET_MAX;
+
+        input.classList.toggle('border-error', problem);
+        input.classList.toggle('text-error', problem);
+        if (err) err.classList.toggle('hidden', !problem);
+        if (btn) btn.disabled = problem;
+
+        return !problem;
+    }
+
+    const tdsTargetInput = document.getElementById('cfg-tds-target');
+    if (tdsTargetInput) {
+        tdsTargetInput.addEventListener('input', validateTdsTarget);
+        tdsTargetInput.addEventListener('change', validateTdsTarget);
+        validateTdsTarget(); // initial pass
+    }
+
     const btnCalTds = document.getElementById('btn-cal-tds');
     if(btnCalTds) {
         btnCalTds.addEventListener('click', () => {
+            if (!validateTdsTarget()) return;
+
             const targetPpm = parseFloat(document.getElementById('cfg-tds-target').value);
             const currentPpm = parseFloat(document.getElementById('cal-tds-raw').innerText);
             if (isNaN(targetPpm) || isNaN(currentPpm) || currentPpm === 0) {
@@ -963,23 +1065,81 @@ document.addEventListener('DOMContentLoaded', () => {
             const currentK = globalConfigCache.tds_k || 1.0;
             const newK = currentK * (targetPpm / currentPpm);
 
-            const payload = { command: "calibrate_tds", tds_k: parseFloat(newK.toFixed(2)) };
+            // target_ppm rides along so the server can reject an impossible
+            // target directly, not just the derived K-factor (see
+            // calibrate_tds in command_handlers.cpp).
+            const payload = { command: "calibrate_tds", tds_k: parseFloat(newK.toFixed(2)), target_ppm: targetPpm };
             runSaveButton(btnCalTds, payload, "Saved!", "Calibrate & Save");
         });
     }
 
+    // ------------------------------------------------------------------
+    // pH Calibration Wizard (Part 2.1) — Step 1 (capture pH 7) -> Step 2
+    // (capture pH 4) -> Step 3 (review + save). Each step is only reachable
+    // once the previous one is complete; going back resets the steps ahead
+    // of it so a stale half-finished attempt can't be silently saved.
+    // A beforeunload warning fires whenever calibration is in progress
+    // (Step 1 started but not yet saved) so a wayward tab-close/refresh/nav
+    // doesn't silently lose a mid-calibration reading.
+    // ------------------------------------------------------------------
     let ph7Volt = null;
     let ph4Volt = null;
+    let phWizardDirty = false; // true once Step 1 starts, false again after a successful save (or a full reset)
+
+    function phWizardBeforeUnload(e) {
+        if (!phWizardDirty) return;
+        e.preventDefault();
+        e.returnValue = ''; // required for the native "leave site?" prompt in most browsers
+        return '';
+    }
+    window.addEventListener('beforeunload', phWizardBeforeUnload);
+
+    function setPhStepUI(step) {
+        // step: 1, 2, or 3 — which panel is visible and how the progress
+        // dots/bars above it read.
+        const panels = { 1: document.getElementById('ph-step-1'), 2: document.getElementById('ph-step-2'), 3: document.getElementById('ph-step-3') };
+        Object.keys(panels).forEach((k) => {
+            const el = panels[k];
+            if (!el) return;
+            const show = Number(k) === step;
+            el.classList.toggle('hidden', !show);
+            el.classList.toggle('flex', show);
+        });
+
+        for (let i = 1; i <= 3; i++) {
+            const dot = document.getElementById(`ph-step-dot-${i}`);
+            if (dot) {
+                const done = i < step;
+                const active = i === step;
+                dot.classList.toggle('bg-secondary', done || active);
+                dot.classList.toggle('text-on-secondary', done || active);
+                dot.classList.toggle('bg-white/10', !(done || active));
+                dot.classList.toggle('text-on-surface-variant', !(done || active));
+                dot.innerText = done ? '✓' : String(i);
+            }
+            const bar = document.getElementById(`ph-step-bar-${i}`);
+            if (bar) bar.style.width = (i < step) ? '100%' : '0%';
+        }
+    }
+
+    function resetPhWizard() {
+        ph7Volt = null;
+        ph4Volt = null;
+        phWizardDirty = false;
+        setPhStepUI(1);
+    }
 
     const btnCalPh7 = document.getElementById('btn-cal-ph-7');
     if(btnCalPh7) {
         btnCalPh7.addEventListener('click', () => {
             const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
-            if (isNaN(livePh)) return;
+            if (isNaN(livePh)) { alert("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected."); return; }
             const off = globalConfigCache.ph_off || 0.0;
             const slope = globalConfigCache.ph_slope || 1.0;
             ph7Volt = (livePh - off) / slope;
-            document.getElementById('cal-ph-7-val').innerText = ph7Volt.toFixed(3) + " V";
+            phWizardDirty = true;
+            document.querySelectorAll('#cal-ph-7-val').forEach((el) => { el.innerText = ph7Volt.toFixed(3) + " V"; });
+            setPhStepUI(2);
         });
     }
 
@@ -987,19 +1147,38 @@ document.addEventListener('DOMContentLoaded', () => {
     if(btnCalPh4) {
         btnCalPh4.addEventListener('click', () => {
             const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
-            if (isNaN(livePh)) return;
+            if (isNaN(livePh)) { alert("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected."); return; }
+            if (ph7Volt === null) { setPhStepUI(1); return; } // shouldn't happen, but don't let Step 2 run without Step 1
             const off = globalConfigCache.ph_off || 0.0;
             const slope = globalConfigCache.ph_slope || 1.0;
             ph4Volt = (livePh - off) / slope;
-            document.getElementById('cal-ph-4-val').innerText = ph4Volt.toFixed(3) + " V";
+
+            if (ph4Volt === ph7Volt) {
+                alert("The 4.0 reading matches the 7.0 reading exactly — the probe may still be in the first solution. Rinse it and place it in the pH 4.0 buffer before capturing.");
+                ph4Volt = null;
+                return;
+            }
+
+            document.querySelectorAll('#cal-ph-4-val').forEach((el) => { el.innerText = ph4Volt.toFixed(3) + " V"; });
+            const review7 = document.getElementById('ph-review-7');
+            const review4 = document.getElementById('ph-review-4');
+            if (review7) review7.innerText = ph7Volt.toFixed(3) + " V";
+            if (review4) review4.innerText = ph4Volt.toFixed(3) + " V";
+            setPhStepUI(3);
         });
     }
+
+    const btnCalPhRestart1 = document.getElementById('btn-cal-ph-restart-1');
+    if (btnCalPhRestart1) btnCalPhRestart1.addEventListener('click', () => { ph7Volt = null; setPhStepUI(1); });
+
+    const btnCalPhRestart2 = document.getElementById('btn-cal-ph-restart-2');
+    if (btnCalPhRestart2) btnCalPhRestart2.addEventListener('click', () => { ph4Volt = null; setPhStepUI(2); });
 
     const btnCalPhSave = document.getElementById('btn-cal-ph-save');
     if(btnCalPhSave) {
         btnCalPhSave.addEventListener('click', () => {
             if (ph7Volt === null || ph4Volt === null || ph7Volt === ph4Volt) {
-                alert("Please set both 7.0 and 4.0 calibration points.");
+                alert("Please complete both Step 1 (pH 7.0) and Step 2 (pH 4.0) before saving.");
                 return;
             }
             const newSlope = (7.0 - 4.0) / (ph7Volt - ph4Volt);
@@ -1010,9 +1189,25 @@ document.addEventListener('DOMContentLoaded', () => {
                 offset: parseFloat(newOff.toFixed(2)),
                 slope: parseFloat(newSlope.toFixed(2))
             };
-            runSaveButton(btnCalPhSave, payload, "Saved!", "Calculate & Save");
+            btnCalPhSave.disabled = true;
+            const original = btnCalPhSave.innerText;
+            btnCalPhSave.innerText = 'Saving…';
+            sendCommand(payload).then(() => {
+                btnCalPhSave.disabled = false;
+                btnCalPhSave.innerText = 'Saved!';
+                // Calibration is now safely persisted — clear the "in
+                // progress" flag so leaving the page no longer warns, then
+                // reset the wizard back to Step 1 for the next run.
+                phWizardDirty = false;
+                setTimeout(() => { btnCalPhSave.innerText = original; resetPhWizard(); }, 2000);
+            }).catch((err) => {
+                btnCalPhSave.disabled = false;
+                btnCalPhSave.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
+                setTimeout(() => { btnCalPhSave.innerText = original; }, 3000);
+            });
         });
     }
+
 
     const btnReboot = document.getElementById('btn-reboot');
     if(btnReboot) btnReboot.addEventListener('click', () => {
@@ -1023,7 +1218,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const btnReset = document.getElementById('btn-factory-reset');
     if(btnReset) btnReset.addEventListener('click', () => {
-        if(!confirm("DANGER! Wipe all NVS data?")) return;
+        // A single confirm() popup is one accidental click away from wiping
+        // every setting on the device (Wi-Fi, Firebase, calibration, pins,
+        // admin password — everything in state_factory_reset()). Requiring
+        // the user to type the exact word "RESET" is a much stronger,
+        // harder-to-fat-finger gate than a Yes/No dialog, while still being
+        // a client-side UX safeguard rather than a security boundary (the
+        // device itself has no way to know what the browser prompted with).
+        const typed = prompt("This will permanently erase ALL settings on this device — Wi-Fi, Firebase credentials, calibration, pin assignments, and the admin password.\n\nThis cannot be undone.\n\nType RESET (all caps) to confirm:");
+        if (typed === null) return; // user cancelled
+        if (typed !== "RESET") {
+            alert("Factory reset cancelled — you must type RESET exactly.");
+            return;
+        }
         if (!websocket || websocket.readyState !== WebSocket.OPEN) { alert("Not connected to the device right now."); return; }
         websocket.send(JSON.stringify({command: "factory_reset"}));
     });

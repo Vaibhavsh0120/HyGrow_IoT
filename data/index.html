@@ -320,26 +320,77 @@
                     </div>
                     <div class="flex flex-col gap-2">
                         <label class="font-label-md text-on-surface-variant" for="cfg-tds-target">Target PPM (Calibration Fluid)</label>
-                        <input id="cfg-tds-target" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-lg" type="number" step="1" value="1000"/>
+                        <input id="cfg-tds-target" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-lg" type="number" min="0" max="10000" step="1" value="1000"/>
+                        <!-- Reject impossible calibration-fluid values (Part
+                             2.2): -100 ppm, 999999 ppm, etc. 0-10000 ppm
+                             covers everything from deionized water through
+                             concentrated hydroponic nutrient / standard TDS
+                             calibration fluids. Server-side re-check lives in
+                             calibrate_tds (command_handlers.cpp) — this is a
+                             UX nicety only. -->
+                        <p id="cfg-tds-target-error" role="alert" class="hidden font-label-sm text-label-sm text-error">Enter a realistic value between 0 and 10000 ppm.</p>
                     </div>
                     <button id="btn-cal-tds" class="w-full bg-secondary-container text-on-secondary-container font-label-md py-3 rounded-xl hover:brightness-110 transition-all mt-auto shadow-lg">Calibrate & Save</button>
                 </div>
-                <!-- pH Calibration -->
-                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
-                    <h3 class="font-headline-md text-headline-md text-white flex items-center gap-2"><span class="material-symbols-outlined">science</span> pH Sensor</h3>
+                <!-- pH Calibration Wizard (Part 2.1) — a proper 3-step flow
+                     instead of two independent buttons a user could click in
+                     any order (or not at all) before hitting Save. Step 1
+                     captures the 7.0 point, Step 2 the 4.0 point (only
+                     reachable once Step 1 is done), Step 3 is Save (only
+                     reachable once both points are captured). A
+                     beforeunload handler (wired in app.js) warns if the user
+                     tries to leave mid-calibration. -->
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6" id="ph-wizard-card">
+                    <h3 class="font-headline-md text-headline-md text-white flex items-center gap-2"><span class="material-symbols-outlined">science</span> pH Sensor Calibration Wizard</h3>
+
+                    <!-- Step progress indicator -->
+                    <div class="flex items-center gap-2" role="list" aria-label="Calibration steps">
+                        <div class="flex-1 flex items-center gap-2" role="listitem">
+                            <div id="ph-step-dot-1" class="w-8 h-8 rounded-full flex items-center justify-center font-label-md font-bold shrink-0 bg-secondary text-on-secondary">1</div>
+                            <div class="flex-1 h-1 rounded-full bg-white/10 overflow-hidden"><div id="ph-step-bar-1" class="h-full bg-secondary transition-all" style="width:0%"></div></div>
+                        </div>
+                        <div class="flex-1 flex items-center gap-2" role="listitem">
+                            <div id="ph-step-dot-2" class="w-8 h-8 rounded-full flex items-center justify-center font-label-md font-bold shrink-0 bg-white/10 text-on-surface-variant">2</div>
+                            <div class="flex-1 h-1 rounded-full bg-white/10 overflow-hidden"><div id="ph-step-bar-2" class="h-full bg-secondary transition-all" style="width:0%"></div></div>
+                        </div>
+                        <div id="ph-step-dot-3" class="w-8 h-8 rounded-full flex items-center justify-center font-label-md font-bold shrink-0 bg-white/10 text-on-surface-variant" role="listitem">3</div>
+                    </div>
+
                     <div class="bg-white/5 p-4 rounded-2xl border border-white/10">
                         <div class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-1">Live Reading</div>
                         <div class="font-display-lg-mobile text-white" id="cal-ph-raw">--</div>
                     </div>
-                    <p class="text-on-surface-variant text-body-md">Place the probe in the solution and wait for the reading to stabilize before clicking.</p>
-                    <div class="flex flex-col gap-4">
-                        <button id="btn-cal-ph-7" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all flex justify-between items-center px-6"><span>Set 7.0 Point</span> <span id="cal-ph-7-val" class="font-bold text-secondary"></span></button>
-                        <button id="btn-cal-ph-4" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all flex justify-between items-center px-6"><span>Set 4.0 Point</span> <span id="cal-ph-4-val" class="font-bold text-secondary"></span></button>
+
+                    <!-- Step 1: capture pH 7 -->
+                    <div id="ph-step-1" class="flex flex-col gap-4">
+                        <p class="text-on-surface-variant text-body-md"><span class="text-white font-bold">Step 1 of 3 — </span>Place the probe in <span class="text-white font-bold">pH 7.0</span> buffer solution and wait for the reading to stabilize.</p>
+                        <button id="btn-cal-ph-7" class="w-full bg-secondary-container text-on-secondary-container font-label-md py-3 rounded-xl hover:brightness-110 transition-all mt-auto shadow-lg">Capture pH 7.0</button>
                     </div>
-                    <button id="btn-cal-ph-save" class="w-full bg-secondary-container text-on-secondary-container font-label-md py-3 rounded-xl hover:brightness-110 transition-all mt-auto shadow-lg">Calculate & Save</button>
+
+                    <!-- Step 2: capture pH 4 (hidden until step 1 is done) -->
+                    <div id="ph-step-2" class="flex-col gap-4 hidden">
+                        <p class="text-on-surface-variant text-body-md"><span class="text-white font-bold">Step 2 of 3 — </span>7.0 point captured (<span id="cal-ph-7-val" class="text-secondary font-bold"></span>). Rinse the probe, place it in <span class="text-white font-bold">pH 4.0</span> buffer solution, and wait for the reading to stabilize.</p>
+                        <button id="btn-cal-ph-4" class="w-full bg-secondary-container text-on-secondary-container font-label-md py-3 rounded-xl hover:brightness-110 transition-all mt-auto shadow-lg">Capture pH 4.0</button>
+                        <button id="btn-cal-ph-restart-1" class="w-full bg-transparent text-on-surface-variant font-label-sm py-1 hover:text-white transition-all">&larr; Back to Step 1</button>
+                    </div>
+
+                    <!-- Step 3: review + save (hidden until step 2 is done) -->
+                    <div id="ph-step-3" class="flex-col gap-4 hidden">
+                        <p class="text-on-surface-variant text-body-md"><span class="text-white font-bold">Step 3 of 3 — </span>Both points captured. Review and save the new calibration.</p>
+                        <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-2 font-label-md">
+                            <div class="flex justify-between"><span class="text-on-surface-variant">7.0 point</span><span id="ph-review-7" class="text-white font-bold"></span></div>
+                            <div class="flex justify-between"><span class="text-on-surface-variant">4.0 point</span><span id="ph-review-4" class="text-white font-bold"></span></div>
+                        </div>
+                        <button id="btn-cal-ph-save" class="w-full bg-secondary-container text-on-secondary-container font-label-md py-3 rounded-xl hover:brightness-110 transition-all mt-auto shadow-lg">Save Calibration</button>
+                        <button id="btn-cal-ph-restart-2" class="w-full bg-transparent text-on-surface-variant font-label-sm py-1 hover:text-white transition-all">&larr; Back to Step 2</button>
+                    </div>
+
+                    <!-- Hidden holders so existing IDs (cal-ph-7-val/cal-ph-4-val)
+                         referenced elsewhere always exist in the DOM even
+                         before Step 2/3 render their own copies. -->
+                    <span id="cal-ph-4-val" class="hidden"></span>
                 </div>
-            </div>
-        </section>
+
 
         <!-- PAGE 8: System Settings -->
         <section class="page-section flex-col gap-8 hidden" id="page-8">
@@ -368,6 +419,12 @@
                             <label class="font-label-md text-on-surface-variant" for="cfg-wifi-pass">Password</label>
                             <input id="cfg-wifi-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                         </div>
+                        <!-- Client-side form validation: an empty SSID can't be
+                             connected to. Mirrors the #cfg-pass-error pattern
+                             below. The real boundary is server-side
+                             (save_wifi in command_handlers.cpp), this is a UX
+                             nicety that fails fast before the round trip. -->
+                        <p id="cfg-wifi-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
                         <button id="btn-save-wifi" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Update Network</button>
                     </div>
 
@@ -464,6 +521,12 @@
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-col">Firestore Collection</label>
                             <input id="cfg-fb-col" maxlength="31" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="sensor_data" type="text"/>
                         </div>
+                        <!-- Client-side form validation: a Project ID, if
+                             given, must look like a real Firebase project ID
+                             (lowercase letters/digits/hyphens, 6-30 chars).
+                             Server-side check lives in save_firebase
+                             (command_handlers.cpp) — this is a UX nicety. -->
+                        <p id="cfg-fb-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
                         <button id="btn-save-firebase" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Credentials</button>
                         <!-- Fix (gap #3): the device already tracks real
                              Firebase/Firestore upload health (firebase_ready,
