@@ -1,4 +1,3 @@
-#include "sensors.h"
 #include "../core/state.h"
 #include <DHT.h>
 #include <math.h>
@@ -22,21 +21,16 @@ void initDHT22()
     }
 }
 
-void init_dht()
+void sensor_dht_init()
 {
     initDHT22();
 }
 
-bool read_dht(float &temp, float &hum)
-{
-    float vpd = 0.0f;
-    readDHT22(temp, hum, vpd);
-    return !isnan(temp) && !isnan(hum);
-}
-
 bool sensor_dht_read(float &temp_c, float &humidity_pct)
 {
-    return read_dht(temp_c, humidity_pct);
+    float vpd = 0.0f;
+    readDHT22(temp_c, humidity_pct, vpd);
+    return !isnan(temp_c) && !isnan(humidity_pct);
 }
 
 void readDHT22(float &outTemp, float &outHum, float &outVpd)

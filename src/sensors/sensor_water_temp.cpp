@@ -1,4 +1,3 @@
-#include "sensors.h"
 #include "../core/state.h"
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -24,21 +23,16 @@ void initWaterTemp()
     }
 }
 
-void init_wtemp()
+void sensor_ds18b20_init()
 {
     initWaterTemp();
 }
 
-bool read_wtemp(float &temp)
-{
-    float value = readWaterTemp();
-    temp = value;
-    return !isnan(value);
-}
-
 bool sensor_ds18b20_read(float &temp_c)
 {
-    return read_wtemp(temp_c);
+    float value = readWaterTemp();
+    temp_c = value;
+    return !isnan(value);
 }
 
 float readWaterTemp()

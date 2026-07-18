@@ -282,6 +282,7 @@ input:where([type="button"]),
 input:where([type="reset"]),
 input:where([type="submit"]) {
   -webkit-appearance: button;
+  appearance: textfield;
   background-color: transparent;
   background-image: none;
 }
@@ -300,6 +301,7 @@ progress {
 }
 [type="search"] {
   -webkit-appearance: textfield;
+  appearance: textfield;
   outline-offset: -2px;
 }
 ::-webkit-search-decoration {
@@ -373,7 +375,6 @@ object,
 svg,
 video {
   display: block;
-  vertical-align: middle;
 }
 img,
 video {
@@ -1154,4 +1155,169 @@ canvas {
   .xl\:grid-cols-3 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+}
+
+/* ==========================================================================
+   Theming — Light / Dark / Auto
+   ==========================================================================
+   This stylesheet is a static, pre-compiled export (see the "PASTE COMPILED
+   TAILWIND CSS" marker above) — there is no build step on the ESP32 to
+   regenerate it, so theme support can't be done by re-running Tailwind with
+   a `dark:` variant. Instead we define CSS custom properties for every
+   color the UI actually uses, then redefine the small set of Tailwind
+   utility classes below to consume those variables via var(). Every
+   existing `class="text-primary"` etc. in index.html keeps working
+   unchanged — only the variable values change between themes.
+
+   app.js toggles the `dark` / `light` class on <html> (see the inline
+   anti-flash script in index.html's <head> and the cfg-theme-select
+   listener in app.js). Dark is the default/original look of this project.
+   ========================================================================== */
+
+:root,
+html.dark {
+  --hg-bg: #000000;
+  --hg-surface: rgba(255, 255, 255, 0.03);
+  --hg-surface-border: rgba(255, 255, 255, 0.08);
+  --hg-surface-alt-5: rgba(255, 255, 255, 0.05);
+  --hg-surface-alt-10: rgba(255, 255, 255, 0.1);
+  --hg-surface-alt-20: rgba(255, 255, 255, 0.2);
+  --hg-input-bg: rgba(0, 0, 0, 0.5);
+  --hg-on-background: rgb(226, 226, 226);
+  --hg-on-surface-variant: rgb(194, 198, 215);
+  --hg-white: rgb(255, 255, 255);
+  --hg-white-50: rgba(255, 255, 255, 0.5);
+  --hg-primary: rgb(175, 198, 255);
+  --hg-primary-container: rgb(84, 141, 255);
+  --hg-on-primary-container: rgb(0, 39, 96);
+  --hg-secondary: rgb(78, 222, 163);
+  --hg-secondary-container: rgb(0, 165, 114);
+  --hg-secondary-10: rgba(78, 222, 163, 0.1);
+  --hg-on-secondary-container: rgb(0, 49, 31);
+  --hg-error: rgb(255, 180, 171);
+  --hg-error-container-20: rgba(147, 0, 10, 0.2);
+  --hg-error-container-40: rgba(147, 0, 10, 0.4);
+}
+
+html.light {
+  --hg-bg: #f4f5f7;
+  --hg-surface: rgba(0, 0, 0, 0.035);
+  --hg-surface-border: rgba(0, 0, 0, 0.08);
+  --hg-surface-alt-5: rgba(0, 0, 0, 0.04);
+  --hg-surface-alt-10: rgba(0, 0, 0, 0.07);
+  --hg-surface-alt-20: rgba(0, 0, 0, 0.12);
+  --hg-input-bg: rgba(255, 255, 255, 0.7);
+  --hg-on-background: rgb(30, 32, 38);
+  --hg-on-surface-variant: rgb(90, 95, 112);
+  --hg-white: rgb(20, 21, 26);
+  --hg-white-50: rgba(20, 21, 26, 0.55);
+  --hg-primary: rgb(46, 92, 214);
+  --hg-primary-container: rgb(84, 141, 255);
+  --hg-on-primary-container: rgb(255, 255, 255);
+  --hg-secondary: rgb(0, 140, 96);
+  --hg-secondary-container: rgb(0, 165, 114);
+  --hg-secondary-10: rgba(0, 140, 96, 0.1);
+  --hg-on-secondary-container: rgb(255, 255, 255);
+  --hg-error: rgb(186, 26, 26);
+  --hg-error-container-20: rgba(255, 218, 214, 0.6);
+  --hg-error-container-40: rgba(255, 180, 171, 0.5);
+}
+
+/* Page background + base text color */
+.bg-\[\#000000\] {
+  background-color: var(--hg-bg) !important;
+}
+body {
+  color: var(--hg-on-background);
+}
+
+/* Glass card surface */
+.liquid-glass {
+  background: var(--hg-surface);
+  border-color: var(--hg-surface-border);
+}
+
+/* Neutral surfaces used for inputs, pinout cards, toggles, buttons */
+.bg-black\/50 {
+  background-color: var(--hg-input-bg) !important;
+}
+.bg-white\/5 {
+  background-color: var(--hg-surface-alt-5) !important;
+}
+.bg-white\/10 {
+  background-color: var(--hg-surface-alt-10) !important;
+}
+.bg-white\/20 {
+  background-color: var(--hg-surface-alt-20) !important;
+}
+.border-white\/10 {
+  border-color: var(--hg-surface-border) !important;
+}
+
+/* Text colors */
+.text-on-background {
+  color: var(--hg-on-background) !important;
+}
+.text-on-surface-variant {
+  color: var(--hg-on-surface-variant) !important;
+}
+.text-white {
+  color: var(--hg-white) !important;
+}
+.text-white\/50 {
+  color: var(--hg-white-50) !important;
+}
+
+/* Brand / status colors */
+.text-primary,
+.border-primary,
+.focus\:border-primary:focus {
+  color: var(--hg-primary);
+  border-color: var(--hg-primary);
+}
+.bg-primary-container {
+  background-color: var(--hg-primary-container) !important;
+}
+.text-on-primary-container {
+  color: var(--hg-on-primary-container) !important;
+}
+.text-secondary {
+  color: var(--hg-secondary) !important;
+}
+.bg-secondary {
+  background-color: var(--hg-secondary) !important;
+}
+.bg-secondary-container {
+  background-color: var(--hg-secondary-container) !important;
+}
+.bg-secondary\/10 {
+  background-color: var(--hg-secondary-10) !important;
+}
+.text-on-secondary-container {
+  color: var(--hg-on-secondary-container) !important;
+}
+.text-error {
+  color: var(--hg-error) !important;
+}
+.border-error {
+  border-color: var(--hg-error) !important;
+}
+.bg-error-container\/20 {
+  background-color: var(--hg-error-container-20) !important;
+}
+.bg-error-container\/40 {
+  background-color: var(--hg-error-container-40) !important;
+}
+
+/* Native <select> — the theme picker is the only <select> in the app and
+   has no compiled Tailwind rule of its own. Style it explicitly so the
+   dropdown/options stay legible in both themes across browsers, instead of
+   inheriting an unreadable OS-default black-on-black or white-on-white. */
+#cfg-theme-select {
+  background-color: var(--hg-input-bg);
+  color: var(--hg-white);
+}
+#cfg-theme-select option {
+  background-color: var(--hg-bg);
+  color: var(--hg-white);
 }

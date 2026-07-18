@@ -1,4 +1,3 @@
-#include "sensors.h"
 #include "../core/state.h"
 #include <Arduino.h>
 
@@ -22,15 +21,9 @@ void initPH()
     }
 }
 
-void init_ph()
+void sensor_ph_init()
 {
     initPH();
-}
-
-float read_ph(float water_temp_c)
-{
-    (void)water_temp_c;
-    return readPH();
 }
 
 bool sensor_ph_read(float ph_offset, float ph_slope, float &ph_value)

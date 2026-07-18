@@ -308,6 +308,19 @@
                     <button id="btn-save-firebase" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Credentials</button>
                 </div>
 
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                    <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Display</h3>
+                    <p class="text-on-surface-variant text-body-md mb-2">Choose how the dashboard looks on this device. Saved locally in this browser.</p>
+                    <div class="flex flex-col gap-2">
+                        <label class="font-label-md text-on-surface-variant">Dashboard Theme</label>
+                        <select id="cfg-theme-select" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md">
+                            <option value="dark">Dark Mode</option>
+                            <option value="light">Light Mode</option>
+                            <option value="auto">System Auto</option>
+                        </select>
+                    </div>
+                </div>
+
                 <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 md:col-span-2">
                     <h3 class="font-headline-md text-headline-md text-white">Sensor Implementation Config</h3>
                     <p class="text-on-surface-variant text-body-md mb-2">Manage physical hardware pinouts and status. (-1 disables sensor)</p>

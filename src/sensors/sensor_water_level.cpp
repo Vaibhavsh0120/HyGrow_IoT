@@ -1,15 +1,104 @@
-// -------------------------------------------------------------
-// WARNING: CODE EXPLICITLY REMOVED BY USER REQUEST
-// If this sensor is toggled ON in the Web UI, an
-// "INCOMPLETE CODE" banner will appear.
-// -------------------------------------------------------------
+/*
+ * ============================================================================
+ * sensor_water_level.cpp — Capacitive/Resistive Water Level Sensor
+ * ============================================================================
+ * Two-pin design: an analog signal pin (pin_wl) and a digital power-gate
+ * pin (pin_wl_power). Most cheap water level strips are resistive and will
+ * slowly corrode/electroplate their traces if left under constant voltage
+ * while submerged. Gating power so the probe is only energized for the
+ * ~10ms it takes to settle and take a reading — instead of being powered
+ * 24/7 — is the standard mitigation and is what pin_wl_power is for.
+ * ============================================================================
+ */
+#include "../core/state.h"
 #include <Arduino.h>
 
-void init_wl() { /* DO NOTHING */ }
-float read_wl() { return 0.0; }
+// 12-bit ADC on ESP32-S3
+#define ADC_RES 4095.0f
+
+// Time for the probe to settle after power is applied, before we trust the
+// analog reading. 10ms is generous for the RC time constant of a resistive
+// strip probe with a few hundred ohms/kohm impedance.
+#define WL_SETTLE_MS 10
+
+static bool s_wlReady = false;
+
+void initWaterLevel()
+{
+    // Guard: both the signal pin and the power-gate pin must be assigned.
+    // A probe with power gating but no signal pin (or vice versa) can't be
+    // read safely, so treat it as fully disabled rather than guessing.
+    if (currentConfig.pin_wl < 0 || currentConfig.pin_wl_power < 0)
+    {
+        s_wlReady = false;
+        webLog(1, LOG_WARN, "Water level sensor disabled (signal or power pin set to -1)");
+        return;
+    }
+
+    pinMode(currentConfig.pin_wl_power, OUTPUT);
+    // Keep the probe unpowered until a read is actually requested — this is
+    // the whole point of the power gate (minimize time under voltage).
+    digitalWrite(currentConfig.pin_wl_power, LOW);
+
+    pinMode(currentConfig.pin_wl, INPUT);
+
+    s_wlReady = true;
+    webLog(1, LOG_INFO, "Water level sensor initialized (Sig: " + String(currentConfig.pin_wl) +
+                             ", Pwr: " + String(currentConfig.pin_wl_power) + ")");
+}
+
+void sensor_wl_init()
+{
+    initWaterLevel();
+}
+
+float readWaterLevel()
+{
+    // 1. Guard check: return NaN immediately if disabled/uninitialized, so
+    // sensor_wl_read() correctly reports failure instead of a false "ok" at 0.0.
+    if (!s_wlReady || currentConfig.pin_wl < 0 || currentConfig.pin_wl_power < 0)
+    {
+        return NAN;
+    }
+
+    // 2. Power the probe, wait for the reading to settle, sample, then cut
+    // power again immediately. This is the anti-corrosion measure: the probe
+    // is only ever live for ~WL_SETTLE_MS + one ADC read per sensor cycle,
+    // not continuously.
+    digitalWrite(currentConfig.pin_wl_power, HIGH);
+    delay(WL_SETTLE_MS);
+
+    int raw = analogRead(currentConfig.pin_wl);
+
+    digitalWrite(currentConfig.pin_wl_power, LOW);
+
+    // 3. Sanity check the raw ADC value. A dry/disconnected probe typically
+    // floats near 0; a short or fully-submerged high-conductivity probe can
+    // pin near the rail. Both extremes are still valid physical readings, so
+    // we don't treat them as errors — just clamp the final percentage.
+    if (raw < 0)
+    {
+        webLog(1, LOG_ERR, "Water level ADC read failed!");
+        return NAN;
+    }
+
+    // 4. Map raw ADC counts to a 0-100% float. Empty tank -> ~0 counts, full
+    // tank -> ~ADC_RES counts, for a typical resistive strip probe wired as
+    // a voltage divider against a fixed pull-down.
+    float percent = (raw / ADC_RES) * 100.0f;
+
+    // 5. Clamp to a sane 0-100 range.
+    if (percent < 0.0f)
+        percent = 0.0f;
+    else if (percent > 100.0f)
+        percent = 100.0f;
+
+    return percent;
+}
 
 bool sensor_wl_read(float &percent)
 {
-    percent = read_wl();
-    return !isnan(percent);
+    float value = readWaterLevel();
+    percent = value;
+    return !isnan(value);
 }

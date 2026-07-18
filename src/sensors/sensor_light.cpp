@@ -1,4 +1,3 @@
-#include "sensors.h"
 #include "../core/state.h"
 #include <Wire.h>
 #include <BH1750.h>
@@ -59,15 +58,10 @@ void initLight()
     }
 }
 
-bool init_light()
+bool sensor_lux_init()
 {
     initLight();
     return isLightSensorReady;
-}
-
-float read_light()
-{
-    return readLight();
 }
 
 bool sensor_lux_read(float &lux)

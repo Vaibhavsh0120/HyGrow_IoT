@@ -1,4 +1,3 @@
-#include "sensors.h"
 #include "../core/state.h"
 #include <Arduino.h>
 
@@ -46,14 +45,9 @@ void initTDS()
     }
 }
 
-void init_tds()
+void sensor_tds_init()
 {
     initTDS();
-}
-
-float read_tds(float currentWaterTemp)
-{
-    return readTDS(currentWaterTemp);
 }
 
 bool sensor_tds_read(float water_temp_c, float tds_k, float &tds_ppm)

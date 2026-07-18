@@ -82,17 +82,23 @@ extern ConfigState currentConfig;
 extern SensorState currentSensors;
 extern VitalsState currentVitals;
 
-// Reported by each sensor .cpp at compile time; assembled in sensors.cpp
-extern const bool sensor_impl[S_COUNT];
-
-// Sensor helper forward declarations expected by the task layer
+// Sensor helper forward declarations — task_sensor.cpp is the single
+// source of truth for hardware I/O and is the only caller of these.
+// Each sensor_*_init() returns true iff the sensor is ready to be read
+// (pin(s) assigned and, where the hardware supports it, actually detected
+// on the bus at boot); sensor_*_read() returns true iff the read succeeded.
+void sensor_dht_init();
 bool sensor_dht_read(float &temp_c, float &humidity_pct);
+void sensor_ds18b20_init();
 bool sensor_ds18b20_read(float &temp_c);
+void sensor_tds_init();
 bool sensor_tds_read(float water_temp_c, float tds_k, float &tds_ppm);
+void sensor_ph_init();
 bool sensor_ph_read(float ph_offset, float ph_slope, float &ph_value);
+bool sensor_lux_init(); // returns true only if a BH1750 actually ACKed on I2C
 bool sensor_lux_read(float &lux);
+void sensor_wl_init();
 bool sensor_wl_read(float &percent);
-void sensors_init_all();
 
 // ---------- API ----------
 void state_init();          // mount NVS, load config (defaults from config.h if unset)

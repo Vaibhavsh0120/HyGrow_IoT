@@ -7,20 +7,6 @@ ConfigState currentConfig;
 SensorState currentSensors;
 VitalsState currentVitals;
 
-// Forward decl — actual array lives in src/sensors/sensors.cpp
-// extern const bool sensor_impl[S_COUNT];
-
-// Provide a minimal default implementation for sensor_impl so the firmware can compile
-// even if the concrete sensor registration layer is not present.
-const bool sensor_impl[S_COUNT] = {
-    true, // S_WL
-    true, // S_LIGHT
-    true, // S_TDS
-    true, // S_DHT
-    true, // S_PH
-    true  // S_WTEMP
-};
-
 static Preferences prefs;
 static const char *NVS_NS = "hygrow";
 

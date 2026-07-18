@@ -41,7 +41,7 @@
 #define FALLBACK_FIREBASE_USER_PASSWORD ""
 #endif
 #ifndef FALLBACK_FIRESTORE_COLLECTION
-#define FALLBACK_FIRESTORE_COLLECTION "hygrow_devices"
+#define FALLBACK_FIRESTORE_COLLECTION "sensor_data"
 #endif
 #ifndef FALLBACK_DEVICE_ID
 #define FALLBACK_DEVICE_ID "ESP32S3_001"
@@ -124,7 +124,10 @@
 #define DEFAULT_SENSOR_ENABLED true   // [NVS] s_en_<i> (per sensor)
 
 // ---------- Sensor IDs ----------
-// Order MUST match SENSOR_NAMES[] in sensors.cpp AND SENSOR_CONFIG in app.js.
+// Order MUST match ERROR_COLORS[] in src/utils/led_status.cpp, and is
+// mirrored by TAB_TO_SENSOR_ID's string keys in data/js/app.js (JS uses
+// short string ids, not this numeric enum, so there's no direct ordering
+// dependency there — but keep them conceptually aligned when adding sensors).
 enum SensorID
 {
     S_WL = 0,
