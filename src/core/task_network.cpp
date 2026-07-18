@@ -5,45 +5,11 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #include <Preferences.h>
-#include <Update.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
-
-static const char OTA_PAGE[] PROGMEM = R"rawliteral(
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>HyGrow OTA Update</title>
-    <style>
-        :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-        body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b1220; color: #fff; }
-        .card { width: min(92vw, 560px); padding: 24px; border: 1px solid rgba(255,255,255,.12); border-radius: 20px; background: rgba(255,255,255,.06); backdrop-filter: blur(18px); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
-        h1 { margin: 0 0 12px; font-size: 1.6rem; }
-        p { margin: 0 0 16px; line-height: 1.5; opacity: .88; }
-        input, button { width: 100%; box-sizing: border-box; border-radius: 14px; border: 1px solid rgba(255,255,255,.14); padding: 14px 16px; font: inherit; }
-        input { color: #fff; background: rgba(255,255,255,.06); margin-bottom: 12px; }
-        button { border: 0; background: linear-gradient(135deg, #4f9cff, #6fe7c8); color: #08111d; font-weight: 700; cursor: pointer; }
-        small { display: block; margin-top: 12px; opacity: .72; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h1>HyGrow Firmware Update</h1>
-        <p>Select a compiled <strong>.bin</strong> file and upload it to the ESP32-S3. The device will reboot automatically after the transfer completes.</p>
-        <form method="POST" action="/ota/upload" enctype="multipart/form-data">
-            <input type="file" name="update" accept=".bin" required>
-            <button type="submit">Upload Firmware</button>
-        </form>
-        <small>Keep the browser open until the upload finishes.</small>
-    </div>
-</body>
-</html>
-)rawliteral";
 
 unsigned long lastVitalsTime = 0;
 unsigned long lastDataTime = 0;
@@ -52,7 +18,6 @@ unsigned long lastFirebaseTime = 0;
 // Internal helpers
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
-void configureOtaRoutes();
 void firebaseUploadCycle();
 
 // ----------------------------------------------------------------------------
@@ -317,8 +282,8 @@ void initNetworkTask()
         server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
     }
 
-    // 3. Native OTA Mount
-    configureOtaRoutes();
+    // 3. Web Server & File System Setup Complete
+    // (Native OTA Mount removed for attack surface reduction)
 
     // 4. WebSocket Mount
     ws.onEvent(onWsEvent);
@@ -360,74 +325,7 @@ void networkTaskLoop()
     }
 }
 
-void configureOtaRoutes()
-{
-    // Gated at request-handling time (not at route-registration time) so
-    // toggling ota_enabled from Settings takes effect immediately, without a
-    // reboot — the routes stay registered either way, they just reject.
-    server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request)
-              {
-                  if (!currentConfig.ota_enabled)
-                  {
-                      request->send(403, "text/plain", "OTA updates are disabled in Settings.");
-                      return;
-                  }
-                  request->send(200, "text/html", OTA_PAGE); });
-
-    server.on("/ota/upload", HTTP_POST, [](AsyncWebServerRequest *request)
-              {
-                  if (!currentConfig.ota_enabled)
-                  {
-                      request->send(403, "text/plain", "OTA updates are disabled in Settings.");
-                      return;
-                  }
-
-                  const bool success = !Update.hasError();
-                  AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", success ? "OK" : "FAIL");
-                  response->addHeader("Connection", "close");
-                  request->send(response);
-
-                  if (success)
-                  {
-                      webLog(0, LOG_INFO, "OTA Update Complete. Rebooting...");
-                      delay(500);
-                      ESP.restart();
-                  }
-                  else
-                  {
-                      webLog(0, LOG_ERR, "OTA Update Failed");
-                  } }, [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final)
-              {
-                  (void)request;
-                  (void)filename;
-
-                  // Reject before touching Update.begin()/write() at all —
-                  // checked on every chunk (cheap) so a client that starts
-                  // uploading right as ota_enabled flips off is still stopped.
-                  if (!currentConfig.ota_enabled)
-                  {
-                      return;
-                  }
-
-                  if (index == 0)
-                  {
-                      webLog(0, LOG_INFO, "OTA Update Started");
-                      if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH))
-                      {
-                          Update.printError(Serial);
-                      }
-                  }
-
-                  if (len > 0 && Update.write(data, len) != len)
-                  {
-                      Update.printError(Serial);
-                  }
-
-                  if (final && !Update.end(true))
-                  {
-                      Update.printError(Serial);
-                  } });
-}
+// (configureOtaRoutes removed)
 
 void broadcastVitals()
 {
@@ -610,11 +508,8 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
     AwsFrameInfo *info = (AwsFrameInfo *)arg;
     if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT)
     {
-        data[len] = 0;
-        String msg = (char *)data;
-
         JsonDocument doc;
-        DeserializationError err = deserializeJson(doc, msg);
+        DeserializationError err = deserializeJson(doc, data, len);
 
         if (err)
         {
@@ -713,7 +608,6 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
             // request-handling time in configureOtaRoutes().
             currentConfig.demo_mode = doc["demo"] | currentConfig.demo_mode;
             currentConfig.firebase_enabled = doc["fb_en"] | currentConfig.firebase_enabled;
-            currentConfig.ota_enabled = doc["ota_en"] | currentConfig.ota_enabled;
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "Feature flags updated.");
@@ -831,7 +725,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
             uint32_t f = doc["int_fb"] | currentConfig.interval_fb_ms;
 
             auto clamp = [](uint32_t x) -> uint32_t
-            { return x < 500 ? 500 : (x > 60000 ? 60000 : x); };
+            { return x < 2000 ? 2000 : (x > 60000 ? 60000 : x); };
 
             currentConfig.interval_read_ms = clamp(r);
             currentConfig.interval_ws_ms = clamp(w);

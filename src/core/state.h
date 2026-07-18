@@ -43,8 +43,7 @@ struct ConfigState
 
   // Feature flags — user-editable from Web Doctor > Settings > Feature Flags
   bool demo_mode;         // [NVS] demo    — simulate sensor data instead of reading hardware
-  bool firebase_enabled;  // [NVS] fb_en   — gate the Firestore upload cycle
-  bool ota_enabled;       // [NVS] ota_en  — gate the /update and /ota/upload HTTP routes
+  bool firebase_enabled;  // [NVS] fb_en   — gate the Firestore POST logic
 
   // Feature flags — user toggles per sensor
   bool sensor_enabled[S_COUNT];

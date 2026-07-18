@@ -120,7 +120,6 @@
 // ---------- Feature flags ----------
 #define DEFAULT_DEMO_MODE false       // [NVS] demo
 #define DEFAULT_FIREBASE_ENABLED true // [NVS] fb_en
-#define DEFAULT_OTA_ENABLED true      // [NVS] ota_en
 #define DEFAULT_SENSOR_ENABLED true   // [NVS] s_en_<i> (per sensor) — applies to every
                                        // sensor EXCEPT pH, which has its own override
                                        // below. pH needs a calibrated probe in real

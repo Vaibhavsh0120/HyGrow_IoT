@@ -12,32 +12,27 @@
 const DEFAULT_PINS = { tds: 2, dht: 6, wt: 4, sda: 8, scl: 9, wl: 1, wlp: 5, ph: 7 };
 
 const tabsData = {
-    labels: ["Dashboard & Vitals", "TDS", "Air Temp & Hum", "Water Temp", "Light", "Water Level", "pH", "Live Calibration", "System Settings", "Terminal", "Firmware"],
-    icons: ["monitoring", "water_drop", "thermostat", "device_thermostat", "light_mode", "waves", "science", "settings_input_component", "settings", "terminal", "system_update_alt"],
+    labels: ["Dashboard & Vitals", "TDS", "Air Temp & Hum", "Water Temp", "Light", "Water Level", "pH", "Live Calibration", "System Settings", "Terminal"],
+    icons: ["monitoring", "water_drop", "thermostat", "device_thermostat", "light_mode", "waves", "science", "settings_input_component", "settings", "terminal"],
     activeStyle: "text-white font-bold bg-[rgba(255,255,255,0.1)] rounded-2xl shadow-inner",
     inactiveStyle: "text-on-surface-variant font-medium hover:bg-[rgba(255,255,255,0.05)] hover:text-white rounded-2xl transition-colors duration-200",
     baseStyle: "flex items-center justify-start gap-4 p-3 lg:px-6 lg:py-3 cursor-pointer transition-all duration-150 w-full",
     // Placeholder values shown only until the first "config" WS message arrives
     // and overwrites these with the device's real, live pin assignments.
-    gpios: [null, DEFAULT_PINS.tds, DEFAULT_PINS.dht, DEFAULT_PINS.wt, DEFAULT_PINS.sda, DEFAULT_PINS.wl, DEFAULT_PINS.ph, null, null, null, null],
+    gpios: [null, DEFAULT_PINS.tds, DEFAULT_PINS.dht, DEFAULT_PINS.wt, DEFAULT_PINS.sda, DEFAULT_PINS.wl, DEFAULT_PINS.ph, null, null, null],
     // Real sensor_enabled[] state per tab, populated from msg.s_en[] once the
     // first "config" frame arrives. Distinct from `gpios` above: a sensor can
     // have a valid pin (>= 0) but still be enabled:false (e.g. pH ships off by
     // default, or any sensor that auto-disabled after failing startup
     // validation) — the per-sensor detail page toggle should reflect this real
     // flag, not just "does this tab have a pin assigned".
-    enabled: [null, true, true, true, true, true, false, null, null, null, null],
-    units: ["", "ppm", "", "°C", "lux", "%", "pH", "", "", "", ""]
+    enabled: [null, true, true, true, true, true, false, null, null, null],
+    units: ["", "ppm", "", "°C", "lux", "%", "pH", "", "", ""]
 };
 
 let currentTabId = 0;
 let isTerminalPaused = false;
 let globalConfigCache = {}; // Cache config data for CSV export
-
-// Firmware page state (Part 1.6 / 3.2) — assume OTA is enabled until a config
-// frame says otherwise, so the button isn't stuck disabled before first sync.
-let otaEnabled = true;
-let selectedFirmwareFile = null;
 
 // Chart Buffers (Keep last 20 readings for the UI graphs and CSV Export)
 const MAX_POINTS = 20;
@@ -108,7 +103,7 @@ function switchTab(index, element) {
     const dualSensorPage = document.getElementById('page-dual-sensor');
     const sensorCanvasContainer = document.getElementById('sensor-canvas-container');
 
-    if (index === 0 || index === 7 || index === 8 || index === 9 || index === 10) {
+    if (index === 0 || index === 7 || index === 8 || index === 9) {
         const page = document.getElementById(`page-${index}`);
         if(page) {
             page.classList.remove('hidden');
@@ -187,6 +182,7 @@ window.addEventListener('resize', resizeCanvas);
 // ============================================================================
 let gateway = `ws://${window.location.hostname}/ws`;
 let websocket;
+let wsBackoff = 2000;
 
 function initWebSocket() {
     websocket = new WebSocket(gateway);
@@ -196,6 +192,7 @@ function initWebSocket() {
 }
 
 function onOpen(event) {
+    wsBackoff = 2000;
     document.getElementById('vital-link-dot').classList.remove('bg-error');
     document.getElementById('vital-link-dot').classList.add('bg-secondary', 'animate-pulse');
     document.getElementById('vital-link-text').innerText = 'LIVE SYS.LINK';
@@ -207,7 +204,8 @@ function onClose(event) {
     document.getElementById('vital-link-dot').classList.add('bg-error');
     document.getElementById('vital-link-text').innerText = 'OFFLINE';
     document.getElementById('vital-link-text').classList.replace('text-secondary', 'text-error');
-    setTimeout(initWebSocket, 2000); // Auto-reconnect
+    setTimeout(initWebSocket, wsBackoff);
+    wsBackoff = Math.min(60000, wsBackoff * 2);
 }
 
 function onMessage(event) {
@@ -391,7 +389,6 @@ function updateConfigForm(msg) {
     // just reflect the device's live state every time a config frame arrives.
     if(document.getElementById('cfg-demo-mode')) document.getElementById('cfg-demo-mode').checked = !!msg.demo;
     if(document.getElementById('cfg-fb-enabled')) document.getElementById('cfg-fb-enabled').checked = !!msg.fb_en;
-    if(document.getElementById('cfg-ota-enabled')) document.getElementById('cfg-ota-enabled').checked = !!msg.ota_en;
 
     // Demo Mode badge on the Dashboard — only shown while demo mode is on, so
     // simulated readings are never mistaken for real sensor data.
@@ -399,19 +396,6 @@ function updateConfigForm(msg) {
     if (demoBadge) {
         demoBadge.classList.toggle('hidden', !msg.demo);
         demoBadge.classList.toggle('flex', !!msg.demo);
-    }
-
-    // OTA gating on the Firmware page (Part 1.6 / 3.2) — gray out the upload
-    // button and show a one-line note instead of letting the user click into
-    // a 403 from the server.
-    const otaNotice = document.getElementById('ota-disabled-notice');
-    const firmwareUploadBtn = document.getElementById('btn-firmware-upload');
-    if (msg.ota_en !== undefined) otaEnabled = !!msg.ota_en;
-    if (otaNotice) otaNotice.classList.toggle('hidden', otaEnabled);
-    if (firmwareUploadBtn) {
-        // Only re-enable if a file is actually selected too — don't fight the
-        // "disabled until a file is chosen" rule from 3.2.
-        firmwareUploadBtn.disabled = !otaEnabled || !selectedFirmwareFile;
     }
 
     // Timing intervals (Part 5.8)
@@ -564,24 +548,67 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCalTds = document.getElementById('btn-cal-tds');
     if(btnCalTds) {
         btnCalTds.addEventListener('click', () => {
-            const payload = { command: "calibrate_tds", tds_k: parseFloat(document.getElementById('cfg-tds-k').value) };
+            const targetPpm = parseFloat(document.getElementById('cfg-tds-target').value);
+            const currentPpm = parseFloat(document.getElementById('cal-tds-raw').innerText);
+            if (isNaN(targetPpm) || isNaN(currentPpm) || currentPpm === 0) {
+                alert("Invalid TDS readings");
+                return;
+            }
+            const currentK = globalConfigCache.tds_k || 1.0;
+            const newK = currentK * (targetPpm / currentPpm);
+
+            const payload = { command: "calibrate_tds", tds_k: parseFloat(newK.toFixed(2)) };
             websocket.send(JSON.stringify(payload));
             btnCalTds.innerText = "Saved!";
-            setTimeout(() => { btnCalTds.innerText = "Save TDS Calibration"; }, 2000);
+            setTimeout(() => { btnCalTds.innerText = "Calibrate & Save"; }, 2000);
         });
     }
 
-    const btnCalPh = document.getElementById('btn-cal-ph');
-    if(btnCalPh) {
-        btnCalPh.addEventListener('click', () => {
+    let ph7Volt = null;
+    let ph4Volt = null;
+
+    const btnCalPh7 = document.getElementById('btn-cal-ph-7');
+    if(btnCalPh7) {
+        btnCalPh7.addEventListener('click', () => {
+            const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
+            if (isNaN(livePh)) return;
+            const off = globalConfigCache.ph_off || 0.0;
+            const slope = globalConfigCache.ph_slope || 1.0;
+            ph7Volt = (livePh - off) / slope;
+            document.getElementById('cal-ph-7-val').innerText = ph7Volt.toFixed(3) + " V";
+        });
+    }
+
+    const btnCalPh4 = document.getElementById('btn-cal-ph-4');
+    if(btnCalPh4) {
+        btnCalPh4.addEventListener('click', () => {
+            const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
+            if (isNaN(livePh)) return;
+            const off = globalConfigCache.ph_off || 0.0;
+            const slope = globalConfigCache.ph_slope || 1.0;
+            ph4Volt = (livePh - off) / slope;
+            document.getElementById('cal-ph-4-val').innerText = ph4Volt.toFixed(3) + " V";
+        });
+    }
+
+    const btnCalPhSave = document.getElementById('btn-cal-ph-save');
+    if(btnCalPhSave) {
+        btnCalPhSave.addEventListener('click', () => {
+            if (ph7Volt === null || ph4Volt === null || ph7Volt === ph4Volt) {
+                alert("Please set both 7.0 and 4.0 calibration points.");
+                return;
+            }
+            const newSlope = (7.0 - 4.0) / (ph7Volt - ph4Volt);
+            const newOff = 7.0 - (newSlope * ph7Volt);
+
             const payload = {
                 command: "calibrate_ph",
-                offset: parseFloat(document.getElementById('cfg-ph-off').value),
-                slope: parseFloat(document.getElementById('cfg-ph-slope').value)
+                offset: parseFloat(newOff.toFixed(2)),
+                slope: parseFloat(newSlope.toFixed(2))
             };
             websocket.send(JSON.stringify(payload));
-            btnCalPh.innerText = "Saved!";
-            setTimeout(() => { btnCalPh.innerText = "Save pH Calibration"; }, 2000);
+            btnCalPhSave.innerText = "Saved!";
+            setTimeout(() => { btnCalPhSave.innerText = "Calculate & Save"; }, 2000);
         });
     }
 
@@ -718,7 +745,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ------------------------------------------------------------------
-    // Feature Flags card (Part 2.3 / 1.3) — Demo Mode, Firebase Upload, OTA
+    // Feature Flags card (Part 2.3 / 1.3) — Demo Mode, Firebase Upload
     // Updates. One "Save Feature Flags" button sends all three current
     // checkbox states via save_features. None of these need a reboot.
     // ------------------------------------------------------------------
@@ -728,8 +755,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const payload = {
                 command: "save_features",
                 demo: !!document.getElementById('cfg-demo-mode')?.checked,
-                fb_en: !!document.getElementById('cfg-fb-enabled')?.checked,
-                ota_en: !!document.getElementById('cfg-ota-enabled')?.checked
+                fb_en: !!document.getElementById('cfg-fb-enabled')?.checked
             };
             websocket.send(JSON.stringify(payload));
             btnSaveFeatures.innerText = "Saved!";
@@ -770,7 +796,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const clamp = (v, fallback) => {
                 const n = parseInt(v, 10);
                 if (isNaN(n)) return fallback;
-                return Math.min(60000, Math.max(500, n));
+                return Math.min(60000, Math.max(2000, n));
             };
             const payload = {
                 command: "save_intervals",
@@ -785,104 +811,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // ------------------------------------------------------------------
-    // Inline firmware uploader (Part 3.2) — replaces the old
-    // window.open('/update') link. Everything happens on page-10: file
-    // select, upload via XMLHttpRequest (not a <form> submit, so there's no
-    // full-page navigation), a real progress bar driven by
-    // xhr.upload.onprogress, and inline success/failure state. Never
-    // navigates away from the dashboard.
-    // ------------------------------------------------------------------
-    const firmwareFileInput = document.getElementById('firmware-file-input');
-    const firmwareFileLabel = document.getElementById('firmware-file-label');
-    const btnFirmwareUpload = document.getElementById('btn-firmware-upload');
-    const firmwareProgressWrap = document.getElementById('firmware-progress-wrap');
-    const firmwareProgressBar = document.getElementById('firmware-progress-bar');
-    const firmwareProgressPct = document.getElementById('firmware-progress-pct');
-    const firmwareStatusText = document.getElementById('firmware-status-text');
 
-    const formatBytes = (bytes) => {
-        if (bytes < 1024) return `${bytes} B`;
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-    };
-
-    if (firmwareFileInput) {
-        firmwareFileInput.addEventListener('change', () => {
-            const file = firmwareFileInput.files && firmwareFileInput.files[0];
-            selectedFirmwareFile = file || null;
-
-            if (firmwareFileLabel) {
-                firmwareFileLabel.innerText = file ? `${file.name} (${formatBytes(file.size)})` : "No file selected";
-            }
-            if (btnFirmwareUpload) {
-                btnFirmwareUpload.disabled = !file || !otaEnabled;
-            }
-        });
-    }
-
-    if (btnFirmwareUpload) {
-        btnFirmwareUpload.addEventListener('click', () => {
-            if (!selectedFirmwareFile || !otaEnabled) return;
-
-            const xhr = new XMLHttpRequest();
-            const formData = new FormData();
-            formData.append('update', selectedFirmwareFile);
-
-            btnFirmwareUpload.disabled = true;
-            btnFirmwareUpload.innerHTML = `<span class="material-symbols-outlined text-[20px] animate-spin">progress_activity</span> <span>Uploading…</span>`;
-
-            if (firmwareProgressWrap) firmwareProgressWrap.classList.remove('hidden');
-            if (firmwareProgressWrap) firmwareProgressWrap.classList.add('flex');
-            if (firmwareProgressBar) firmwareProgressBar.style.width = '0%';
-            if (firmwareProgressPct) firmwareProgressPct.innerText = '0%';
-            if (firmwareStatusText) { firmwareStatusText.innerText = 'Uploading…'; firmwareStatusText.classList.remove('text-error'); }
-
-            xhr.upload.onprogress = (evt) => {
-                if (!evt.lengthComputable) return;
-                const pct = Math.round((evt.loaded / evt.total) * 100);
-                if (firmwareProgressBar) firmwareProgressBar.style.width = `${pct}%`;
-                if (firmwareProgressPct) firmwareProgressPct.innerText = `${pct}%`;
-                if (pct >= 100 && firmwareStatusText) firmwareStatusText.innerText = 'Flashing…';
-            };
-
-            xhr.onload = () => {
-                if (xhr.status === 200 && xhr.responseText.trim() === 'OK') {
-                    if (firmwareStatusText) firmwareStatusText.innerText = 'Complete — rebooting…';
-                    if (firmwareProgressBar) firmwareProgressBar.style.width = '100%';
-                    if (firmwareProgressPct) firmwareProgressPct.innerText = '100%';
-                    btnFirmwareUpload.innerHTML = `<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">check_circle</span> <span>Success — reconnecting…</span>`;
-                    // The device reboots itself after a successful /ota/upload.
-                    // initWebSocket() already auto-reconnects every 2s on close
-                    // (see onClose()), so this mostly happens for free — the
-                    // existing vital-link indicator will flip to OFFLINE and
-                    // then back to LIVE SYS.LINK on its own.
-                } else {
-                    const errText = xhr.responseText && xhr.responseText.trim().length > 0
-                        ? xhr.responseText.trim()
-                        : `Upload failed (HTTP ${xhr.status})`;
-                    if (firmwareStatusText) {
-                        firmwareStatusText.innerText = errText;
-                        firmwareStatusText.classList.add('text-error');
-                    }
-                    btnFirmwareUpload.innerHTML = `<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">system_update_alt</span> <span>Update Firmware</span>`;
-                    btnFirmwareUpload.disabled = !selectedFirmwareFile || !otaEnabled;
-                }
-            };
-
-            xhr.onerror = () => {
-                if (firmwareStatusText) {
-                    firmwareStatusText.innerText = 'Upload failed — connection error. Stay on the same Wi-Fi network and try again.';
-                    firmwareStatusText.classList.add('text-error');
-                }
-                btnFirmwareUpload.innerHTML = `<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">system_update_alt</span> <span>Update Firmware</span>`;
-                btnFirmwareUpload.disabled = !selectedFirmwareFile || !otaEnabled;
-            };
-
-            xhr.open('POST', '/ota/upload', true);
-            xhr.send(formData);
-        });
-    }
 
 
     // Theme: Light / Dark / Auto, persisted in localStorage. The <head> has a

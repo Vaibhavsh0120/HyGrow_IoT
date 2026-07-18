@@ -4,8 +4,7 @@
 float readPH();
 
 // Assuming a standard 12-bit ADC for ESP32 and 3.3V reference
-#define VREF 3.3
-#define ADC_RES 4095.0
+#include <Arduino.h>
 
 void initPH()
 {
@@ -44,10 +43,8 @@ float readPH()
         return NAN;
     }
 
-    // 2. Read the raw analog value
-    // (Note: In future iterations, you may want to add a median filter or multi-sampling here for stability)
-    int analogValue = analogRead(currentConfig.pin_ph);
-    float voltage = analogValue * (VREF / ADC_RES);
+    // 2. Read the raw analog value in true Volts using hardware calibration
+    float voltage = analogReadMilliVolts(currentConfig.pin_ph) / 1000.0;
 
     // 3. Calculate pH value using live calibration variables from NVS
     // Linear equation: pH = (slope * voltage) + offset

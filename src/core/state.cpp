@@ -38,8 +38,8 @@ static void loadStr(const char *key, char *dst, size_t dstSize, const char *def)
 // power-gate cycling back to back, instead of the intended periodic cadence.
 static uint32_t clampInterval(uint32_t ms)
 {
-  if (ms < 500)
-    return 500;
+  if (ms < 2000)
+    return 2000;
   if (ms > 60000)
     return 60000;
   return ms;
@@ -58,7 +58,10 @@ void state_init()
   currentVitals.littlefs_ok = LittleFS.begin(false);
 
   // NVS
-  prefs.begin(NVS_NS, false);
+  if (!prefs.begin(NVS_NS, false)) {
+      prefs.clear();
+      prefs.begin(NVS_NS, false);
+  }
 
   // WiFi
   loadStr("wifi_ssid", currentConfig.wifi_ssid, sizeof(currentConfig.wifi_ssid), DEFAULT_WIFI_SSID);
@@ -97,12 +100,11 @@ void state_init()
   currentConfig.pin_wl = prefs.getInt("pin_wl", PIN_WL);
   currentConfig.pin_wl_power = prefs.getInt("pin_wlp", PIN_WL_PWR);
 
-  // Feature flags — demo mode / Firebase upload gate / OTA gate.
-  // NVS key strings match the [NVS] comments next to each #define in
-  // config.h (demo, fb_en, ota_en), so the code stays self-documenting.
-  currentConfig.demo_mode        = prefs.getBool("demo",   DEFAULT_DEMO_MODE);
-  currentConfig.firebase_enabled = prefs.getBool("fb_en",  DEFAULT_FIREBASE_ENABLED);
-  currentConfig.ota_enabled      = prefs.getBool("ota_en", DEFAULT_OTA_ENABLED);
+  // Feature flags — demo mode / Firebase upload gate.
+  // We keep the keys extremely short to save NVS bytes, but map them to the full names from
+  // config.h (demo, fb_en), so the code stays self-documenting.
+  currentConfig.demo_mode        = prefs.getBool("demo", DEFAULT_DEMO_MODE);
+  currentConfig.firebase_enabled = prefs.getBool("fb_en", DEFAULT_FIREBASE_ENABLED);
 
   // Feature flags — one NVS key per sensor: "en_0" .. "en_N". Every sensor
   // defaults to DEFAULT_SENSOR_ENABLED (true) except pH (S_PH), which uses
@@ -163,8 +165,7 @@ bool state_save()
   }
 
   prefs.putBool("demo",   currentConfig.demo_mode);
-  prefs.putBool("fb_en",  currentConfig.firebase_enabled);
-  prefs.putBool("ota_en", currentConfig.ota_enabled);
+  prefs.putBool("fb_en", currentConfig.firebase_enabled);
 
   return true;
 }

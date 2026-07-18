@@ -3,8 +3,7 @@
 
 float readTDS(float currentWaterTemp);
 
-#define VREF 3.3f
-#define ADC_RES 4095.0f
+#include <Arduino.h>
 #define SCOUNT 30
 
 // Median filter (DFRobot's algorithm)
@@ -74,13 +73,13 @@ float readTDS(float currentWaterTemp)
     int analogBuffer[SCOUNT];
     for (int i = 0; i < SCOUNT; i++)
     {
-        analogBuffer[i] = analogRead(currentConfig.pin_tds);
+        analogBuffer[i] = analogReadMilliVolts(currentConfig.pin_tds);
         delay(2);
     }
 
     // 3. Apply Median Filter
     int medianRaw = getMedianNum(analogBuffer, SCOUNT);
-    float avgVoltage = medianRaw * (VREF / ADC_RES);
+    float avgVoltage = medianRaw / 1000.0;
 
     // 4. Temperature Compensation
     if (currentWaterTemp <= 0.0)

@@ -139,9 +139,14 @@ void setup()
     {
         Serial.println("FATAL: LittleFS mount failed. The web UI cannot be served.");
         Serial.println("Re-flash the filesystem image (Upload Filesystem Image) and reset the board.");
+        ledStatusInit();
+        bool toggle = false;
         while (true)
         {
-            delay(1000);
+            if (toggle) ledSetSolid(255, 0, 0); // Red
+            else ledSetSolid(255, 0, 255); // Magenta
+            toggle = !toggle;
+            delay(100);
         }
     }
 

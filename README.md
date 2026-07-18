@@ -5,25 +5,39 @@
 ![Firebase](https://img.shields.io/badge/Database-Firestore-yellow)
 ![Status](https://img.shields.io/badge/Status-Active-success)
 
-A compact ESP32-S3 firmware for monitoring hydroponic and environmental data from six sensors. It serves a local dashboard from LittleFS, supports native OTA updates, and can be built with either Arduino IDE, Arduino CLI, or PlatformIO.
+A compact ESP32-S3 firmware for monitoring hydroponic and environmental data from six sensors. It serves a local dashboard from LittleFS, acts as a fault-tolerant edge device, and can be built with either Arduino IDE, Arduino CLI, or PlatformIO.
 
 ---
 
-## 🌟 Key Features & New Architecture
+## 🏛️ System Architecture Context
+
+HyGrow is built on a strictly decoupled, 3-pillar architecture. This codebase represents **Pillar 3** only.
+
+*   **Pillar 1: The React Native App & Hugging Face AI (The Brain)**
+    *   Handles all the heavy lifting, historical data tracking, push notifications, and predictive plant health models via Hugging Face.
+*   **Pillar 2: Firebase / Firestore (The Bridge)**
+    *   Acts purely as a real-time state mirror holding current, live sensor values.
+*   **Pillar 3: The ESP32-S3 IoT Device (The Edge / This Codebase)**
+    *   Operates purely as a fault-tolerant **"dumb pipe"** and a local configuration appliance.
+    *   **NO** historical data storage.
+    *   **NO** predictive analytics or complex hydroponic logic.
+    *   Its only jobs are to accurately read analog/digital sensors, push that raw data to Firestore in real-time, and host a local "router-style" Web UI for hardware setup, Wi-Fi provisioning, and sensor calibration.
+
+---
+
+## 🌟 Key Features
 
 - **Dual-Core Processing (FreeRTOS):**
   - **Core 0:** Handles WiFi, the LittleFS Web Server, WebSockets, NVS storage, and asynchronous Firebase uploads.
   - **Core 1:** Exclusively dedicated to precise hardware timing, sensor reads, and Vapor Pressure Deficit (VPD) calculations without network-induced latency.
-- **Offline-First "Stitch" UI:** A beautiful, responsive "liquid-glass" Single Page Application hosted directly on the ESP32's flash memory. No internet or external CDNs required — fonts and icons are self-hosted from `data/fonts/` (see the build-step note at the top of `data/css/style.css`).
+- **Offline-First "Stitch" UI:** A premium, responsive "liquid-glass" Single Page Application hosted directly on the ESP32's flash memory. No internet or external CDNs required.
 - **True Offline Fallback:** If the configured WiFi fails, the ESP32 automatically broadcasts a `HyGrow-Setup` Access Point (SoftAP) for local configuration and diagnostics.
-- **Dynamic NVS Configuration (Web Doctor):** Update WiFi credentials, Firebase keys, sensor GPIO pins, feature flags, and interval timings directly from the web dashboard. Settings persist across reboots via Non-Volatile Storage (NVS).
-- **Feature Flags:** Demo Mode (simulate all six sensors for testing the dashboard with no hardware wired up), a Firebase Upload master switch, and an OTA Updates switch — all live-toggleable from Settings with no reboot required.
-- **Live Sensor Calibration:** Calibrate pH (slope/offset) and TDS (K-factor) live from the browser without recompiling code.
-- **Startup Validation & Auto-Disable:** Every enabled sensor gets 5 boot-time read attempts before the system trusts it; a sensor that fails all 5 is automatically disabled and the reason is logged to the web terminal, instead of spamming read failures forever. Fully re-enabling it (pin restored **and** its enabled flag cleared) is a single click from the Web UI — see [Startup Validation & Auto-Disable](#startup-validation--auto-disable) below.
-- **Inline Firmware Updates:** Upload a `.bin` file directly from the Firmware tab — no separate page, a real progress bar, and inline success/failure state.
+- **Dynamic NVS Configuration (Web Doctor):** Update WiFi credentials, Firebase keys, sensor GPIO pins, feature flags, and interval timings directly from the web dashboard. Settings persist across reboots via Non-Volatile Storage (NVS) with self-healing recovery logic.
+- **Feature Flags:** Demo Mode (simulate all six sensors for testing the dashboard with no hardware wired up) and a Firebase Upload master switch — all live-toggleable from Settings with no reboot required.
+- **Guided Sensor Calibration:** Calibrate pH via a guided 2-point wizard, and TDS via a 1-point target wizard, calculated entirely in the browser UI.
+- **Startup Validation & Auto-Disable:** Every enabled sensor gets 5 boot-time read attempts before the system trusts it; a sensor that fails all 5 is automatically disabled. Fully re-enabling it is a single click from the Web UI.
 - **Light / Dark / Auto Theme:** The dashboard theme is switchable from Settings and persisted per-browser; "Auto" follows the OS `prefers-color-scheme`.
-- **Over-The-Air (OTA) Updates:** Flash new `.bin` firmware files wirelessly, inline from the dashboard's Firmware tab (or via the standalone `/update` fallback page). Gated by the OTA Updates feature flag.
-- **RGB Status LED:** The onboard WS2812 NeoPixel (`led_status.cpp`) shows solid green while every enabled sensor is healthy, and cycles through a per-sensor error color (see [LED Error Color Codes](#-led-error-color-codes)) whenever an enabled sensor's most recent read failed — driven every read cycle from `task_sensor.cpp`.
+- **RGB Status LED:** The onboard WS2812 NeoPixel shows solid green while every enabled sensor is healthy, and cycles through a per-sensor error color whenever an enabled sensor's most recent read failed. Also provides a fatal blinking Red/Magenta error for flash mounting failures.
 
 ---
 
@@ -212,8 +226,8 @@ The Web Doctor UI communicates with the ESP32 entirely over a single WebSocket c
 - `{"command": "save_pins", "pin_tds": 2, "pin_dht": 6, "pin_ph": 7, "pin_wt": 4, "pin_wl": 1, "pin_sda": 8, "pin_scl": 9, "pin_wlp": 5}` _(any field can be omitted to leave that pin unchanged; `-1` disables that sensor; requires reboot to apply; rejected server-side if any pin is 19/20 or duplicates another enabled sensor's pin — see [Forbidden Pins](#️-forbidden-pins-gpio-19--gpio-20))_
 - `{"command": "reset_sensor_pin", "sensor": "tds" | "dht" | "ph" | "wt" | "wl" | "light"}` _(resets that sensor's pin(s) to the compiled default, clears its auto-disable flag, and reboots automatically)_
 - `{"command": "save_sensor_enabled", "sensor": "tds" | "dht" | "ph" | "wt" | "wl" | "light", "enabled": true}` _(the per-sensor counterpart to `save_pins` — flips `sensor_enabled[i]`; enabling also restores that sensor's pin(s) from `-1` if needed; requires reboot to apply)_
-- `{"command": "save_features", "demo": false, "fb_en": true, "ota_en": true}` _(any field can be omitted to leave that flag unchanged; none of the three require a reboot)_
-- `{"command": "save_intervals", "int_read": 2000, "int_ws": 1000, "int_vit": 1000, "int_fb": 10000}` _(all values in ms, clamped server-side to 500–60000; any field can be omitted to leave that interval unchanged)_
+- `{"command": "save_features", "demo": false, "fb_en": true}` _(any field can be omitted to leave that flag unchanged; none of the two require a reboot)_
+- `{"command": "save_intervals", "int_read": 2000, "int_ws": 1000, "int_vit": 1000, "int_fb": 10000}` _(all values in ms, clamped server-side to 2000–60000; any field can be omitted to leave that interval unchanged)_
 - `{"command": "calibrate_tds", "tds_k": 1.05}`
 - `{"command": "calibrate_ph", "offset": 0.1, "slope": 1.02}`
 - `{"command": "reboot"}`

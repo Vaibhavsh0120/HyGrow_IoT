@@ -13,8 +13,8 @@
 #include "../core/state.h"
 #include <Arduino.h>
 
-// 12-bit ADC on ESP32-S3
-#define ADC_RES 4095.0f
+// 12-bit ADC on ESP32-S3 (replaced with hardware mv)
+#define MAX_VOLTAGE_MV 3300.0f
 
 // Time for the probe to settle after power is applied, before we trust the
 // analog reading. 10ms is generous for the RC time constant of a resistive
@@ -68,7 +68,7 @@ float readWaterLevel()
     digitalWrite(currentConfig.pin_wl_power, HIGH);
     delay(WL_SETTLE_MS);
 
-    int raw = analogRead(currentConfig.pin_wl);
+    int raw_mv = analogReadMilliVolts(currentConfig.pin_wl);
 
     digitalWrite(currentConfig.pin_wl_power, LOW);
 
@@ -76,16 +76,16 @@ float readWaterLevel()
     // floats near 0; a short or fully-submerged high-conductivity probe can
     // pin near the rail. Both extremes are still valid physical readings, so
     // we don't treat them as errors — just clamp the final percentage.
-    if (raw < 0)
+    if (raw_mv < 0)
     {
         webLog(1, LOG_ERR, "Water level ADC read failed!");
         return NAN;
     }
 
     // 4. Map raw ADC counts to a 0-100% float. Empty tank -> ~0 counts, full
-    // tank -> ~ADC_RES counts, for a typical resistive strip probe wired as
+    // tank -> ~MAX_VOLTAGE_MV counts, for a typical resistive strip probe wired as
     // a voltage divider against a fixed pull-down.
-    float percent = (raw / ADC_RES) * 100.0f;
+    float percent = (raw_mv / MAX_VOLTAGE_MV) * 100.0f;
 
     // 5. Clamp to a sane 0-100 range.
     if (percent < 0.0f)
