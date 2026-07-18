@@ -88,6 +88,7 @@ void state_init()
   currentConfig.pin_lux_sda = prefs.getInt("pin_sda", PIN_LUX_SDA);
   currentConfig.pin_lux_scl = prefs.getInt("pin_scl", PIN_LUX_SCL);
   currentConfig.pin_wl = prefs.getInt("pin_wl", PIN_WL);
+  currentConfig.pin_wl_power = prefs.getInt("pin_wlp", PIN_WL_PWR);
 
   // Feature flags — one NVS key per sensor: "en_0" .. "en_N"
   for (int i = 0; i < S_COUNT; ++i)
@@ -132,6 +133,7 @@ bool state_save()
   prefs.putInt("pin_sda", currentConfig.pin_lux_sda);
   prefs.putInt("pin_scl", currentConfig.pin_lux_scl);
   prefs.putInt("pin_wl", currentConfig.pin_wl);
+  prefs.putInt("pin_wlp", currentConfig.pin_wl_power);
 
   for (int i = 0; i < S_COUNT; ++i)
   {

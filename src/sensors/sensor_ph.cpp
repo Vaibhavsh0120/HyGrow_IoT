@@ -44,11 +44,11 @@ bool sensor_ph_read(float ph_offset, float ph_slope, float &ph_value)
 
 float readPH()
 {
-    // 1. Guard check: return 0.0 immediately if the sensor pin is undefined/disabled.
-    // The backend network task will see 0.0 and know not to push to Firestore.
+    // 1. Guard check: return NaN immediately if the sensor pin is undefined/disabled,
+    // so sensor_ph_read() correctly reports failure instead of a false "ok" at 0.0.
     if (currentConfig.pin_ph < 0)
     {
-        return 0.0;
+        return NAN;
     }
 
     // 2. Read the raw analog value

@@ -38,6 +38,7 @@ struct ConfigState
   int pin_lux_sda;
   int pin_lux_scl;
   int pin_wl;
+  int pin_wl_power;
 
   // Feature flags — user toggles per sensor
   bool sensor_enabled[S_COUNT];

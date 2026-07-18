@@ -212,7 +212,7 @@ void broadcastConfig()
     doc["tds_k"] = currentConfig.tds_k;
 
     // Send pins to JS UI for settings rendering
-    // Order MUST match JS parser: TDS, DHT, pH, WaterTemp, WaterLevel, SDA, SCL
+    // Order MUST match JS parser: TDS, DHT, pH, WaterTemp, WaterLevel, SDA, SCL, WaterLevelPower
     JsonArray pins = doc["pins"].to<JsonArray>();
     pins.add(currentConfig.pin_tds);
     pins.add(currentConfig.pin_dht);
@@ -221,6 +221,7 @@ void broadcastConfig()
     pins.add(currentConfig.pin_wl);
     pins.add(currentConfig.pin_lux_sda);
     pins.add(currentConfig.pin_lux_scl);
+    pins.add(currentConfig.pin_wl_power);
 
     String payload;
     serializeJson(doc, payload);
@@ -315,6 +316,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
             currentConfig.pin_wl = doc["pin_wl"] | currentConfig.pin_wl;
             currentConfig.pin_lux_sda = doc["pin_sda"] | currentConfig.pin_lux_sda;
             currentConfig.pin_lux_scl = doc["pin_scl"] | currentConfig.pin_lux_scl;
+            currentConfig.pin_wl_power = doc["pin_wlp"] | currentConfig.pin_wl_power;
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "Pinout config saved. Reboot required.");
@@ -333,6 +335,44 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "TDS Calibration saved.");
+        }
+        else if (cmd == "reset_sensor_pin")
+        {
+            String sensor = doc["sensor"] | "";
+            bool matched = true;
+
+            if (sensor == "tds")
+                currentConfig.pin_tds = PIN_TDS;
+            else if (sensor == "dht")
+                currentConfig.pin_dht = PIN_DHT;
+            else if (sensor == "ph")
+                currentConfig.pin_ph = PIN_PH;
+            else if (sensor == "wt")
+                currentConfig.pin_ds18b20 = PIN_DS18B20;
+            else if (sensor == "wl")
+            {
+                currentConfig.pin_wl = PIN_WL;
+                currentConfig.pin_wl_power = PIN_WL_PWR;
+            }
+            else if (sensor == "light")
+            {
+                currentConfig.pin_lux_sda = PIN_LUX_SDA;
+                currentConfig.pin_lux_scl = PIN_LUX_SCL;
+            }
+            else
+                matched = false;
+
+            if (matched)
+            {
+                state_save();
+                webLog(0, LOG_WARN, "Pin(s) for '" + sensor + "' reset to compiled default. Rebooting...");
+                delay(1000);
+                ESP.restart();
+            }
+            else
+            {
+                webLog(0, LOG_ERR, "reset_sensor_pin: unknown sensor id '" + sensor + "'");
+            }
         }
         else if (cmd == "factory_reset")
         {

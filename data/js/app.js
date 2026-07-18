@@ -6,13 +6,20 @@
 // ============================================================================
 // 1. UI STATE & NAVIGATION
 // ============================================================================
+// Compiled defaults from config.h — the single source of truth for "what
+// pin should this sensor use when the user turns it on or resets it".
+// Keep this in sync with config.h's DEFAULT_PIN_* macros.
+const DEFAULT_PINS = { tds: 2, dht: 6, wt: 4, sda: 8, scl: 9, wl: 1, wlp: 5, ph: 7 };
+
 const tabsData = {
     labels: ["Dashboard & Vitals", "TDS", "Air Temp & Hum", "Water Temp", "Light", "Water Level", "pH", "Live Calibration", "System Settings", "Terminal", "Firmware"],
     icons: ["monitoring", "water_drop", "thermostat", "device_thermostat", "light_mode", "waves", "science", "settings_input_component", "settings", "terminal", "system_update_alt"],
     activeStyle: "text-white font-bold bg-[rgba(255,255,255,0.1)] rounded-2xl shadow-inner",
     inactiveStyle: "text-on-surface-variant font-medium hover:bg-[rgba(255,255,255,0.05)] hover:text-white rounded-2xl transition-colors duration-200",
     baseStyle: "flex items-center justify-start gap-4 p-3 lg:px-6 lg:py-3 cursor-pointer transition-all duration-150 w-full",
-    gpios: [null, 14, 4, 15, 8, 1, 32, null, null, null, null], // Includes SDA default for Light
+    // Placeholder values shown only until the first "config" WS message arrives
+    // and overwrites these with the device's real, live pin assignments.
+    gpios: [null, DEFAULT_PINS.tds, DEFAULT_PINS.dht, DEFAULT_PINS.wt, DEFAULT_PINS.sda, DEFAULT_PINS.wl, DEFAULT_PINS.ph, null, null, null, null],
     units: ["", "ppm", "", "°C", "lux", "%", "pH", "", "", "", ""]
 };
 
@@ -281,6 +288,12 @@ function updateConfigForm(msg) {
         if(document.getElementById('cfg-pin-wl'))  document.getElementById('cfg-pin-wl').value = msg.pins[4];
         if(document.getElementById('cfg-pin-sda')) document.getElementById('cfg-pin-sda').value = msg.pins[5];
         if(document.getElementById('cfg-pin-scl')) document.getElementById('cfg-pin-scl').value = msg.pins[6];
+
+        // 8th element (added alongside pin_wl_power support) — older firmware
+        // that hasn't been reflashed yet just won't send it, so guard the length.
+        if(msg.pins.length >= 8 && document.getElementById('cfg-pin-wlp')) {
+            document.getElementById('cfg-pin-wlp').value = msg.pins[7];
+        }
     }
 }
 
@@ -339,6 +352,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnSavePins = document.getElementById('btn-save-pins');
     if(btnSavePins) {
         btnSavePins.addEventListener('click', () => {
+            const wlpEl = document.getElementById('cfg-pin-wlp');
             const payload = {
                 command: "save_pins",
                 pin_tds: parseInt(document.getElementById('cfg-pin-tds').value),
@@ -349,6 +363,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 pin_sda: parseInt(document.getElementById('cfg-pin-sda').value),
                 pin_scl: parseInt(document.getElementById('cfg-pin-scl').value)
             };
+            if (wlpEl) payload.pin_wlp = parseInt(wlpEl.value);
             websocket.send(JSON.stringify(payload));
             if(confirm("Pinout saved. The ESP32 must reboot to reassign hardware interrupts safely. Reboot now?")) {
                 websocket.send(JSON.stringify({command: "reboot"}));
@@ -443,12 +458,12 @@ document.addEventListener('DOMContentLoaded', () => {
         let payload = { command: "save_pins" };
         let sensorName = "";
 
-        if (tabId === 1) { payload.pin_tds = isEnabled ? 14 : -1; sensorName = "TDS"; }
-        else if (tabId === 2) { payload.pin_dht = isEnabled ? 4 : -1; sensorName = "DHT"; }
-        else if (tabId === 3) { payload.pin_wt = isEnabled ? 15 : -1; sensorName = "Water Temp"; }
-        else if (tabId === 4) { payload.pin_sda = isEnabled ? 8 : -1; payload.pin_scl = isEnabled ? 9 : -1; sensorName = "I2C Light"; }
-        else if (tabId === 5) { payload.pin_wl = isEnabled ? 1 : -1; sensorName = "Water Level"; }
-        else if (tabId === 6) { payload.pin_ph = isEnabled ? 32 : -1; sensorName = "pH"; }
+        if (tabId === 1) { payload.pin_tds = isEnabled ? DEFAULT_PINS.tds : -1; sensorName = "TDS"; }
+        else if (tabId === 2) { payload.pin_dht = isEnabled ? DEFAULT_PINS.dht : -1; sensorName = "DHT"; }
+        else if (tabId === 3) { payload.pin_wt = isEnabled ? DEFAULT_PINS.wt : -1; sensorName = "Water Temp"; }
+        else if (tabId === 4) { payload.pin_sda = isEnabled ? DEFAULT_PINS.sda : -1; payload.pin_scl = isEnabled ? DEFAULT_PINS.scl : -1; sensorName = "I2C Light"; }
+        else if (tabId === 5) { payload.pin_wl = isEnabled ? DEFAULT_PINS.wl : -1; payload.pin_wlp = isEnabled ? DEFAULT_PINS.wlp : -1; sensorName = "Water Level"; }
+        else if (tabId === 6) { payload.pin_ph = isEnabled ? DEFAULT_PINS.ph : -1; sensorName = "pH"; }
 
         if (sensorName !== "") {
             websocket.send(JSON.stringify(payload));
@@ -467,4 +482,53 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const dualSensorToggle = document.getElementById('dual-sensor-toggle');
     if (dualSensorToggle) dualSensorToggle.addEventListener('change', (e) => handleToggle(e, 2));
+
+    // Reset-to-default-pin buttons — one per pinout card, plus a generic one
+    // on the per-sensor offline banner that resets whichever sensor tab is open.
+    const sendResetSensorPin = (sensorId) => {
+        if (!confirm(`Reset the '${sensorId}' pin(s) to the factory default and reboot?`)) return;
+        websocket.send(JSON.stringify({ command: "reset_sensor_pin", sensor: sensorId }));
+    };
+
+    document.querySelectorAll('[data-reset-sensor]').forEach((btn) => {
+        btn.addEventListener('click', () => sendResetSensorPin(btn.dataset.resetSensor));
+    });
+
+    const TAB_TO_SENSOR_ID = { 1: "tds", 2: "dht", 3: "wt", 4: "light", 5: "wl", 6: "ph" };
+    const btnResetCurrent = document.getElementById('btn-reset-current-sensor');
+    if (btnResetCurrent) {
+        btnResetCurrent.addEventListener('click', () => {
+            const sensorId = TAB_TO_SENSOR_ID[currentTabId];
+            if (sensorId) sendResetSensorPin(sensorId);
+        });
+    }
+
+    // Theme: Light / Dark / Auto, persisted in localStorage. The <head> has a
+    // small inline script that applies the saved theme before first paint to
+    // avoid a flash of the wrong theme — this just keeps the picker in sync.
+    const applyTheme = (theme) => {
+        const html = document.documentElement;
+        html.classList.remove('dark', 'light');
+        if (theme === 'auto') {
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            html.classList.add(prefersDark ? 'dark' : 'light');
+        } else {
+            html.classList.add(theme);
+        }
+    };
+
+    const themeSelect = document.getElementById('cfg-theme-select');
+    const savedTheme = localStorage.getItem('hygrow_theme') || 'dark';
+    if (themeSelect) themeSelect.value = savedTheme;
+
+    if (themeSelect) {
+        themeSelect.addEventListener('change', () => {
+            localStorage.setItem('hygrow_theme', themeSelect.value);
+            applyTheme(themeSelect.value);
+        });
+    }
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if ((localStorage.getItem('hygrow_theme') || 'dark') === 'auto') applyTheme('auto');
+    });
 });

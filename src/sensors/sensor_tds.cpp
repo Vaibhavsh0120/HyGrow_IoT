@@ -68,10 +68,11 @@ bool sensor_tds_read(float water_temp_c, float tds_k, float &tds_ppm)
 
 float readTDS(float currentWaterTemp)
 {
-    // 1. Guard check: return 0.0 immediately if the sensor pin is disabled
+    // 1. Guard check: return NaN immediately if the sensor pin is disabled, so
+    // sensor_tds_read() correctly reports failure instead of a false "ok" at 0.0.
     if (currentConfig.pin_tds < 0)
     {
-        return 0.0;
+        return NAN;
     }
 
     // 2. Rapidly sample 30 times into a local buffer

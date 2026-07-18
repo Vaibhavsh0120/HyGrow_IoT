@@ -6,19 +6,6 @@
 #pragma once
 #include "../core/state.h"
 
-// ── Lightweight data container used by the shared orchestrator ──
-struct SensorData
-{
-    float w_temp = 0.0f;
-    float tds_ppm = 0.0f;
-    float dht_temp = 0.0f;
-    float dht_hum = 0.0f;
-    float light_lux = 0.0f;
-    float ph_val = 0.0f;
-    float wl_percent = 0.0f;
-    bool errors[S_COUNT] = {false};
-};
-
 // ── Initialization Functions ──
 // init_light() returns true only if a BH1750 actually ACKed on the I2C
 // bus, so the orchestrator can auto-disable it when nothing is wired up.
@@ -43,6 +30,3 @@ bool read_wtemp(float &temp);
 // Initializes all active sensors
 void sensors_init();
 void sensors_init_all();
-
-// Reads all physical sensors sequentially to avoid ADC ground-loop interference
-void sensors_read_all(SensorData &data, const ConfigState &cfg);

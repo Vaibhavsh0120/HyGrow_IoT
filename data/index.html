@@ -1,9 +1,21 @@
 <!DOCTYPE html>
-<html class="dark" lang="en">
+<html lang="en">
 <head>
     <meta charset="utf-8"/>
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Web Doctor - Hydroponics IoT</title>
+
+    <!-- Apply the saved theme before first paint to avoid a flash of the
+         wrong theme. Defaults to dark to match this project's original look. -->
+    <script>
+        (function () {
+            var t = localStorage.getItem('hygrow_theme') || 'dark';
+            if (t === 'auto') {
+                t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.classList.add(t);
+        })();
+    </script>
 
     <!-- External Fonts/Icons (Local hosting recommended for strict offline) -->
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
@@ -162,8 +174,9 @@
                     <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
                 </label>
             </header>
-            <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" id="sensor-error">
-                <span class="material-symbols-outlined">warning</span> Sensor reading offline or disabled.
+            <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center justify-between gap-2 shadow-lg" id="sensor-error">
+                <span class="flex items-center gap-2"><span class="material-symbols-outlined">warning</span> Sensor reading offline or disabled.</span>
+                <button id="btn-reset-current-sensor" class="text-error underline underline-offset-2 text-label-md whitespace-nowrap">Reset to default &amp; reboot</button>
             </div>
             <div class="flex-1 liquid-glass rounded-3xl p-6 md:p-8 flex flex-col relative min-h-[400px]">
                 <div class="absolute top-6 md:top-8 right-6 md:right-8 text-right z-10">
@@ -302,15 +315,19 @@
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
                                 <span class="text-white font-label-md font-bold">Water Level</span>
+                                <button data-reset-sensor="wl" class="text-on-surface-variant hover:text-white text-label-sm underline underline-offset-2">Reset</button>
                             </div>
-                            <div class="flex items-center gap-2">
-                                <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-wl" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="-1"/>
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="text-on-surface-variant font-label-sm">Sig:</span>
+                                <input id="cfg-pin-wl" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="1"/>
+                                <span class="text-on-surface-variant font-label-sm">Pwr:</span>
+                                <input id="cfg-pin-wlp" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="5"/>
                             </div>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
                                 <span class="text-white font-label-md font-bold">BH1750 Light (I2C)</span>
+                                <button data-reset-sensor="light" class="text-on-surface-variant hover:text-white text-label-sm underline underline-offset-2">Reset</button>
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">SDA/SCL:</span>
@@ -322,37 +339,41 @@
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
                                 <span class="text-white font-label-md font-bold">TDS Sensor</span>
+                                <button data-reset-sensor="tds" class="text-on-surface-variant hover:text-white text-label-sm underline underline-offset-2">Reset</button>
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-tds" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="14"/>
+                                <input id="cfg-pin-tds" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="2"/>
                             </div>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
                                 <span class="text-white font-label-md font-bold">DHT22 Air</span>
+                                <button data-reset-sensor="dht" class="text-on-surface-variant hover:text-white text-label-sm underline underline-offset-2">Reset</button>
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-dht" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="4"/>
+                                <input id="cfg-pin-dht" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="6"/>
                             </div>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
                                 <span class="text-white font-label-md font-bold">pH Sensor</span>
+                                <button data-reset-sensor="ph" class="text-on-surface-variant hover:text-white text-label-sm underline underline-offset-2">Reset</button>
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-ph" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="32"/>
+                                <input id="cfg-pin-ph" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="7"/>
                             </div>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
                                 <span class="text-white font-label-md font-bold">DS18B20 Water</span>
+                                <button data-reset-sensor="wt" class="text-on-surface-variant hover:text-white text-label-sm underline underline-offset-2">Reset</button>
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-wt" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="15"/>
+                                <input id="cfg-pin-wt" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="4"/>
                             </div>
                         </div>
                     </div>

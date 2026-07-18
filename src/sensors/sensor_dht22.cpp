@@ -44,9 +44,9 @@ void readDHT22(float &outTemp, float &outHum, float &outVpd)
     // 1. Guard check: Do nothing if the sensor is disabled in Web Doctor
     if (currentConfig.pin_dht < 0 || dhtSensor == nullptr)
     {
-        outTemp = 0.0;
-        outHum = 0.0;
-        outVpd = 0.0;
+        outTemp = NAN;
+        outHum = NAN;
+        outVpd = NAN;
         return;
     }
 

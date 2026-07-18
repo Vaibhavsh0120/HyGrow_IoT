@@ -79,10 +79,11 @@ bool sensor_lux_read(float &lux)
 
 float readLight()
 {
-    // 1. Guard check: return 0.0 immediately if initialization failed or sensor is disabled
+    // 1. Guard check: return NaN immediately if initialization failed or sensor is disabled,
+    // so sensor_lux_read() correctly reports failure instead of a false "ok" at 0.0.
     if (!isLightSensorReady)
     {
-        return 0.0;
+        return NAN;
     }
 
     // 2. Read the light level in lux
@@ -92,7 +93,7 @@ float readLight()
     if (lux < 0.0)
     {
         webLog(1, LOG_ERR, "Error reading from BH1750!");
-        return 0.0;
+        return NAN;
     }
 
     return lux;
