@@ -24,6 +24,65 @@
 </head>
 <body class="bg-[#000000] text-on-background font-body-md h-screen w-screen overflow-hidden flex relative tracking-wide">
 
+    <!-- ========================================================================
+         AUTH OVERLAY (single-owner login / first-time setup)
+         ========================================================================
+         Shown full-screen over everything else until the WS auth handshake
+         completes (see initWebSocket()/onMessage() in app.js). Three states,
+         toggled purely by adding/removing 'hidden' on the three panels below:
+           1. #auth-spinner   — shown immediately on page load, before the WS
+                                 connection even opens.
+           2. #auth-setup     — shown once the device's "auth_status" frame
+                                 arrives with setup_required: true (no admin
+                                 password has ever been set).
+           3. #auth-login     — shown when setup_required: false (a password
+                                 exists; this browser has no valid session).
+         AP mode does NOT skip this overlay — the gatekeeper is enforced
+         identically over Wi-Fi STA and the SoftAP (see task_network.cpp).
+    -->
+    <div id="auth-overlay" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl">
+
+        <!-- 1. Loading spinner -->
+        <div id="auth-spinner" class="flex flex-col items-center gap-4">
+            <div class="w-12 h-12 border-4 border-white/10 border-t-primary rounded-full animate-spin"></div>
+            <p class="font-label-md text-label-md text-on-surface-variant tracking-widest">CONNECTING...</p>
+        </div>
+
+        <!-- 2. First-time "Set Password" modal -->
+        <div id="auth-setup" class="hidden liquid-glass rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+            <div class="flex flex-col gap-1 items-center text-center">
+                <span class="material-symbols-outlined text-primary text-[40px]">health_and_safety</span>
+                <h2 class="font-headline-md text-headline-md text-white">Welcome to Web Doctor</h2>
+                <p class="font-body-md text-body-md text-on-surface-variant">This device is unconfigured. Set an admin password to secure it.</p>
+            </div>
+            <div class="flex flex-col gap-2">
+                <label class="font-label-md text-on-surface-variant">New Password</label>
+                <input id="auth-setup-pass" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+            </div>
+            <div class="flex flex-col gap-2">
+                <label class="font-label-md text-on-surface-variant">Confirm Password</label>
+                <input id="auth-setup-pass-confirm" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+            </div>
+            <p id="auth-setup-error" class="hidden font-label-sm text-label-sm text-error"></p>
+            <button id="btn-auth-setup" class="w-full bg-primary-container text-on-primary-container font-label-md py-3 rounded-xl hover:opacity-90 transition-all">Set Password &amp; Continue</button>
+        </div>
+
+        <!-- 3. Returning "Login" modal -->
+        <div id="auth-login" class="hidden liquid-glass rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+            <div class="flex flex-col gap-1 items-center text-center">
+                <span class="material-symbols-outlined text-primary text-[40px]">lock</span>
+                <h2 class="font-headline-md text-headline-md text-white">Admin Login</h2>
+                <p class="font-body-md text-body-md text-on-surface-variant">Enter the admin password to access this device.</p>
+            </div>
+            <div class="flex flex-col gap-2">
+                <label class="font-label-md text-on-surface-variant">Password</label>
+                <input id="auth-login-pass" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+            </div>
+            <p id="auth-login-error" class="hidden font-label-sm text-label-sm text-error"></p>
+            <button id="btn-auth-login" class="w-full bg-primary-container text-on-primary-container font-label-md py-3 rounded-xl hover:opacity-90 transition-all">Login</button>
+        </div>
+    </div>
+
     <!-- SIDE NAVIGATION SHELL -->
     <nav class="liquid-glass rounded-3xl h-[calc(100vh-2rem)] w-20 lg:w-72 flex flex-col fixed left-4 top-4 z-40 py-6 px-2 lg:px-4 transition-all duration-300" id="sideNav">
         <div class="mb-8 flex flex-col gap-2 items-center lg:items-start overflow-hidden">
@@ -289,6 +348,29 @@
                         <button id="btn-save-wifi" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Update Network</button>
                     </div>
 
+                    <!-- Change Password card (single-owner admin auth). Requires
+                         the CURRENT password server-side even though this
+                         session is already authenticated — see
+                         handleChangePasswordCommand() in task_network.cpp. -->
+                    <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                        <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Change Password</h3>
+                        <p class="text-on-surface-variant text-body-md mb-2">Update the admin password used to access this device's dashboard.</p>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">Current Password</label>
+                            <input id="cfg-pass-current" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">New Password</label>
+                            <input id="cfg-pass-new" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">Confirm New Password</label>
+                            <input id="cfg-pass-confirm" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                        </div>
+                        <p id="cfg-pass-error" class="hidden font-label-sm text-label-sm text-error"></p>
+                        <button id="btn-change-password" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Update Password</button>
+                    </div>
+
                     <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Display</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Choose how the dashboard looks on this device. Saved locally in this browser.</p>
@@ -326,9 +408,6 @@
                             <span class="relative inline-flex items-center shrink-0">
                                 <input class="sr-only peer" id="cfg-fb-enabled" type="checkbox"/>
                                 <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
-                            </span>
-                        </label>
-
                             </span>
                         </label>
 
@@ -545,8 +624,6 @@
                     <div><span class="text-secondary opacity-70">[SYS]</span> Terminal initialized. Listening for WSS events...</div>
                 </div>
             </div>
-        </section>
-
         </section>
 
     </main>

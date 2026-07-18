@@ -46,10 +46,18 @@
 #ifndef FALLBACK_DEVICE_ID
 #define FALLBACK_DEVICE_ID "ESP32S3_001"
 #endif
+#ifndef FALLBACK_ADMIN_PASS
+// Empty on purpose: an empty FALLBACK_ADMIN_PASS means the device boots
+// "Unconfigured" and the Web Doctor UI shows the Set Password modal instead
+// of Login. Set this in secrets.h to ship a pre-configured default password
+// instead — see auth_init() in state.cpp for exactly how this is used.
+#define FALLBACK_ADMIN_PASS ""
+#endif
 
 // ---------- Identity & cloud ----------
 #define DEFAULT_DEVICE_ID FALLBACK_DEVICE_ID                     // [NVS] dev_id
 #define DEFAULT_FIRESTORE_COLLECTION FALLBACK_FIRESTORE_COLLECTION // [NVS] fb_col
+#define DEFAULT_ADMIN_PASS FALLBACK_ADMIN_PASS                   // [NVS] admin_pass (auth namespace) — "" = unconfigured
 #define SERIAL_BAUD_RATE 115200                                  // compile-time only
 
 // ---------- WiFi / AP fallback ----------

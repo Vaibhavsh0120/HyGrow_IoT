@@ -21,6 +21,15 @@
 // The password required to connect to the "HyGrow-Setup" network when STA fails
 #define FALLBACK_AP_PASS "hygrowadmin"
 
+// --- Web Doctor Admin Password (single-owner login) ---
+// Fallback ONLY: used on first boot (blank NVS) or after the BOOT-button
+// 10-second auth reset, whichever comes first. Once a password is saved via
+// the Web UI's Login/Set Password overlay, it lives in NVS and this value is
+// ignored — same pattern as every other FALLBACK_* credential in this file.
+// Leave this empty ("") to ship "Unconfigured": the dashboard will show a
+// Set Password modal on first connect instead of a Login modal.
+#define FALLBACK_ADMIN_PASS ""
+
 // --- Firebase Fallback Credentials ---
 #define FALLBACK_FIREBASE_API_KEY "YOUR_FIREBASE_WEB_API_KEY"
 #define FALLBACK_FIREBASE_PROJECT_ID "YOUR_FIREBASE_PROJECT_ID"

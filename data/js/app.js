@@ -178,6 +178,116 @@ window.addEventListener('resize', resizeCanvas);
 
 
 // ============================================================================
+// 1b. AUTH OVERLAY (single-owner login / first-time setup)
+// ============================================================================
+// Session persistence: a successful login/setup issues a session token from
+// the device (see handleAuthCommand() in task_network.cpp), stored here in
+// localStorage. On the next page load, if a token exists it's sent as the
+// very first WS frame instead of a password, so a returning browser skips
+// straight past the login screen (see initWebSocket()/onMessage() below).
+const AUTH_TOKEN_KEY = 'hygrow_auth_token';
+
+function getStoredAuthToken() {
+    try { return localStorage.getItem(AUTH_TOKEN_KEY) || ''; }
+    catch (e) { return ''; } // localStorage can throw in some private-browsing modes
+}
+
+function setStoredAuthToken(token) {
+    try {
+        if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+        else localStorage.removeItem(AUTH_TOKEN_KEY);
+    } catch (e) { /* ignore — worst case, the user logs in again next reload */ }
+}
+
+// Shows exactly one of the three overlay panels (spinner / setup / login) and
+// hides the other two. Passing 'none' hides the whole overlay, revealing the
+// dashboard underneath — only done once authentication actually succeeds.
+function showAuthPanel(panel) {
+    const overlay = document.getElementById('auth-overlay');
+    const spinner = document.getElementById('auth-spinner');
+    const setup = document.getElementById('auth-setup');
+    const login = document.getElementById('auth-login');
+    if (!overlay) return;
+
+    if (panel === 'none') {
+        overlay.classList.add('hidden');
+        return;
+    }
+    overlay.classList.remove('hidden');
+    spinner.classList.toggle('hidden', panel !== 'spinner');
+    setup.classList.toggle('hidden', panel !== 'setup');
+    login.classList.toggle('hidden', panel !== 'login');
+}
+
+// Handles the device's "auth_status" frame — the very first message sent on
+// every fresh WS connection (see sendAuthStatus() in task_network.cpp). If a
+// session token is already stored from a previous login, try it silently
+// before ever showing the Login modal; otherwise branch straight to
+// Setup/Login based on setup_required.
+function handleAuthStatus(msg) {
+    const storedToken = getStoredAuthToken();
+    if (storedToken) {
+        websocket.send(JSON.stringify({ command: "auth", token: storedToken }));
+        return; // wait for auth_result — keep showing the spinner meanwhile
+    }
+    showAuthPanel(msg.setup_required ? 'setup' : 'login');
+}
+
+// Handles the device's "auth_result" frame, sent in response to every
+// { command: "auth", ... } this client sends (see handleAuthCommand() in
+// task_network.cpp).
+function handleAuthResult(msg) {
+    if (msg.ok) {
+        if (msg.token) setStoredAuthToken(msg.token);
+        showAuthPanel('none');
+        return;
+    }
+
+    // A stored token that the device no longer recognizes (e.g. after an
+    // auth reset via the BOOT button, or a password change from another
+    // browser) — drop it and fall back to a normal login, rather than
+    // looping forever on a dead token.
+    setStoredAuthToken('');
+
+    const loginError = document.getElementById('auth-login-error');
+    const setupPanelVisible = !document.getElementById('auth-setup').classList.contains('hidden');
+    if (setupPanelVisible) {
+        const err = document.getElementById('auth-setup-error');
+        err.innerText = 'Could not set password. Please try again.';
+        err.classList.remove('hidden');
+    } else {
+        showAuthPanel('login');
+        if (loginError) {
+            loginError.innerText = 'Incorrect password. Please try again.';
+            loginError.classList.remove('hidden');
+        }
+    }
+}
+
+// Handles the device's "change_password_result" frame (Settings > Change
+// Password), sent in response to { command: "change_password", ... }.
+function handleChangePasswordResult(msg) {
+    const btn = document.getElementById('btn-change-password');
+    const errEl = document.getElementById('cfg-pass-error');
+    if (msg.ok) {
+        if (msg.token) setStoredAuthToken(msg.token); // old token was just invalidated server-side
+        if (errEl) errEl.classList.add('hidden');
+        if (btn) {
+            const original = 'Update Password';
+            btn.innerText = 'Password Updated!';
+            setTimeout(() => { btn.innerText = original; }, 2000);
+        }
+        ['cfg-pass-current', 'cfg-pass-new', 'cfg-pass-confirm'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+    } else if (errEl) {
+        errEl.innerText = msg.error || 'Could not update password.';
+        errEl.classList.remove('hidden');
+    }
+}
+
+// ============================================================================
 // 2. WEBSOCKET & DATA HANDLING
 // ============================================================================
 let gateway = `ws://${window.location.hostname}/ws`;
@@ -185,6 +295,12 @@ let websocket;
 let wsBackoff = 2000;
 
 function initWebSocket() {
+    // Every fresh connection starts unauthenticated — including reconnects —
+    // so the spinner (and, once auth_status arrives, the Setup/Login modal)
+    // reappears until this connection re-authenticates. This mirrors the
+    // backend: authentication state lives per-WebSocket-connection, not per
+    // browser tab, so a dropped/reconnected socket must prove itself again.
+    showAuthPanel('spinner');
     websocket = new WebSocket(gateway);
     websocket.onopen = onOpen;
     websocket.onclose = onClose;
@@ -212,11 +328,15 @@ function onMessage(event) {
     let msg;
     try { msg = JSON.parse(event.data); } catch (e) { return; }
 
-    if (msg.type === "vitals") updateVitals(msg);
+    if (msg.type === "auth_status") handleAuthStatus(msg);
+    else if (msg.type === "auth_result") handleAuthResult(msg);
+    else if (msg.type === "change_password_result") handleChangePasswordResult(msg);
+    else if (msg.type === "vitals") updateVitals(msg);
     else if (msg.type === "data") updateTelemetry(msg);
     else if (msg.type === "config") updateConfigForm(msg);
     else if (msg.type === "log") updateTerminal(msg);
 }
+
 
 // ============================================================================
 // 3. UI UPDATERS
@@ -381,9 +501,12 @@ function updateConfigForm(msg) {
     if(document.getElementById('cfg-fb-email')) document.getElementById('cfg-fb-email').value = msg.fb_email || "";
     if(document.getElementById('cfg-fb-col')) document.getElementById('cfg-fb-col').value = msg.fb_col || "";
 
-    if(document.getElementById('cfg-tds-k')) document.getElementById('cfg-tds-k').value = (msg.tds_k || 1.0).toFixed(2);
-    if(document.getElementById('cfg-ph-off')) document.getElementById('cfg-ph-off').value = (msg.ph_off || 0.0).toFixed(2);
-    if(document.getElementById('cfg-ph-slope')) document.getElementById('cfg-ph-slope').value = (msg.ph_slope || 1.0).toFixed(2);
+    // Note: raw pH offset/slope and TDS K-factor are no longer shown as
+    // editable fields — the guided calibration wizard (btn-cal-ph-7/4/save,
+    // btn-cal-tds below) replaced them. The values still arrive in every
+    // config frame and are read straight from globalConfigCache by the
+    // wizard's math and the CSV export, so nothing here needs to write them
+    // into the DOM.
 
     // Feature Flags (Part 1 / 2.3) — none of these require a reboot, so we can
     // just reflect the device's live state every time a config frame arrives.
@@ -474,6 +597,78 @@ document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
     initWebSocket();
     setTimeout(resizeCanvas, 100);
+
+    // ------------------------------------------------------------------
+    // Auth overlay button bindings. The "auth" command's response
+    // (auth_result) is handled centrally in onMessage()/handleAuthResult()
+    // above — these handlers only send the request and do basic client-side
+    // validation (non-empty, matching confirm field) before sending.
+    // ------------------------------------------------------------------
+    const btnAuthSetup = document.getElementById('btn-auth-setup');
+    if (btnAuthSetup) {
+        btnAuthSetup.addEventListener('click', () => {
+            const pass = document.getElementById('auth-setup-pass').value;
+            const confirmPass = document.getElementById('auth-setup-pass-confirm').value;
+            const err = document.getElementById('auth-setup-error');
+
+            if (!pass) {
+                err.innerText = 'Password cannot be empty.';
+                err.classList.remove('hidden');
+                return;
+            }
+            if (pass !== confirmPass) {
+                err.innerText = 'Passwords do not match.';
+                err.classList.remove('hidden');
+                return;
+            }
+            err.classList.add('hidden');
+            websocket.send(JSON.stringify({ command: "auth", password: pass }));
+        });
+    }
+
+    const btnAuthLogin = document.getElementById('btn-auth-login');
+    const submitLogin = () => {
+        const pass = document.getElementById('auth-login-pass').value;
+        const err = document.getElementById('auth-login-error');
+        if (!pass) {
+            err.innerText = 'Please enter your password.';
+            err.classList.remove('hidden');
+            return;
+        }
+        err.classList.add('hidden');
+        websocket.send(JSON.stringify({ command: "auth", password: pass }));
+    };
+    if (btnAuthLogin) btnAuthLogin.addEventListener('click', submitLogin);
+    // Enter-to-submit on both password fields, for a login flow that doesn't
+    // require reaching for the mouse.
+    const authLoginPassField = document.getElementById('auth-login-pass');
+    if (authLoginPassField) authLoginPassField.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitLogin(); });
+    const authSetupConfirmField = document.getElementById('auth-setup-pass-confirm');
+    if (authSetupConfirmField) authSetupConfirmField.addEventListener('keydown', (e) => { if (e.key === 'Enter' && btnAuthSetup) btnAuthSetup.click(); });
+
+    // Settings > Change Password
+    const btnChangePassword = document.getElementById('btn-change-password');
+    if (btnChangePassword) {
+        btnChangePassword.addEventListener('click', () => {
+            const current = document.getElementById('cfg-pass-current').value;
+            const next = document.getElementById('cfg-pass-new').value;
+            const confirmNext = document.getElementById('cfg-pass-confirm').value;
+            const err = document.getElementById('cfg-pass-error');
+
+            if (!current || !next) {
+                err.innerText = 'Please fill in all fields.';
+                err.classList.remove('hidden');
+                return;
+            }
+            if (next !== confirmNext) {
+                err.innerText = 'New passwords do not match.';
+                err.classList.remove('hidden');
+                return;
+            }
+            err.classList.add('hidden');
+            websocket.send(JSON.stringify({ command: "change_password", current: current, new_pass: next }));
+        });
+    }
 
     const btnSaveWifi = document.getElementById('btn-save-wifi');
     if(btnSaveWifi) {

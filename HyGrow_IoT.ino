@@ -66,7 +66,7 @@ static void enforceForbiddenPins()
     {
         if (*p.pin == 19 || *p.pin == 20)
         {
-            Serial.println("FORBIDDEN PIN: " + String(p.name) + " was configured on GPIO" +
+            webLog(0, LOG_WARN, "FORBIDDEN PIN: " + String(p.name) + " was configured on GPIO" +
                             String(*p.pin) + " (native USB D-/D+). Disabling this sensor to protect the USB stack.");
             *p.pin = -1;
             changed = true;
@@ -79,9 +79,81 @@ static void enforceForbiddenPins()
     }
 }
 
+// ----------------------------------------------------------------------------
+// BOOT button (GPIO0) hold-to-reset
+// ----------------------------------------------------------------------------
+// GPIO0 is the same pin as the board's BOOT button, wired active-LOW with an
+// external pull-up (standard on every ESP32/ESP32-S3 devkit). Held for:
+//   - 10s: Auth Reset  — wipes ONLY the admin password/session token
+//          (auth_reset(), state.cpp). Wi-Fi, sensors, and calibration are
+//          left untouched. Blinks the LED Red x3 to confirm.
+//   - 20s: Factory Reset — wipes all of NVS and reboots
+//          (state_factory_reset(), state.cpp). Blinks the LED Red x5 to
+//          confirm before the reboot.
+// A held button is checked every BOOT_POLL_MS; the two thresholds are each
+// fired exactly once per hold (latched via the fired flags below) so a very
+// long hold doesn't trigger the 10s action repeatedly on its way to 20s, or
+// fire the 20s action a second time if the button is held even longer.
+#define BOOT_BUTTON_PIN 0
+#define BOOT_POLL_MS 50
+#define BOOT_HOLD_AUTH_RESET_MS 10000
+#define BOOT_HOLD_FACTORY_RESET_MS 20000
+
+void bootButtonTaskWrapper(void *parameter)
+{
+    pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+
+    unsigned long pressStart = 0;
+    bool pressed = false;
+    bool authResetFired = false;
+    bool factoryResetFired = false;
+
+    for (;;)
+    {
+        bool down = (digitalRead(BOOT_BUTTON_PIN) == LOW);
+
+        if (down && !pressed)
+        {
+            // Button just went down — start timing this hold.
+            pressed = true;
+            pressStart = millis();
+            authResetFired = false;
+            factoryResetFired = false;
+        }
+        else if (down && pressed)
+        {
+            unsigned long heldMs = millis() - pressStart;
+
+            if (!factoryResetFired && heldMs >= BOOT_HOLD_FACTORY_RESET_MS)
+            {
+                factoryResetFired = true;
+                webLog(0, LOG_WARN, "BOOT button held 20s: FACTORY RESET triggered.");
+                ledBlink(255, 0, 0, 5); // Red x5, blocking — nothing else needs the CPU right now
+                state_factory_reset();  // wipes all NVS and reboots; never returns
+            }
+            else if (!authResetFired && heldMs >= BOOT_HOLD_AUTH_RESET_MS)
+            {
+                authResetFired = true;
+                webLog(0, LOG_WARN, "BOOT button held 10s: AUTH RESET triggered (password only).");
+                ledBlink(255, 0, 0, 3); // Red x3
+                auth_reset();
+                webLog(0, LOG_WARN, "Admin password cleared. Wi-Fi/sensors/calibration untouched. Next page load will show Set Password.");
+            }
+        }
+        else if (!down && pressed)
+        {
+            // Released before reaching even the 10s threshold — nothing to do.
+            pressed = false;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(BOOT_POLL_MS));
+    }
+}
+
 // Task handles
 TaskHandle_t NetworkTaskHandle;
 TaskHandle_t SensorTaskHandle;
+TaskHandle_t BootButtonTaskHandle;
 
 // Set true once initNetworkTask() has finished bringing up Wi-Fi/AP and the
 // web server. The sensor task waits on this before it starts touching any
@@ -131,6 +203,15 @@ void setup()
     // 1. Initialize NVS and load all variables into currentConfig
     state_init();
 
+    // 1a'. Mount the single-owner auth namespace and load the admin
+    // password/session token into RAM. Deliberately separate from
+    // state_init() above — see the long comment on the auth_*() decls in
+    // state.h for why auth has its own NVS namespace and lifecycle. Must run
+    // before the network task starts, since the WS gatekeeper
+    // (handleAuthCommand() in task_network.cpp) depends on it from the very
+    // first client connection.
+    auth_init();
+
     // 1a. LittleFS is mounted inside state_init(). A failed mount here means
     // the web UI (and everything served from it) is unavailable — continuing
     // to boot would silently start serving nothing, or a broken partial site.
@@ -179,6 +260,18 @@ void setup()
         1,
         &SensorTaskHandle,
         1);
+
+    // 4. BOOT button hold-to-reset watcher, pinned to Core 0 alongside the
+    // network task. Tiny stack — it only does digitalRead()/millis() polling
+    // and, on a long hold, calls into state.cpp/led_status.cpp.
+    xTaskCreatePinnedToCore(
+        bootButtonTaskWrapper,
+        "BootButtonTask",
+        2048,
+        NULL,
+        1,
+        &BootButtonTaskHandle,
+        0);
 }
 
 void loop()

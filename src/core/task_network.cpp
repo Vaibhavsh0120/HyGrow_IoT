@@ -7,6 +7,7 @@
 #include <Preferences.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <set>
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -15,8 +16,63 @@ unsigned long lastVitalsTime = 0;
 unsigned long lastDataTime = 0;
 unsigned long lastFirebaseTime = 0;
 
+// ----------------------------------------------------------------------------
+// WebSocket auth gatekeeper (single-owner login)
+// ----------------------------------------------------------------------------
+// AsyncWebSocketClient has no free field to flag "authenticated", so
+// authenticated client ids are tracked in their own set here instead. A
+// client's id is unique for the lifetime of its connection (AsyncWebSocket
+// assigns a fresh one per connect), and WS_EVT_DISCONNECT below removes it,
+// so this set never grows unbounded and never confuses one browser tab's
+// session with another's.
+static std::set<uint32_t> s_authedClients;
+
+static bool wsClientIsAuthed(uint32_t clientId)
+{
+    return s_authedClients.find(clientId) != s_authedClients.end();
+}
+
+// Sends `payload` only to clients that have completed the auth handshake —
+// used by every broadcast*() function below instead of ws.textAll(), so an
+// unauthenticated connection (pre-login, or one that never logs in at all)
+// never receives live telemetry, config, or vitals data, regardless of
+// whether it arrived over Wi-Fi STA or the SoftAP.
+static void wsTextAllAuthed(const String &payload)
+{
+    for (AsyncWebSocketClient &c : ws.getClients())
+    {
+        if (c.status() == WS_CONNECTED && wsClientIsAuthed(c.id()))
+        {
+            c.text(payload);
+        }
+    }
+}
+
+// Public entry point declared in task_network.h — see the comment there for
+// why this thin wrapper exists instead of exposing wsTextAllAuthed() itself.
+void wsBroadcastLog(const String &payload)
+{
+    wsTextAllAuthed(payload);
+}
+
+// Sends the very first frame a client sees on connect: whether the device
+// still needs its first password set ("setup_required": true) or already has
+// one and is waiting for a login ("setup_required": false). The frontend
+// (data/js/app.js) branches its overlay purely off this flag.
+static void sendAuthStatus(AsyncWebSocketClient *client)
+{
+    JsonDocument doc;
+    doc["type"] = "auth_status";
+    doc["setup_required"] = !auth_is_configured();
+    String payload;
+    serializeJson(doc, payload);
+    client->text(payload);
+}
+
 // Internal helpers
-void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
+void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *data, size_t len);
+static void handleAuthCommand(AsyncWebSocketClient *client, JsonDocument &doc);
+static void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void firebaseUploadCycle();
 
@@ -351,7 +407,7 @@ void broadcastVitals()
 
     String payload;
     serializeJson(doc, payload);
-    ws.textAll(payload);
+    wsTextAllAuthed(payload);
 }
 
 void broadcastConfig()
@@ -404,7 +460,7 @@ void broadcastConfig()
 
     String payload;
     serializeJson(doc, payload);
-    ws.textAll(payload);
+    wsTextAllAuthed(payload);
 }
 
 void broadcastData()
@@ -428,7 +484,7 @@ void broadcastData()
 
     String payload;
     serializeJson(doc, payload);
-    ws.textAll(payload);
+    wsTextAllAuthed(payload);
 }
 
 // ----------------------------------------------------------------------------
@@ -490,23 +546,147 @@ void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventTyp
     if (type == WS_EVT_CONNECT)
     {
         webLog(0, LOG_INFO, "WS Client Connected: " + String(client->id()));
-        broadcastConfig(); // Sync UI immediately
+        // Gatekeeper: every new client starts unauthenticated, regardless of
+        // whether it arrived over Wi-Fi STA or the SoftAP — AP mode does NOT
+        // bypass login. The very first thing it gets is the auth_status
+        // frame; broadcastConfig()/broadcastData()/broadcastVitals() below
+        // are withheld from it until it sends a valid "auth" command (see
+        // handleWebSocketMessage()).
+        sendAuthStatus(client);
     }
     else if (type == WS_EVT_DISCONNECT)
     {
         webLog(0, LOG_INFO, "WS Client Disconnected: " + String(client->id()));
+        s_authedClients.erase(client->id());
     }
     else if (type == WS_EVT_DATA)
     {
-        handleWebSocketMessage(arg, data, len);
+        handleWebSocketMessage(client, arg, data, len);
     }
 }
 
-void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
+// Handles { command: "auth", password/token: "..." } — the very first frame
+// a client is allowed to send. Two ways to authenticate:
+//  1. password — the Login/Set Password modal. If the device is
+//     Unconfigured (no password set yet), any non-empty password becomes the
+//     new admin password (first-time setup); otherwise it's checked against
+//     the stored one.
+//  2. token — silent reauth on page reload using the persisted session
+//     token from localStorage, so a returning browser skips the login
+//     screen entirely.
+static void handleAuthCommand(AsyncWebSocketClient *client, JsonDocument &doc)
+{
+    String password = doc["password"] | "";
+    String token = doc["token"] | "";
+
+    bool ok = false;
+    String issuedToken;
+
+    if (token.length() > 0 && auth_check_token(token))
+    {
+        ok = true; // token is still the currently-valid session token — no need to reissue
+    }
+    else if (!auth_is_configured())
+    {
+        if (password.length() > 0)
+        {
+            auth_set_password(password);
+            issuedToken = auth_issue_token();
+            ok = true;
+        }
+    }
+    else if (auth_check_password(password))
+    {
+        issuedToken = auth_issue_token();
+        ok = true;
+    }
+
+    if (ok)
+        s_authedClients.insert(client->id());
+
+    JsonDocument resp;
+    resp["type"] = "auth_result";
+    resp["ok"] = ok;
+    if (issuedToken.length() > 0)
+        resp["token"] = issuedToken;
+    String payload;
+    serializeJson(resp, payload);
+    client->text(payload);
+
+    if (ok)
+    {
+        // Replay log history BEFORE logging this client's own auth event —
+        // otherwise "WS Client N authenticated." would land in the ring
+        // buffer first and then get sent to this same client twice: once
+        // live (it's already in s_authedClients by this point) and once via
+        // the backlog replay below. Replaying first means this client's
+        // Terminal shows history strictly older than "you just connected".
+        webLogSendBacklog(client);
+        webLog(0, LOG_INFO, "WS Client " + String(client->id()) + " authenticated.");
+        // Now that this client is trusted, give it an immediate, full
+        // snapshot instead of waiting for the next broadcast tick.
+        broadcastConfig();
+        broadcastVitals();
+        broadcastData();
+    }
+    else
+    {
+        webLog(0, LOG_WARN, "WS Client " + String(client->id()) + " failed authentication.");
+    }
+}
+
+// Handles { command: "change_password", current: "...", new_pass: "..." } —
+// Settings > Change Password. Requires the CURRENT password even though this
+// client is already authenticated: a stolen/left-open session token alone
+// shouldn't be enough to lock the real owner out of their own account.
+static void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc)
+{
+    String currentPass = doc["current"] | "";
+    String newPass = doc["new_pass"] | "";
+
+    JsonDocument resp;
+    resp["type"] = "change_password_result";
+
+    if (newPass.length() == 0)
+    {
+        resp["ok"] = false;
+        resp["error"] = "New password cannot be empty.";
+    }
+    else if (!auth_check_password(currentPass))
+    {
+        resp["ok"] = false;
+        resp["error"] = "Current password is incorrect.";
+    }
+    else
+    {
+        auth_set_password(newPass);
+        // Re-issuing a token invalidates every previously issued token (see
+        // auth_set_password()/auth_issue_token() in state.cpp) — including
+        // this very client's old one — so re-authenticate THIS client
+        // against the fresh token immediately rather than kicking the admin
+        // out of their own change-password flow.
+        String freshToken = auth_issue_token();
+        s_authedClients.insert(client->id());
+        resp["ok"] = true;
+        resp["token"] = freshToken;
+        webLog(0, LOG_INFO, "Admin password changed by client " + String(client->id()) + ".");
+    }
+
+    String payload;
+    serializeJson(resp, payload);
+    client->text(payload);
+}
+
+void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *data, size_t len)
 {
     AwsFrameInfo *info = (AwsFrameInfo *)arg;
     if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT)
     {
+        // NOTE: deliberately no `data[len] = 0;` here. `data` points into
+        // AsyncWebSocket's own receive buffer, sized exactly to `len` —
+        // writing a null terminator one byte past it is an out-of-bounds
+        // write. deserializeJson() is given `len` explicitly and never reads
+        // past it, so the manual terminator was unnecessary and unsafe.
         JsonDocument doc;
         DeserializationError err = deserializeJson(doc, data, len);
 
@@ -517,6 +697,29 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
         }
 
         String cmd = doc["command"].as<String>();
+        bool authed = wsClientIsAuthed(client->id());
+
+        if (cmd == "auth")
+        {
+            handleAuthCommand(client, doc);
+            return;
+        }
+
+        if (!authed)
+        {
+            // Any command other than "auth" from an unauthenticated client —
+            // save_pins, reboot, request_vitals, anything — is silently
+            // dropped. No error frame is sent back: an unauthenticated
+            // client shouldn't learn anything about command validity either.
+            webLog(0, LOG_WARN, "WS Client " + String(client->id()) + " sent '" + cmd + "' before authenticating. Dropped.");
+            return;
+        }
+
+        if (cmd == "change_password")
+        {
+            handleChangePasswordCommand(client, doc);
+            return;
+        }
 
         if (cmd == "save_wifi")
         {

@@ -4,6 +4,12 @@
 #include <Arduino.h>
 #include "../../config.h"
 
+// Forward declaration only — avoids pulling ESPAsyncWebServer.h (and its
+// AsyncTCP dependency) into every sensor_*.cpp that includes state.h just
+// for webLogSendBacklog()'s pointer parameter below. The real definition
+// lives in task_network.cpp/.h, which is where state.cpp gets it from.
+class AsyncWebSocketClient;
+
 // ---------- Runtime config (mirrors NVS) ----------
 struct ConfigState
 {
@@ -112,9 +118,52 @@ void state_init();          // mount NVS, load config (defaults from config.h if
 bool state_save();          // persist currentConfig to NVS
 void state_factory_reset(); // wipe NVS + reboot
 
-// Log helper — core is 0 (network) or 1 (sensor); level is LOG_INFO/WARN/ERR
+// ---------- Single-owner auth (admin password + session token) ----------
+// Deliberately its own tiny NVS namespace/lifecycle, NOT part of ConfigState/
+// state_save()/state_init() above. Two reasons:
+//   1. Every ordinary settings save (pins, Wi-Fi, calibration, ...) calls
+//      state_save() — if the password lived in ConfigState, every one of
+//      those saves would also rewrite the password blob for no reason.
+//   2. The BOOT-button "10s hold" reset (task_network.cpp) wipes ONLY the
+//      admin password/token and explicitly must leave Wi-Fi, sensors, and
+//      calibration untouched. That's only possible if auth has its own
+//      NVS namespace, independent of the "hygrow" namespace state_save()
+//      writes to.
+// There is exactly one account ("admin", hardcoded, never stored) — see
+// the Login/Set Password overlay in data/js/app.js for the client side.
+void auth_init();                          // mount the auth NVS namespace, load state into RAM
+bool auth_is_configured();                 // true once an admin password has been set
+bool auth_check_password(const String &candidate);
+void auth_set_password(const String &newPass); // first-time setup OR admin-initiated change; also issues a fresh session token
+String auth_issue_token();                 // generates + persists a new random session token, returns it
+bool auth_check_token(const String &candidate);
+void auth_reset();                         // wipe ONLY the password + token (BOOT button 10s hold)
+
+// Log helper — core is 0 (network) or 1 (sensor); level is LOG_INFO/WARN/ERR.
+// Every call does three things, always in this order, so the Serial monitor
+// and the web Terminal (data/index.html Page 9) never drift apart:
+//   1. Serial.println() — unconditional, exactly as before.
+//   2. Appends to a small in-RAM ring buffer (see webLogSendBacklog() below),
+//      so a browser tab that (re)connects late still sees recent history
+//      instead of only whatever is logged AFTER it happens to be looking.
+//   3. Broadcasts a {"type":"log","core":...,"level":...,"msg":...} WS frame
+//      to already-authenticated clients (task_network.cpp defines ws and
+//      the auth gate) — this is a no-op if the network task hasn't started
+//      yet or no client is authenticated, both fine since Serial already
+//      has the message.
+// Levels never reach either output as bare numbers: state.cpp maps
+// LOG_INFO/WARN/ERR to "info"/"warn"/"error" for both Serial (as a
+// bracketed tag) and the WS frame, so the two views print identical text.
 void webLog(uint8_t core, uint8_t level, const String &msg);
 // Back-compat single-arg form (defaults core=0, level=LOG_INFO)
 void webLog(const String &msg);
+
+// Replays the ring buffer of recent log lines to one client, in the order
+// they were originally logged. Called once, right after a client passes
+// auth (task_network.cpp) — that's the moment "sync" actually matters: a
+// browser opened after boot still gets to see what already happened
+// (Wi-Fi connect attempts, sensor init results, etc.), not just a blank
+// Terminal that only starts filling in from the moment it happened to log in.
+void webLogSendBacklog(AsyncWebSocketClient *client);
 
 #endif // STATE_H
