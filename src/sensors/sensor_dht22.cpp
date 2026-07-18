@@ -61,8 +61,24 @@ void readDHT22(float &outTemp, float &outHum, float &outVpd)
     if (isnan(temp) || isnan(hum))
     {
         webLog(1, LOG_ERR, "Failed to read from DHT22!");
-        // We return early here so we don't overwrite the last known good values
-        // with 0.0, which would cause ugly spikes on the UI charts.
+        // Every other sensor driver in this codebase (TDS, pH, light, water
+        // level, DS18B20) unconditionally writes its out-param before
+        // returning, so sensor_*_read() correctly reports failure via
+        // isnan() regardless of what the caller passed in. This function
+        // used to be the one exception — it returned early here without
+        // touching outTemp/outHum, silently relying on the caller having
+        // pre-seeded them with NAN. That happened to hold for readAll()'s
+        // call site (task_sensor.cpp seeds `float t = NAN, h = NAN;`) but
+        // NOT for validateSensor()'s startup-validation lambda (`float t,
+        // h;` — uninitialized stack memory, essentially never NaN by
+        // chance). A failed boot-time DHT22 read could therefore be
+        // misread as a pass, defeating the 5-attempt startup validation
+        // and auto-disable safety net for this one sensor. Explicitly
+        // NaN both out-params here so the contract holds no matter what
+        // the caller passed in.
+        outTemp = NAN;
+        outHum = NAN;
+        outVpd = NAN;
         return;
     }
 

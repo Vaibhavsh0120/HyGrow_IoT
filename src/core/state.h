@@ -21,9 +21,10 @@ struct ConfigState
   char device_id[32];
 
   // Timing (ms)
-  uint32_t interval_read_ms; // sensor sample period
-  uint32_t interval_ws_ms;   // websocket push period
-  uint32_t interval_fb_ms;   // firestore push period
+  uint32_t interval_read_ms;   // sensor sample period
+  uint32_t interval_ws_ms;     // websocket push period
+  uint32_t interval_vitals_ms; // vitals push period
+  uint32_t interval_fb_ms;     // firestore push period
 
   // Calibration
   float ph_offset;
@@ -39,6 +40,11 @@ struct ConfigState
   int pin_lux_scl;
   int pin_wl;
   int pin_wl_power;
+
+  // Feature flags — user-editable from Web Doctor > Settings > Feature Flags
+  bool demo_mode;         // [NVS] demo    — simulate sensor data instead of reading hardware
+  bool firebase_enabled;  // [NVS] fb_en   — gate the Firestore upload cycle
+  bool ota_enabled;       // [NVS] ota_en  — gate the /update and /ota/upload HTTP routes
 
   // Feature flags — user toggles per sensor
   bool sensor_enabled[S_COUNT];
@@ -73,7 +79,9 @@ struct VitalsState
   bool ap_active;
   char ip[16];
   char ap_ip[16];
-  bool firebase_ready;
+  bool firebase_ready;      // reflects the outcome of the most recent real upload attempt
+  uint32_t firebase_last_ok_ms;   // millis() of last successful Firestore upload; 0 = never
+  char firebase_last_error[64];   // last upload error string; "" = no error recorded
   bool littlefs_ok;
 };
 

@@ -20,12 +20,24 @@ const tabsData = {
     // Placeholder values shown only until the first "config" WS message arrives
     // and overwrites these with the device's real, live pin assignments.
     gpios: [null, DEFAULT_PINS.tds, DEFAULT_PINS.dht, DEFAULT_PINS.wt, DEFAULT_PINS.sda, DEFAULT_PINS.wl, DEFAULT_PINS.ph, null, null, null, null],
+    // Real sensor_enabled[] state per tab, populated from msg.s_en[] once the
+    // first "config" frame arrives. Distinct from `gpios` above: a sensor can
+    // have a valid pin (>= 0) but still be enabled:false (e.g. pH ships off by
+    // default, or any sensor that auto-disabled after failing startup
+    // validation) — the per-sensor detail page toggle should reflect this real
+    // flag, not just "does this tab have a pin assigned".
+    enabled: [null, true, true, true, true, true, false, null, null, null, null],
     units: ["", "ppm", "", "°C", "lux", "%", "pH", "", "", "", ""]
 };
 
 let currentTabId = 0;
 let isTerminalPaused = false;
 let globalConfigCache = {}; // Cache config data for CSV export
+
+// Firmware page state (Part 1.6 / 3.2) — assume OTA is enabled until a config
+// frame says otherwise, so the button isn't stuck disabled before first sync.
+let otaEnabled = true;
+let selectedFirmwareFile = null;
 
 // Chart Buffers (Keep last 20 readings for the UI graphs and CSV Export)
 const MAX_POINTS = 20;
@@ -60,6 +72,17 @@ function initNavigation() {
         li.addEventListener('click', () => switchTab(index, li));
         navTabsContainer.appendChild(li);
     });
+}
+
+// Resolves whether a sensor tab should show as "on": prefers the real
+// sensor_enabled[] flag once synced from the device (tabsData.enabled[index]),
+// falling back to "does this tab have a pin assigned" only before the first
+// config frame arrives. Needed because a sensor can have a valid pin but
+// still be enabled:false (pH ships off by default; any sensor can
+// auto-disable after failed startup validation).
+function resolveSensorOn(index, pin) {
+    const enabled = tabsData.enabled[index];
+    return (enabled !== null && enabled !== undefined) ? enabled : (pin >= 0);
 }
 
 function switchTab(index, element) {
@@ -97,7 +120,7 @@ function switchTab(index, element) {
 
         let pin = tabsData.gpios[index];
         document.getElementById('dual-sensor-pin').innerText = (pin === null || pin < 0) ? '-- (Disabled)' : pin;
-        document.getElementById('dual-sensor-toggle').checked = (pin >= 0);
+        document.getElementById('dual-sensor-toggle').checked = resolveSensorOn(index, pin);
 
         setTimeout(resizeCanvas, 50);
     } else {
@@ -114,9 +137,10 @@ function switchTab(index, element) {
             document.getElementById('sensor-pin').innerText = (pin === null || pin < 0) ? '-- (Disabled)' : pin;
         }
 
-        document.getElementById('sensor-toggle').checked = (pin >= 0);
+        const sensorOn = resolveSensorOn(index, pin);
+        document.getElementById('sensor-toggle').checked = sensorOn;
 
-        if (pin < 0) {
+        if (!sensorOn) {
             document.getElementById('sensor-error').classList.remove('hidden');
         } else {
             document.getElementById('sensor-error').classList.add('hidden');
@@ -210,16 +234,23 @@ function updateVitals(msg) {
 }
 
 function updateTelemetry(msg) {
-    if(document.getElementById('dash-val-tds')) document.getElementById('dash-val-tds').innerText = msg.tds.toFixed(0);
+    // `|| 0` on every field here (not just some) protects against a partial
+    // "data" frame — e.g. if broadcastData() is ever extended to omit a
+    // disabled sensor's field, the same way firebaseUploadCycle() already
+    // does. Without it, msg.tds.toFixed() on an undefined field throws and
+    // aborts the rest of this handler, silently freezing every OTHER tile
+    // on the dashboard too (they're all in the same function, after the
+    // line that throws).
+    if(document.getElementById('dash-val-tds')) document.getElementById('dash-val-tds').innerText = (msg.tds || 0).toFixed(0);
     if(document.getElementById('dash-val-ph')) document.getElementById('dash-val-ph').innerText = (msg.ph_val || 0).toFixed(2);
-    if(document.getElementById('dash-val-atemp')) document.getElementById('dash-val-atemp').innerText = msg.temp.toFixed(1);
-    if(document.getElementById('dash-val-hum')) document.getElementById('dash-val-hum').innerText = msg.hum.toFixed(0);
+    if(document.getElementById('dash-val-atemp')) document.getElementById('dash-val-atemp').innerText = (msg.temp || 0).toFixed(1);
+    if(document.getElementById('dash-val-hum')) document.getElementById('dash-val-hum').innerText = (msg.hum || 0).toFixed(0);
     if(document.getElementById('dash-val-wtemp')) document.getElementById('dash-val-wtemp').innerText = (msg.w_t || 0).toFixed(1);
     if(document.getElementById('dash-val-lux')) document.getElementById('dash-val-lux').innerText = (msg.lux || 0).toFixed(0);
     if(document.getElementById('dash-val-wl')) document.getElementById('dash-val-wl').innerText = (msg.wl_percent || 0).toFixed(0);
     if(document.getElementById('dash-val-vpd')) document.getElementById('dash-val-vpd').innerText = (msg.vpd_kpa || 0).toFixed(2);
 
-    if(document.getElementById('cal-tds-raw')) document.getElementById('cal-tds-raw').innerText = msg.tds.toFixed(1);
+    if(document.getElementById('cal-tds-raw')) document.getElementById('cal-tds-raw').innerText = (msg.tds || 0).toFixed(1);
     if(document.getElementById('cal-ph-raw')) document.getElementById('cal-ph-raw').innerText = (msg.ph_val || 0).toFixed(2);
 
     const pushBuffer = (arr, val) => {
@@ -260,6 +291,89 @@ function updateTelemetry(msg) {
     }
 }
 
+// SensorID enum order from config.h (S_WL, S_LIGHT, S_TDS, S_DHT, S_PH, S_WTEMP) —
+// this is how msg.s_en[] is ordered by broadcastConfig(), which is a DIFFERENT
+// order than msg.pins[]/tabsData.gpios (tab-index order). Keep these mappings
+// distinct and intentional, same note as in task_network.cpp.
+const S_EN_INDEX = { wl: 0, light: 1, tds: 2, dht: 3, ph: 4, wt: 5 };
+
+// ------------------------------------------------------------------
+// Client-side pin validation (Part 4 / 5.5). Module-scope (not just inside
+// DOMContentLoaded) so it can also be re-run from updateConfigForm() after a
+// fresh "config" WS frame lands and repopulates the pin fields — a UX nicety
+// only; the real safety boundary is the server-side check in
+// save_pins/save_sensor_enabled (task_network.cpp) plus the boot-time
+// enforceForbiddenPins() guard.
+// ------------------------------------------------------------------
+const PIN_FIELD_LABELS = {
+    'cfg-pin-tds': 'TDS',
+    'cfg-pin-dht': 'DHT22',
+    'cfg-pin-ph': 'pH',
+    'cfg-pin-wt': 'DS18B20 (Water Temp)',
+    'cfg-pin-wl': 'Water Level Signal',
+    'cfg-pin-wlp': 'Water Level Power',
+    'cfg-pin-sda': 'BH1750 SDA',
+    'cfg-pin-scl': 'BH1750 SCL'
+};
+
+function validateAllPinFields() {
+    const ids = Object.keys(PIN_FIELD_LABELS);
+    const fields = ids
+        .map((id) => ({ id, el: document.getElementById(id) }))
+        .filter((f) => f.el);
+
+    if (fields.length === 0) return true; // Settings page not in the DOM yet / fields not rendered
+
+    // Clear previous error highlighting before re-checking.
+    fields.forEach((f) => f.el.classList.remove('border-error', 'text-error'));
+
+    let problem = "";
+    let offendingIds = [];
+
+    // Forbidden pins first (19/20 = native USB D-/D+ on this board).
+    fields.forEach((f) => {
+        const v = parseInt(f.el.value, 10);
+        if (v === 19 || v === 20) {
+            problem = `GPIO 19 and 20 are reserved for USB on this board and can't be used for a sensor. Change that pin and try again.`;
+            offendingIds.push(f.id);
+        }
+    });
+
+    // Duplicate pin assignments across sensors (Part 5.5). -1 (disabled)
+    // never conflicts with anything.
+    if (!problem) {
+        for (let i = 0; i < fields.length; i++) {
+            const vi = parseInt(fields[i].el.value, 10);
+            if (isNaN(vi) || vi < 0) continue;
+            for (let j = i + 1; j < fields.length; j++) {
+                const vj = parseInt(fields[j].el.value, 10);
+                if (isNaN(vj) || vj < 0) continue;
+                if (vi === vj) {
+                    problem = `${PIN_FIELD_LABELS[fields[i].id]} and ${PIN_FIELD_LABELS[fields[j].id]} are both assigned to GPIO${vi}. Each sensor needs its own pin.`;
+                    offendingIds.push(fields[i].id, fields[j].id);
+                    break;
+                }
+            }
+            if (problem) break;
+        }
+    }
+
+    offendingIds.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('border-error', 'text-error');
+    });
+
+    const pinValidationBanner = document.getElementById('pin-validation-error');
+    const pinValidationText = document.getElementById('pin-validation-error-text');
+    const btnSavePinsEl = document.getElementById('btn-save-pins');
+
+    if (pinValidationBanner) pinValidationBanner.classList.toggle('hidden', !problem);
+    if (pinValidationText && problem) pinValidationText.innerText = problem;
+    if (btnSavePinsEl) btnSavePinsEl.disabled = !!problem;
+
+    return problem === "";
+}
+
 function updateConfigForm(msg) {
     globalConfigCache = msg; // Cache for CSV export
 
@@ -272,6 +386,59 @@ function updateConfigForm(msg) {
     if(document.getElementById('cfg-tds-k')) document.getElementById('cfg-tds-k').value = (msg.tds_k || 1.0).toFixed(2);
     if(document.getElementById('cfg-ph-off')) document.getElementById('cfg-ph-off').value = (msg.ph_off || 0.0).toFixed(2);
     if(document.getElementById('cfg-ph-slope')) document.getElementById('cfg-ph-slope').value = (msg.ph_slope || 1.0).toFixed(2);
+
+    // Feature Flags (Part 1 / 2.3) — none of these require a reboot, so we can
+    // just reflect the device's live state every time a config frame arrives.
+    if(document.getElementById('cfg-demo-mode')) document.getElementById('cfg-demo-mode').checked = !!msg.demo;
+    if(document.getElementById('cfg-fb-enabled')) document.getElementById('cfg-fb-enabled').checked = !!msg.fb_en;
+    if(document.getElementById('cfg-ota-enabled')) document.getElementById('cfg-ota-enabled').checked = !!msg.ota_en;
+
+    // Demo Mode badge on the Dashboard — only shown while demo mode is on, so
+    // simulated readings are never mistaken for real sensor data.
+    const demoBadge = document.getElementById('demo-mode-badge');
+    if (demoBadge) {
+        demoBadge.classList.toggle('hidden', !msg.demo);
+        demoBadge.classList.toggle('flex', !!msg.demo);
+    }
+
+    // OTA gating on the Firmware page (Part 1.6 / 3.2) — gray out the upload
+    // button and show a one-line note instead of letting the user click into
+    // a 403 from the server.
+    const otaNotice = document.getElementById('ota-disabled-notice');
+    const firmwareUploadBtn = document.getElementById('btn-firmware-upload');
+    if (msg.ota_en !== undefined) otaEnabled = !!msg.ota_en;
+    if (otaNotice) otaNotice.classList.toggle('hidden', otaEnabled);
+    if (firmwareUploadBtn) {
+        // Only re-enable if a file is actually selected too — don't fight the
+        // "disabled until a file is chosen" rule from 3.2.
+        firmwareUploadBtn.disabled = !otaEnabled || !selectedFirmwareFile;
+    }
+
+    // Timing intervals (Part 5.8)
+    if(document.getElementById('cfg-int-read') && msg.int_read !== undefined) document.getElementById('cfg-int-read').value = msg.int_read;
+    if(document.getElementById('cfg-int-ws') && msg.int_ws !== undefined) document.getElementById('cfg-int-ws').value = msg.int_ws;
+    if(document.getElementById('cfg-int-vit') && msg.int_vit !== undefined) document.getElementById('cfg-int-vit').value = msg.int_vit;
+    if(document.getElementById('cfg-int-fb') && msg.int_fb !== undefined) document.getElementById('cfg-int-fb').value = msg.int_fb;
+
+    // Per-sensor enabled state (Part 2.4) — reflects the REAL sensor_enabled[]
+    // flag, not just "pin >= 0". A sensor can have a valid pin saved but still
+    // be enabled:false (pH ships off by default; any sensor can auto-disable
+    // after failed startup validation), and the toggle should show that.
+    if (msg.s_en && msg.s_en.length >= 6) {
+        Object.keys(S_EN_INDEX).forEach((sensorId) => {
+            const el = document.getElementById('cfg-sensor-enabled-' + sensorId);
+            if (el) el.checked = !!msg.s_en[S_EN_INDEX[sensorId]];
+        });
+
+        // Same data, indexed by tab id instead of short sensor-id string, for
+        // the per-sensor detail page toggle/error-banner (see resolveSensorOn()).
+        tabsData.enabled[1] = !!msg.s_en[S_EN_INDEX.tds];   // TDS
+        tabsData.enabled[2] = !!msg.s_en[S_EN_INDEX.dht];   // Air Temp & Humidity
+        tabsData.enabled[3] = !!msg.s_en[S_EN_INDEX.wt];    // Water Temp
+        tabsData.enabled[4] = !!msg.s_en[S_EN_INDEX.light]; // Light
+        tabsData.enabled[5] = !!msg.s_en[S_EN_INDEX.wl];    // Water Level
+        tabsData.enabled[6] = !!msg.s_en[S_EN_INDEX.ph];    // pH
+    }
 
     if(msg.pins && msg.pins.length >= 7) {
         tabsData.gpios[1] = msg.pins[0]; // TDS
@@ -294,6 +461,11 @@ function updateConfigForm(msg) {
         if(msg.pins.length >= 8 && document.getElementById('cfg-pin-wlp')) {
             document.getElementById('cfg-pin-wlp').value = msg.pins[7];
         }
+
+        // Re-run pin validation now that fresh values landed in the fields —
+        // keeps the Save Pins button's disabled state in sync with reality
+        // instead of whatever it was before this config frame arrived.
+        if (typeof validateAllPinFields === 'function') validateAllPinFields();
     }
 }
 
@@ -349,9 +521,27 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ------------------------------------------------------------------
+    // Client-side pin validation (Part 4 / 5.5) — validateAllPinFields()
+    // itself is defined at module scope (near updateConfigForm) so it can
+    // also be called after a fresh "config" frame lands. Just wire up the
+    // live listeners and initial pass here.
+    // ------------------------------------------------------------------
+    Object.keys(PIN_FIELD_LABELS).forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('input', validateAllPinFields);
+        el.addEventListener('change', validateAllPinFields);
+    });
+    validateAllPinFields(); // initial pass in case fields already have values
+
     const btnSavePins = document.getElementById('btn-save-pins');
     if(btnSavePins) {
         btnSavePins.addEventListener('click', () => {
+            // Re-check right before send — don't rely solely on the live
+            // listener having already run (e.g. a value changed via script).
+            if (!validateAllPinFields()) return;
+
             const wlpEl = document.getElementById('cfg-pin-wlp');
             const payload = {
                 command: "save_pins",
@@ -457,16 +647,40 @@ document.addEventListener('DOMContentLoaded', () => {
         const isEnabled = e.target.checked;
         let payload = { command: "save_pins" };
         let sensorName = "";
+        let sensorId = ""; // short id used by save_sensor_enabled / TAB_TO_SENSOR_ID
 
-        if (tabId === 1) { payload.pin_tds = isEnabled ? DEFAULT_PINS.tds : -1; sensorName = "TDS"; }
-        else if (tabId === 2) { payload.pin_dht = isEnabled ? DEFAULT_PINS.dht : -1; sensorName = "DHT"; }
-        else if (tabId === 3) { payload.pin_wt = isEnabled ? DEFAULT_PINS.wt : -1; sensorName = "Water Temp"; }
-        else if (tabId === 4) { payload.pin_sda = isEnabled ? DEFAULT_PINS.sda : -1; payload.pin_scl = isEnabled ? DEFAULT_PINS.scl : -1; sensorName = "I2C Light"; }
-        else if (tabId === 5) { payload.pin_wl = isEnabled ? DEFAULT_PINS.wl : -1; payload.pin_wlp = isEnabled ? DEFAULT_PINS.wlp : -1; sensorName = "Water Level"; }
-        else if (tabId === 6) { payload.pin_ph = isEnabled ? DEFAULT_PINS.ph : -1; sensorName = "pH"; }
+        if (tabId === 1) { payload.pin_tds = isEnabled ? DEFAULT_PINS.tds : -1; sensorName = "TDS"; sensorId = "tds"; }
+        else if (tabId === 2) { payload.pin_dht = isEnabled ? DEFAULT_PINS.dht : -1; sensorName = "DHT"; sensorId = "dht"; }
+        else if (tabId === 3) { payload.pin_wt = isEnabled ? DEFAULT_PINS.wt : -1; sensorName = "Water Temp"; sensorId = "wt"; }
+        else if (tabId === 4) { payload.pin_sda = isEnabled ? DEFAULT_PINS.sda : -1; payload.pin_scl = isEnabled ? DEFAULT_PINS.scl : -1; sensorName = "I2C Light"; sensorId = "light"; }
+        else if (tabId === 5) { payload.pin_wl = isEnabled ? DEFAULT_PINS.wl : -1; payload.pin_wlp = isEnabled ? DEFAULT_PINS.wlp : -1; sensorName = "Water Level"; sensorId = "wl"; }
+        else if (tabId === 6) { payload.pin_ph = isEnabled ? DEFAULT_PINS.ph : -1; sensorName = "pH"; sensorId = "ph"; }
 
         if (sensorName !== "") {
             websocket.send(JSON.stringify(payload));
+
+            // Part 5.1 fix: restoring the pin alone used to leave
+            // sensor_enabled[id] permanently false once a sensor had
+            // auto-disabled — nothing else ever set it back to true from this
+            // toggle. Send save_sensor_enabled on BOTH paths so this toggle's
+            // "enabled" flag always matches its pin state:
+            //  - power ON: also clears any lingering auto-disable flag, same
+            //    as before.
+            //  - power OFF: also flips sensor_enabled[id] to false. Without
+            //    this, sensor_enabled[] stayed true while the pin went to -1,
+            //    so every read after reboot would fail forever (pin -1 always
+            //    fails) and permanently trip the error LED for a sensor the
+            //    user deliberately turned off — the "solid green = healthy"
+            //    guarantee broke the moment anyone used this toggle to power
+            //    something down. (An earlier version of this comment argued
+            //    sending enabled:false here was unsafe because the pin-restore
+            //    branch in save_sensor_enabled's server handler would refire —
+            //    it doesn't: that branch only runs when enabled is true, so
+            //    enabled:false here never touches pins, only the flag.)
+            if (sensorId) {
+                websocket.send(JSON.stringify({ command: "save_sensor_enabled", sensor: sensorId, enabled: isEnabled }));
+            }
+
             const status = isEnabled ? "POWERED ON" : "POWERED OFF";
             document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${sensorName} ${status}.</div>`;
             setTimeout(() => {
@@ -502,6 +716,174 @@ document.addEventListener('DOMContentLoaded', () => {
             if (sensorId) sendResetSensorPin(sensorId);
         });
     }
+
+    // ------------------------------------------------------------------
+    // Feature Flags card (Part 2.3 / 1.3) — Demo Mode, Firebase Upload, OTA
+    // Updates. One "Save Feature Flags" button sends all three current
+    // checkbox states via save_features. None of these need a reboot.
+    // ------------------------------------------------------------------
+    const btnSaveFeatures = document.getElementById('btn-save-features');
+    if (btnSaveFeatures) {
+        btnSaveFeatures.addEventListener('click', () => {
+            const payload = {
+                command: "save_features",
+                demo: !!document.getElementById('cfg-demo-mode')?.checked,
+                fb_en: !!document.getElementById('cfg-fb-enabled')?.checked,
+                ota_en: !!document.getElementById('cfg-ota-enabled')?.checked
+            };
+            websocket.send(JSON.stringify(payload));
+            btnSaveFeatures.innerText = "Saved!";
+            setTimeout(() => { btnSaveFeatures.innerText = "Save Feature Flags"; }, 2000);
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // Per-sensor enable toggle inside each pinout card (Part 2.4 / 1.4).
+    // Bound to save_sensor_enabled. Requires a reboot to apply (same as
+    // save_pins), since a restored pin only takes effect after the sensor
+    // task re-inits at boot — so this uses the same reboot-confirm UX.
+    // ------------------------------------------------------------------
+    document.querySelectorAll('[data-sensor-enable]').forEach((el) => {
+        el.addEventListener('change', (e) => {
+            const sensorId = el.dataset.sensorEnable;
+            const enabled = e.target.checked;
+            websocket.send(JSON.stringify({ command: "save_sensor_enabled", sensor: sensorId, enabled }));
+            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${sensorId}' ${enabled ? "ENABLED" : "DISABLED"}.</div>`;
+            setTimeout(() => {
+                if (confirm(`Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
+                    websocket.send(JSON.stringify({ command: "reboot" }));
+                } else {
+                    e.target.checked = !enabled;
+                }
+            }, 300);
+        });
+    });
+
+    // ------------------------------------------------------------------
+    // Timing card (Part 5.8) — sample rate / WS push / vitals push / Firestore
+    // push, all in ms. Same "omit-to-leave-unchanged" pattern as save_pins;
+    // here we just always send all four current field values.
+    // ------------------------------------------------------------------
+    const btnSaveIntervals = document.getElementById('btn-save-intervals');
+    if (btnSaveIntervals) {
+        btnSaveIntervals.addEventListener('click', () => {
+            const clamp = (v, fallback) => {
+                const n = parseInt(v, 10);
+                if (isNaN(n)) return fallback;
+                return Math.min(60000, Math.max(500, n));
+            };
+            const payload = {
+                command: "save_intervals",
+                int_read: clamp(document.getElementById('cfg-int-read')?.value, 2000),
+                int_ws: clamp(document.getElementById('cfg-int-ws')?.value, 1000),
+                int_vit: clamp(document.getElementById('cfg-int-vit')?.value, 1000),
+                int_fb: clamp(document.getElementById('cfg-int-fb')?.value, 10000)
+            };
+            websocket.send(JSON.stringify(payload));
+            btnSaveIntervals.innerText = "Saved!";
+            setTimeout(() => { btnSaveIntervals.innerText = "Save Timing"; }, 2000);
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // Inline firmware uploader (Part 3.2) — replaces the old
+    // window.open('/update') link. Everything happens on page-10: file
+    // select, upload via XMLHttpRequest (not a <form> submit, so there's no
+    // full-page navigation), a real progress bar driven by
+    // xhr.upload.onprogress, and inline success/failure state. Never
+    // navigates away from the dashboard.
+    // ------------------------------------------------------------------
+    const firmwareFileInput = document.getElementById('firmware-file-input');
+    const firmwareFileLabel = document.getElementById('firmware-file-label');
+    const btnFirmwareUpload = document.getElementById('btn-firmware-upload');
+    const firmwareProgressWrap = document.getElementById('firmware-progress-wrap');
+    const firmwareProgressBar = document.getElementById('firmware-progress-bar');
+    const firmwareProgressPct = document.getElementById('firmware-progress-pct');
+    const firmwareStatusText = document.getElementById('firmware-status-text');
+
+    const formatBytes = (bytes) => {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    };
+
+    if (firmwareFileInput) {
+        firmwareFileInput.addEventListener('change', () => {
+            const file = firmwareFileInput.files && firmwareFileInput.files[0];
+            selectedFirmwareFile = file || null;
+
+            if (firmwareFileLabel) {
+                firmwareFileLabel.innerText = file ? `${file.name} (${formatBytes(file.size)})` : "No file selected";
+            }
+            if (btnFirmwareUpload) {
+                btnFirmwareUpload.disabled = !file || !otaEnabled;
+            }
+        });
+    }
+
+    if (btnFirmwareUpload) {
+        btnFirmwareUpload.addEventListener('click', () => {
+            if (!selectedFirmwareFile || !otaEnabled) return;
+
+            const xhr = new XMLHttpRequest();
+            const formData = new FormData();
+            formData.append('update', selectedFirmwareFile);
+
+            btnFirmwareUpload.disabled = true;
+            btnFirmwareUpload.innerHTML = `<span class="material-symbols-outlined text-[20px] animate-spin">progress_activity</span> <span>Uploading…</span>`;
+
+            if (firmwareProgressWrap) firmwareProgressWrap.classList.remove('hidden');
+            if (firmwareProgressWrap) firmwareProgressWrap.classList.add('flex');
+            if (firmwareProgressBar) firmwareProgressBar.style.width = '0%';
+            if (firmwareProgressPct) firmwareProgressPct.innerText = '0%';
+            if (firmwareStatusText) { firmwareStatusText.innerText = 'Uploading…'; firmwareStatusText.classList.remove('text-error'); }
+
+            xhr.upload.onprogress = (evt) => {
+                if (!evt.lengthComputable) return;
+                const pct = Math.round((evt.loaded / evt.total) * 100);
+                if (firmwareProgressBar) firmwareProgressBar.style.width = `${pct}%`;
+                if (firmwareProgressPct) firmwareProgressPct.innerText = `${pct}%`;
+                if (pct >= 100 && firmwareStatusText) firmwareStatusText.innerText = 'Flashing…';
+            };
+
+            xhr.onload = () => {
+                if (xhr.status === 200 && xhr.responseText.trim() === 'OK') {
+                    if (firmwareStatusText) firmwareStatusText.innerText = 'Complete — rebooting…';
+                    if (firmwareProgressBar) firmwareProgressBar.style.width = '100%';
+                    if (firmwareProgressPct) firmwareProgressPct.innerText = '100%';
+                    btnFirmwareUpload.innerHTML = `<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">check_circle</span> <span>Success — reconnecting…</span>`;
+                    // The device reboots itself after a successful /ota/upload.
+                    // initWebSocket() already auto-reconnects every 2s on close
+                    // (see onClose()), so this mostly happens for free — the
+                    // existing vital-link indicator will flip to OFFLINE and
+                    // then back to LIVE SYS.LINK on its own.
+                } else {
+                    const errText = xhr.responseText && xhr.responseText.trim().length > 0
+                        ? xhr.responseText.trim()
+                        : `Upload failed (HTTP ${xhr.status})`;
+                    if (firmwareStatusText) {
+                        firmwareStatusText.innerText = errText;
+                        firmwareStatusText.classList.add('text-error');
+                    }
+                    btnFirmwareUpload.innerHTML = `<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">system_update_alt</span> <span>Update Firmware</span>`;
+                    btnFirmwareUpload.disabled = !selectedFirmwareFile || !otaEnabled;
+                }
+            };
+
+            xhr.onerror = () => {
+                if (firmwareStatusText) {
+                    firmwareStatusText.innerText = 'Upload failed — connection error. Stay on the same Wi-Fi network and try again.';
+                    firmwareStatusText.classList.add('text-error');
+                }
+                btnFirmwareUpload.innerHTML = `<span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">system_update_alt</span> <span>Update Firmware</span>`;
+                btnFirmwareUpload.disabled = !selectedFirmwareFile || !otaEnabled;
+            };
+
+            xhr.open('POST', '/ota/upload', true);
+            xhr.send(formData);
+        });
+    }
+
 
     // Theme: Light / Dark / Auto, persisted in localStorage. The <head> has a
     // small inline script that applies the saved theme before first paint to

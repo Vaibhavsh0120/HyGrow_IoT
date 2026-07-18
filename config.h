@@ -75,7 +75,7 @@
 // ---------- Timing (all in ms) ----------
 #define DEFAULT_INTERVAL_READ_MS 2000   // [NVS] int_read  — sensor sampling
 #define DEFAULT_INTERVAL_WS_MS 1000     // [NVS] int_ws    — WS data push
-#define DEFAULT_INTERVAL_VITALS_MS 1000 // [NVS] int_vit   — vitals push
+#define DEFAULT_INTERVAL_VITALS_MS 1000 // [NVS] int_vit   — vitals push (ConfigState.interval_vitals_ms)
 #define DEFAULT_INTERVAL_FB_MS 10000    // [NVS] int_fb    — Firestore patch
 
 // ---------- Pin assignments (ESP32-S3 N16R8) ----------
@@ -121,7 +121,13 @@
 #define DEFAULT_DEMO_MODE false       // [NVS] demo
 #define DEFAULT_FIREBASE_ENABLED true // [NVS] fb_en
 #define DEFAULT_OTA_ENABLED true      // [NVS] ota_en
-#define DEFAULT_SENSOR_ENABLED true   // [NVS] s_en_<i> (per sensor)
+#define DEFAULT_SENSOR_ENABLED true   // [NVS] s_en_<i> (per sensor) — applies to every
+                                       // sensor EXCEPT pH, which has its own override
+                                       // below. pH needs a calibrated probe in real
+                                       // liquid to read anything meaningful, so it
+                                       // ships off by default; every other sensor
+                                       // ships on.
+#define DEFAULT_PH_SENSOR_ENABLED false // [NVS] s_en_4 (S_PH) — off by default
 
 // ---------- Sensor IDs ----------
 // Order MUST match ERROR_COLORS[] in src/utils/led_status.cpp, and is

@@ -6,6 +6,8 @@
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <Update.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -45,11 +47,230 @@ static const char OTA_PAGE[] PROGMEM = R"rawliteral(
 
 unsigned long lastVitalsTime = 0;
 unsigned long lastDataTime = 0;
+unsigned long lastFirebaseTime = 0;
 
 // Internal helpers
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len);
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void configureOtaRoutes();
+void firebaseUploadCycle();
+
+// ----------------------------------------------------------------------------
+// Firebase / Firestore upload (Part 5.3)
+// ----------------------------------------------------------------------------
+// Minimal, non-blocking-per-call REST client for pushing sensor readings to
+// Firestore. "Non-blocking" here means: it never runs more often than
+// currentConfig.interval_fb_ms, each HTTPClient call uses a short timeout, and
+// it never retries in a loop — a slow/failed request just waits for the next
+// cadence tick instead of stalling the network task. It does NOT run on a
+// separate thread; a single request can still take up to ~timeout ms of wall
+// time inside networkTaskLoop(), which is an accepted tradeoff for staying
+// within the existing single-loop task structure and library set already in
+// platformio.ini (no separate async-HTTP dependency).
+static String s_fbIdToken;
+static uint32_t s_fbTokenExpiryMs = 0; // millis() timestamp after which the cached token is considered stale
+
+// Exchange fb_email/fb_pass for a Firebase Identity Toolkit ID token.
+// Caches the token and its expiry so normal upload cycles don't sign in
+// every time — only when the cache is empty or has expired.
+static bool firebaseEnsureIdToken()
+{
+    if (s_fbIdToken.length() > 0 && (int32_t)(millis() - s_fbTokenExpiryMs) < 0)
+    {
+        return true; // cached token still valid
+    }
+
+    if (String(currentConfig.fb_api_key).length() == 0 ||
+        String(currentConfig.fb_email).length() == 0 ||
+        String(currentConfig.fb_pass).length() == 0)
+    {
+        strncpy(currentVitals.firebase_last_error, "Missing Firebase email/password/API key", sizeof(currentVitals.firebase_last_error) - 1);
+        return false;
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure(); // Google's public CA chain rotates; verifying isn't practical on-device with limited flash for a CA bundle here.
+    HTTPClient https;
+    https.setTimeout(5000);
+
+    String url = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + String(currentConfig.fb_api_key);
+    if (!https.begin(client, url))
+    {
+        strncpy(currentVitals.firebase_last_error, "signIn: HTTPClient begin() failed", sizeof(currentVitals.firebase_last_error) - 1);
+        return false;
+    }
+    https.addHeader("Content-Type", "application/json");
+
+    JsonDocument body;
+    body["email"] = currentConfig.fb_email;
+    body["password"] = currentConfig.fb_pass;
+    body["returnSecureToken"] = true;
+    String bodyStr;
+    serializeJson(body, bodyStr);
+
+    int code = https.POST(bodyStr);
+    bool ok = false;
+
+    if (code == 200)
+    {
+        JsonDocument resp;
+        DeserializationError err = deserializeJson(resp, https.getString());
+        if (!err && resp["idToken"].is<const char *>())
+        {
+            s_fbIdToken = String((const char *)resp["idToken"]);
+            long expiresIn = resp["expiresIn"] | 3600; // seconds, Firebase default 1hr tokens
+            // Refresh a little early (80% of lifetime) to avoid racing expiry mid-upload.
+            s_fbTokenExpiryMs = millis() + (uint32_t)(expiresIn * 800UL);
+            ok = true;
+        }
+        else
+        {
+            strncpy(currentVitals.firebase_last_error, "signIn: malformed token response", sizeof(currentVitals.firebase_last_error) - 1);
+        }
+    }
+    else
+    {
+        String err = "signIn HTTP " + String(code);
+        strncpy(currentVitals.firebase_last_error, err.c_str(), sizeof(currentVitals.firebase_last_error) - 1);
+    }
+
+    https.end();
+    return ok;
+}
+
+// Fires one Firestore PATCH with the current sensor snapshot. Called at most
+// once per currentConfig.interval_fb_ms from networkTaskLoop().
+void firebaseUploadCycle()
+{
+    if (!currentConfig.firebase_enabled)
+        return;
+    if (WiFi.status() != WL_CONNECTED)
+        return;
+    if (String(currentConfig.fb_project).length() == 0 || String(currentConfig.fb_api_key).length() == 0)
+        return;
+
+    if (!firebaseEnsureIdToken())
+    {
+        currentVitals.firebase_ready = false;
+        webLog(0, LOG_ERR, "Firebase upload skipped: " + String(currentVitals.firebase_last_error));
+        return;
+    }
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient https;
+    https.setTimeout(5000);
+
+    String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "sensor_data";
+    String docId = String(currentConfig.device_id).length() > 0 ? String(currentConfig.device_id) : "esp32_device";
+
+    // ------------------------------------------------------------------
+    // Per-sensor field gating (fixes a real bug): a field is only written
+    // to the outgoing document -- and only listed in the PATCH updateMask --
+    // if the sensor(s) it comes from are actually enabled. Previously every
+    // field was written unconditionally, so a disabled sensor's last stale
+    // in-memory value (or 0/NaN if it was never read this boot) kept
+    // getting uploaded to Firestore forever, which is misleading downstream
+    // (e.g. a chart that thinks pH is being monitored when the probe was
+    // turned off weeks ago).
+    //
+    // vpd_kpa is a derived field (computeVPD() in task_sensor.cpp), computed
+    // only from DHT22's temp_c/humidity -- it has no independent sensor of
+    // its own. It's gated on S_DHT specifically for that reason: if DHT is
+    // off, VPD can't be (re)computed and holds a stale/zero value, so it's
+    // dropped from the payload along with temp_c/humidity. If more sensors
+    // ever feed into VPD's calculation, extend this same condition to also
+    // require those be enabled.
+    //
+    // updateMask.fieldPaths is a Firestore QUERY PARAMETER (not a body
+    // field) -- see the REST docs for projects.databases.documents.patch.
+    // Setting it means a field left out of both the mask and the body is
+    // simply not touched on the existing document, rather than silently
+    // frozen at whatever value the last successful upload wrote -- "sensor
+    // off" should read as "no updates being made to that field", not
+    // "value permanently stuck at its last live reading".
+    bool wantTds = currentConfig.sensor_enabled[S_TDS];
+    bool wantDht = currentConfig.sensor_enabled[S_DHT]; // also gates vpd_kpa
+    bool wantWtemp = currentConfig.sensor_enabled[S_WTEMP];
+    bool wantLight = currentConfig.sensor_enabled[S_LIGHT];
+    bool wantPh = currentConfig.sensor_enabled[S_PH];
+    bool wantWl = currentConfig.sensor_enabled[S_WL];
+
+    // updateMask.fieldPaths must appear as one repeated query param per
+    // field -- Firestore does not accept a single comma-joined param here.
+    String maskParams = "&updateMask.fieldPaths=uptime_s&updateMask.fieldPaths=server_timestamp";
+    if (wantTds)
+        maskParams += "&updateMask.fieldPaths=tds_ppm";
+    if (wantDht)
+        maskParams += "&updateMask.fieldPaths=temp_c&updateMask.fieldPaths=humidity&updateMask.fieldPaths=vpd_kpa";
+    if (wantWtemp)
+        maskParams += "&updateMask.fieldPaths=water_temp_c";
+    if (wantLight)
+        maskParams += "&updateMask.fieldPaths=lux";
+    if (wantPh)
+        maskParams += "&updateMask.fieldPaths=ph_val";
+    if (wantWl)
+        maskParams += "&updateMask.fieldPaths=wl_percent";
+
+    String url = "https://firestore.googleapis.com/v1/projects/" + String(currentConfig.fb_project) +
+                 "/databases/(default)/documents/" + collection + "/" + docId +
+                 "?key=" + String(currentConfig.fb_api_key) + maskParams;
+
+    if (!https.begin(client, url))
+    {
+        currentVitals.firebase_ready = false;
+        strncpy(currentVitals.firebase_last_error, "PATCH: HTTPClient begin() failed", sizeof(currentVitals.firebase_last_error) - 1);
+        return;
+    }
+    https.addHeader("Content-Type", "application/json");
+    https.addHeader("Authorization", "Bearer " + s_fbIdToken);
+
+    // Firestore REST documents use a typed-value wrapper for every field.
+    JsonDocument doc;
+    JsonObject fields = doc["fields"].to<JsonObject>();
+
+    if (wantTds)
+        fields["tds_ppm"]["doubleValue"] = currentSensors.tds_ppm;
+    if (wantDht)
+    {
+        fields["temp_c"]["doubleValue"] = currentSensors.temp_c;
+        fields["humidity"]["doubleValue"] = currentSensors.humidity;
+        fields["vpd_kpa"]["doubleValue"] = currentSensors.vpd_kpa;
+    }
+    if (wantWtemp)
+        fields["water_temp_c"]["doubleValue"] = currentSensors.water_temp_c;
+    if (wantLight)
+        fields["lux"]["doubleValue"] = currentSensors.lux;
+    if (wantPh)
+        fields["ph_val"]["doubleValue"] = currentSensors.ph_val;
+    if (wantWl)
+        fields["wl_percent"]["doubleValue"] = currentSensors.wl_percent;
+
+    // Always-present bookkeeping fields -- not tied to any sensor.
+    fields["uptime_s"]["integerValue"] = String(millis() / 1000);
+    fields["server_timestamp"]["timestampValue"] = "REQUEST_TIME"; // Firestore special sentinel isn't supported via plain PATCH body; kept as a marker field for downstream tooling.
+
+    String payload;
+    serializeJson(doc, payload);
+
+    int code = https.PATCH(payload);
+
+    if (code >= 200 && code < 300)
+    {
+        currentVitals.firebase_ready = true;
+        currentVitals.firebase_last_ok_ms = millis();
+        currentVitals.firebase_last_error[0] = '\0';
+    }
+    else
+    {
+        currentVitals.firebase_ready = false;
+        String err = "Firestore PATCH HTTP " + String(code);
+        strncpy(currentVitals.firebase_last_error, err.c_str(), sizeof(currentVitals.firebase_last_error) - 1);
+        webLog(0, LOG_ERR, "Firebase upload failed: " + err);
+    }
+
+    https.end();
+}
 
 void initNetworkTask()
 {
@@ -114,8 +335,9 @@ void networkTaskLoop()
 
     unsigned long currentMillis = millis();
 
-    // 1-second cadence for Vitals
-    if (currentMillis - lastVitalsTime >= 1000)
+    // Dynamic cadence for Vitals (was a hardcoded 1000ms literal — now backed
+    // by currentConfig.interval_vitals_ms, same pattern as the other timers).
+    if (currentMillis - lastVitalsTime >= currentConfig.interval_vitals_ms)
     {
         lastVitalsTime = currentMillis;
         broadcastVitals();
@@ -127,15 +349,39 @@ void networkTaskLoop()
         lastDataTime = currentMillis;
         broadcastData();
     }
+
+    // Dynamic cadence for the Firestore upload cycle. firebaseUploadCycle()
+    // itself no-ops immediately if firebase_enabled/Wi-Fi/credentials aren't
+    // ready, so it's safe to call unconditionally here.
+    if (currentMillis - lastFirebaseTime >= currentConfig.interval_fb_ms)
+    {
+        lastFirebaseTime = currentMillis;
+        firebaseUploadCycle();
+    }
 }
 
 void configureOtaRoutes()
 {
+    // Gated at request-handling time (not at route-registration time) so
+    // toggling ota_enabled from Settings takes effect immediately, without a
+    // reboot — the routes stay registered either way, they just reject.
     server.on("/update", HTTP_GET, [](AsyncWebServerRequest *request)
-              { request->send(200, "text/html", OTA_PAGE); });
+              {
+                  if (!currentConfig.ota_enabled)
+                  {
+                      request->send(403, "text/plain", "OTA updates are disabled in Settings.");
+                      return;
+                  }
+                  request->send(200, "text/html", OTA_PAGE); });
 
     server.on("/ota/upload", HTTP_POST, [](AsyncWebServerRequest *request)
               {
+                  if (!currentConfig.ota_enabled)
+                  {
+                      request->send(403, "text/plain", "OTA updates are disabled in Settings.");
+                      return;
+                  }
+
                   const bool success = !Update.hasError();
                   AsyncWebServerResponse *response = request->beginResponse(200, "text/plain", success ? "OK" : "FAIL");
                   response->addHeader("Connection", "close");
@@ -154,6 +400,14 @@ void configureOtaRoutes()
               {
                   (void)request;
                   (void)filename;
+
+                  // Reject before touching Update.begin()/write() at all —
+                  // checked on every chunk (cheap) so a client that starts
+                  // uploading right as ota_enabled flips off is still stopped.
+                  if (!currentConfig.ota_enabled)
+                  {
+                      return;
+                  }
 
                   if (index == 0)
                   {
@@ -187,7 +441,15 @@ void broadcastVitals()
     doc["min_free_heap"] = ESP.getMinFreeHeap();
     doc["uptime"] = millis() / 1000;
     doc["wifi_status"] = (WiFi.status() == WL_CONNECTED) ? "connected" : "ap_mode";
-    doc["firebase_ready"] = (WiFi.status() == WL_CONNECTED && String(currentConfig.fb_api_key).length() > 0);
+
+    // firebase_ready now reflects the outcome of the most recent real upload
+    // attempt (see firebaseUploadCycle()), not just "Wi-Fi up + key present" —
+    // that old proxy reported "ready" even though no upload had ever been
+    // attempted. If the feature is off, report false rather than a stale
+    // last-known state.
+    doc["firebase_ready"] = currentConfig.firebase_enabled && currentVitals.firebase_ready;
+    doc["firebase_last_ok_ms"] = currentVitals.firebase_last_ok_ms;
+    doc["firebase_last_error"] = currentVitals.firebase_last_error;
 
     String payload;
     serializeJson(doc, payload);
@@ -210,6 +472,26 @@ void broadcastConfig()
     doc["ph_off"] = currentConfig.ph_offset;
     doc["ph_slope"] = currentConfig.ph_slope;
     doc["tds_k"] = currentConfig.tds_k;
+
+    // Feature flags (Part 1) — no reboot required for any of these three.
+    doc["demo"] = currentConfig.demo_mode;
+    doc["fb_en"] = currentConfig.firebase_enabled;
+    doc["ota_en"] = currentConfig.ota_enabled;
+
+    // Timing intervals (Part 5.8) — all three are already fully wired into
+    // the firmware; this just exposes them for a "Timing" Settings card.
+    doc["int_read"] = currentConfig.interval_read_ms;
+    doc["int_ws"] = currentConfig.interval_ws_ms;
+    doc["int_vit"] = currentConfig.interval_vitals_ms;
+    doc["int_fb"] = currentConfig.interval_fb_ms;
+
+    // Per-sensor enabled state. Order matches the SensorID enum in config.h
+    // (S_WL, S_LIGHT, S_TDS, S_DHT, S_PH, S_WTEMP) — NOT the pin-array order
+    // used by doc["pins"] below, which is ordered differently for historical
+    // reasons. Keep these two arrays' orderings distinct and intentional.
+    JsonArray sEn = doc["s_en"].to<JsonArray>();
+    for (int i = 0; i < S_COUNT; i++)
+        sEn.add(currentConfig.sensor_enabled[i]);
 
     // Send pins to JS UI for settings rendering
     // Order MUST match JS parser: TDS, DHT, pH, WaterTemp, WaterLevel, SDA, SCL, WaterLevelPower
@@ -250,6 +532,60 @@ void broadcastData()
     String payload;
     serializeJson(doc, payload);
     ws.textAll(payload);
+}
+
+// ----------------------------------------------------------------------------
+// Server-side pin validation (Part 5.4 / 5.5)
+// ----------------------------------------------------------------------------
+// The client-side check in Settings (app.js) is a UX nicety only — it can be
+// bypassed by a hand-crafted WS message. These two helpers are the real
+// safety boundary between "the browser sent something" and "it lands in
+// currentConfig/NVS". Neither one is a substitute for enforceForbiddenPins()
+// in HyGrow_IoT.ino, which remains the last-resort boot-time guard.
+
+// True if `pin` is a reserved USB D-/D+ line. -1 (disabled) is always fine.
+static bool isForbiddenPin(int pin)
+{
+    return pin == 19 || pin == 20;
+}
+
+// Checks a proposed full set of sensor pins for GPIO19/20 use and for
+// duplicate assignments between two different *enabled* sensors. -1 never
+// conflicts with anything. Returns "" if the whole set is valid, or a
+// human-readable reason naming the offending sensor(s)/pin if not.
+struct PinCheckEntry
+{
+    int pin;
+    const char *label;
+};
+static String validatePinSet(PinCheckEntry entries[], int count)
+{
+    for (int i = 0; i < count; i++)
+    {
+        if (isForbiddenPin(entries[i].pin))
+        {
+            return String(entries[i].label) + " is set to GPIO" + String(entries[i].pin) +
+                   ", which is reserved for USB on this board.";
+        }
+    }
+
+    for (int i = 0; i < count; i++)
+    {
+        if (entries[i].pin < 0)
+            continue;
+        for (int j = i + 1; j < count; j++)
+        {
+            if (entries[j].pin < 0)
+                continue;
+            if (entries[i].pin == entries[j].pin)
+            {
+                return String(entries[i].label) + " and " + String(entries[j].label) +
+                       " are both assigned to GPIO" + String(entries[i].pin) + ".";
+            }
+        }
+    }
+
+    return "";
 }
 
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len)
@@ -309,14 +645,46 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
         }
         else if (cmd == "save_pins")
         {
-            currentConfig.pin_tds = doc["pin_tds"] | currentConfig.pin_tds;
-            currentConfig.pin_dht = doc["pin_dht"] | currentConfig.pin_dht;
-            currentConfig.pin_ph = doc["pin_ph"] | currentConfig.pin_ph;
-            currentConfig.pin_ds18b20 = doc["pin_wt"] | currentConfig.pin_ds18b20;
-            currentConfig.pin_wl = doc["pin_wl"] | currentConfig.pin_wl;
-            currentConfig.pin_lux_sda = doc["pin_sda"] | currentConfig.pin_lux_sda;
-            currentConfig.pin_lux_scl = doc["pin_scl"] | currentConfig.pin_lux_scl;
-            currentConfig.pin_wl_power = doc["pin_wlp"] | currentConfig.pin_wl_power;
+            // Build the proposed post-apply pin set first, so we can validate
+            // it as a whole (forbidden pins + cross-sensor duplicates) BEFORE
+            // committing anything to currentConfig/NVS. Reject the whole
+            // command if anything is wrong — same "all or nothing" behavior
+            // save_pins already had, just with a validation gate in front.
+            int proposedTds = doc["pin_tds"] | currentConfig.pin_tds;
+            int proposedDht = doc["pin_dht"] | currentConfig.pin_dht;
+            int proposedPh = doc["pin_ph"] | currentConfig.pin_ph;
+            int proposedWt = doc["pin_wt"] | currentConfig.pin_ds18b20;
+            int proposedWl = doc["pin_wl"] | currentConfig.pin_wl;
+            int proposedSda = doc["pin_sda"] | currentConfig.pin_lux_sda;
+            int proposedScl = doc["pin_scl"] | currentConfig.pin_lux_scl;
+            int proposedWlp = doc["pin_wlp"] | currentConfig.pin_wl_power;
+
+            PinCheckEntry proposed[] = {
+                {proposedTds, "TDS"},
+                {proposedDht, "DHT22"},
+                {proposedPh, "pH"},
+                {proposedWt, "DS18B20 (Water Temp)"},
+                {proposedWl, "Water Level Signal"},
+                {proposedSda, "BH1750 SDA"},
+                {proposedScl, "BH1750 SCL"},
+                {proposedWlp, "Water Level Power"},
+            };
+            String problem = validatePinSet(proposed, 8);
+
+            if (problem.length() > 0)
+            {
+                webLog(0, LOG_ERR, "save_pins rejected: " + problem);
+                return;
+            }
+
+            currentConfig.pin_tds = proposedTds;
+            currentConfig.pin_dht = proposedDht;
+            currentConfig.pin_ph = proposedPh;
+            currentConfig.pin_ds18b20 = proposedWt;
+            currentConfig.pin_wl = proposedWl;
+            currentConfig.pin_lux_sda = proposedSda;
+            currentConfig.pin_lux_scl = proposedScl;
+            currentConfig.pin_wl_power = proposedWlp;
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "Pinout config saved. Reboot required.");
@@ -336,28 +704,186 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
             broadcastConfig();
             webLog(0, LOG_INFO, "TDS Calibration saved.");
         }
+        else if (cmd == "save_features")
+        {
+            // Any field the client omits leaves that flag unchanged — same
+            // "omit-to-leave-unchanged" pattern used by save_pins. None of
+            // these three require a reboot: demo_mode/firebase_enabled are
+            // checked live every cycle, ota_enabled is checked at
+            // request-handling time in configureOtaRoutes().
+            currentConfig.demo_mode = doc["demo"] | currentConfig.demo_mode;
+            currentConfig.firebase_enabled = doc["fb_en"] | currentConfig.firebase_enabled;
+            currentConfig.ota_enabled = doc["ota_en"] | currentConfig.ota_enabled;
+            state_save();
+            broadcastConfig();
+            webLog(0, LOG_INFO, "Feature flags updated.");
+        }
+        else if (cmd == "save_sensor_enabled")
+        {
+            // Closes the Part 5.1 bug: today there's no way to flip
+            // sensor_enabled[i] back to true from the UI once it's false.
+            // Requires a reboot afterward (same as save_pins) since a
+            // restored pin only takes effect after the sensor task
+            // re-inits at boot.
+            String sensor = doc["sensor"] | "";
+            bool enabled = doc["enabled"] | true;
+            SensorID id = S_COUNT; // sentinel; only used after matched is confirmed true
+            bool matched = true;
+
+            if (sensor == "tds")
+                id = S_TDS;
+            else if (sensor == "dht")
+                id = S_DHT;
+            else if (sensor == "ph")
+                id = S_PH;
+            else if (sensor == "wt")
+                id = S_WTEMP;
+            else if (sensor == "wl")
+                id = S_WL;
+            else if (sensor == "light")
+                id = S_LIGHT;
+            else
+                matched = false;
+
+            if (!matched)
+            {
+                webLog(0, LOG_ERR, "save_sensor_enabled: unknown sensor id '" + sensor + "'");
+                return;
+            }
+
+            currentConfig.sensor_enabled[id] = enabled;
+
+            // If re-enabling and the pin(s) are still -1 (e.g. from an
+            // earlier auto-disable or manual pin reset), restore the
+            // compiled default(s) too — otherwise the user enables a
+            // sensor whose pins are still -1 and nothing happens. Reuses
+            // the same defaults reset_sensor_pin() already applies.
+            if (enabled)
+            {
+                switch (id)
+                {
+                case S_TDS:
+                    if (currentConfig.pin_tds < 0)
+                        currentConfig.pin_tds = PIN_TDS;
+                    break;
+                case S_DHT:
+                    if (currentConfig.pin_dht < 0)
+                        currentConfig.pin_dht = PIN_DHT;
+                    break;
+                case S_PH:
+                    if (currentConfig.pin_ph < 0)
+                        currentConfig.pin_ph = PIN_PH;
+                    break;
+                case S_WTEMP:
+                    if (currentConfig.pin_ds18b20 < 0)
+                        currentConfig.pin_ds18b20 = PIN_DS18B20;
+                    break;
+                case S_WL:
+                    if (currentConfig.pin_wl < 0)
+                        currentConfig.pin_wl = PIN_WL;
+                    if (currentConfig.pin_wl_power < 0)
+                        currentConfig.pin_wl_power = PIN_WL_PWR;
+                    break;
+                case S_LIGHT:
+                    if (currentConfig.pin_lux_sda < 0)
+                        currentConfig.pin_lux_sda = PIN_LUX_SDA;
+                    if (currentConfig.pin_lux_scl < 0)
+                        currentConfig.pin_lux_scl = PIN_LUX_SCL;
+                    break;
+                default:
+                    break;
+                }
+
+                // Server-side forbidden-pin / duplicate check (Part 5.4/5.5)
+                // applies here too, in case a restored default somehow
+                // collides with another sensor's currently-assigned pin.
+                PinCheckEntry proposed[] = {
+                    {currentConfig.pin_tds, "TDS"},
+                    {currentConfig.pin_dht, "DHT22"},
+                    {currentConfig.pin_ph, "pH"},
+                    {currentConfig.pin_ds18b20, "DS18B20 (Water Temp)"},
+                    {currentConfig.pin_wl, "Water Level Signal"},
+                    {currentConfig.pin_lux_sda, "BH1750 SDA"},
+                    {currentConfig.pin_lux_scl, "BH1750 SCL"},
+                    {currentConfig.pin_wl_power, "Water Level Power"},
+                };
+                String problem = validatePinSet(proposed, 8);
+                if (problem.length() > 0)
+                {
+                    webLog(0, LOG_ERR, "save_sensor_enabled rejected: " + problem);
+                    return;
+                }
+            }
+
+            state_save();
+            broadcastConfig();
+            webLog(0, LOG_WARN, "Sensor '" + sensor + "' " + String(enabled ? "enabled" : "disabled") + ". Reboot required to apply.");
+        }
+        else if (cmd == "save_intervals")
+        {
+            // Same "omit-to-leave-unchanged" pattern as save_pins. Bounds
+            // (500-60000ms) are enforced client-side in the Timing card;
+            // clamp server-side too so a hand-crafted message can't set an
+            // absurd interval.
+            uint32_t r = doc["int_read"] | currentConfig.interval_read_ms;
+            uint32_t w = doc["int_ws"] | currentConfig.interval_ws_ms;
+            uint32_t v = doc["int_vit"] | currentConfig.interval_vitals_ms;
+            uint32_t f = doc["int_fb"] | currentConfig.interval_fb_ms;
+
+            auto clamp = [](uint32_t x) -> uint32_t
+            { return x < 500 ? 500 : (x > 60000 ? 60000 : x); };
+
+            currentConfig.interval_read_ms = clamp(r);
+            currentConfig.interval_ws_ms = clamp(w);
+            currentConfig.interval_vitals_ms = clamp(v);
+            currentConfig.interval_fb_ms = clamp(f);
+            state_save();
+            broadcastConfig();
+            webLog(0, LOG_INFO, "Timing intervals updated.");
+        }
         else if (cmd == "reset_sensor_pin")
         {
             String sensor = doc["sensor"] | "";
             bool matched = true;
 
+            // Part 5.1 fix: restoring the pin(s) alone used to leave
+            // sensor_enabled[id] permanently false once a sensor had
+            // auto-disabled (see autoDisable() in task_sensor.cpp) — nothing
+            // else in the firmware ever set it back to true. Flip the flag
+            // back on here, in the same place the pin gets restored, so
+            // "Reset" from the Web UI actually undoes an auto-disable instead
+            // of just moving the pin back while the sensor stays off forever.
             if (sensor == "tds")
+            {
                 currentConfig.pin_tds = PIN_TDS;
+                currentConfig.sensor_enabled[S_TDS] = true;
+            }
             else if (sensor == "dht")
+            {
                 currentConfig.pin_dht = PIN_DHT;
+                currentConfig.sensor_enabled[S_DHT] = true;
+            }
             else if (sensor == "ph")
+            {
                 currentConfig.pin_ph = PIN_PH;
+                currentConfig.sensor_enabled[S_PH] = true;
+            }
             else if (sensor == "wt")
+            {
                 currentConfig.pin_ds18b20 = PIN_DS18B20;
+                currentConfig.sensor_enabled[S_WTEMP] = true;
+            }
             else if (sensor == "wl")
             {
                 currentConfig.pin_wl = PIN_WL;
                 currentConfig.pin_wl_power = PIN_WL_PWR;
+                currentConfig.sensor_enabled[S_WL] = true;
             }
             else if (sensor == "light")
             {
                 currentConfig.pin_lux_sda = PIN_LUX_SDA;
                 currentConfig.pin_lux_scl = PIN_LUX_SCL;
+                currentConfig.sensor_enabled[S_LIGHT] = true;
             }
             else
                 matched = false;
@@ -365,7 +891,7 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len)
             if (matched)
             {
                 state_save();
-                webLog(0, LOG_WARN, "Pin(s) for '" + sensor + "' reset to compiled default. Rebooting...");
+                webLog(0, LOG_WARN, "Pin(s) for '" + sensor + "' reset to compiled default and re-enabled. Rebooting...");
                 delay(1000);
                 ESP.restart();
             }

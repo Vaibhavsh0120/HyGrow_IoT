@@ -25,7 +25,6 @@
 #include <Wire.h>
 #include <math.h>
 
-static TaskHandle_t s_sensorTask = nullptr;
 static volatile bool s_kick = false;
 static bool s_initialized = false;
 
@@ -51,6 +50,89 @@ static float computeVPD(float tC, float rh)
   if (vpd < 0)
     vpd = 0;
   return vpd;
+}
+
+// ----------------------------------------------------------------------------
+// Demo mode simulation (Part 1.6)
+// ----------------------------------------------------------------------------
+// When currentConfig.demo_mode is true, initAllSensors()/readAll() below skip
+// real hardware entirely and this generates plausible fake readings instead —
+// a slow random-walk around realistic hydroponic setpoints, so the dashboard
+// looks "alive" for someone testing the UI with zero sensors wired up.
+struct DemoWalkState
+{
+  float value;
+  float target;
+};
+static DemoWalkState s_demoPh = {6.2f, 6.2f};
+static DemoWalkState s_demoTds = {1000.0f, 1000.0f};
+static DemoWalkState s_demoAirTemp = {24.0f, 24.0f};
+static DemoWalkState s_demoHumidity = {62.0f, 62.0f};
+static DemoWalkState s_demoWaterTemp = {22.0f, 22.0f};
+static DemoWalkState s_demoLux = {450.0f, 450.0f};
+static DemoWalkState s_demoWl = {65.0f, 65.0f};
+static bool s_demoSeeded = false;
+
+// Nudges `state.value` a small random step toward a freshly (rarely)
+// re-rolled `state.target`, clamped to [lo, hi]. Produces a gentle
+// slow-drifting "sine/random-walk" look rather than jumpy noise.
+static float demoStep(DemoWalkState &state, float lo, float hi, float maxStep, float retargetChancePct)
+{
+  if ((rand() % 1000) < (int)(retargetChancePct * 10.0f))
+  {
+    float span = hi - lo;
+    state.target = lo + span * 0.25f + (float)(rand() % 1000) / 1000.0f * (span * 0.5f);
+  }
+
+  float diff = state.target - state.value;
+  float step = diff * 0.05f;
+  float jitter = ((float)(rand() % 200) / 100.0f - 1.0f) * maxStep * 0.3f;
+  state.value += step + jitter;
+
+  if (state.value < lo)
+    state.value = lo;
+  if (state.value > hi)
+    state.value = hi;
+
+  return state.value;
+}
+
+// Populates currentSensors with one simulated reading for every sensor and
+// marks each sensor OK, regardless of currentConfig.sensor_enabled[] — demo
+// mode is meant to show a fully "live" dashboard even if real sensors were
+// never wired/enabled.
+static void readAllDemo()
+{
+  if (!s_demoSeeded)
+  {
+    randomSeed(esp_random());
+    s_demoSeeded = true;
+  }
+
+  float ph = demoStep(s_demoPh, 6.0f, 6.5f, 0.05f, 2.0f);
+  float tds = demoStep(s_demoTds, 800.0f, 1200.0f, 15.0f, 2.0f);
+  float airTemp = demoStep(s_demoAirTemp, 22.0f, 26.0f, 0.3f, 1.5f);
+  float humidity = demoStep(s_demoHumidity, 55.0f, 70.0f, 0.6f, 1.5f);
+  float waterTemp = demoStep(s_demoWaterTemp, 20.0f, 24.0f, 0.2f, 1.5f);
+  float lux = demoStep(s_demoLux, 200.0f, 800.0f, 8.0f, 3.0f);
+  float wl = demoStep(s_demoWl, 40.0f, 90.0f, 0.5f, 1.0f);
+
+  currentSensors.ph_val = ph;
+  currentSensors.tds_ppm = tds;
+  currentSensors.temp_c = airTemp;
+  currentSensors.humidity = humidity;
+  currentSensors.water_temp_c = waterTemp;
+  currentSensors.lux = lux;
+  currentSensors.wl_percent = wl;
+  currentSensors.vpd_kpa = computeVPD(airTemp, humidity);
+
+  // Mark every sensor OK every cycle so the LED stays solid green and the
+  // dashboard shows "live" data, exactly as if real hardware were healthy.
+  for (int i = 0; i < S_COUNT; i++)
+  {
+    currentSensors.last_ok_ms[i] = millis();
+    currentSensors.last_err[i][0] = '\0';
+  }
 }
 
 static void markOk(SensorID id)
@@ -180,6 +262,17 @@ static void validateSensor(SensorID id, const char *name, bool (*readFn)())
 
 static void initAllSensors()
 {
+  // Demo mode (Part 1.6): skip real hardware init/validation entirely. The
+  // dashboard gets simulated "live" readings instead via readAllDemo() below,
+  // which is genuinely useful for testing/demoing the UI with zero sensors
+  // wired up (new users assembling hardware, or anyone just evaluating it).
+  if (currentConfig.demo_mode)
+  {
+    webLog(1, LOG_INFO, "Demo mode enabled — simulating sensor data, skipping real hardware init.");
+    readAllDemo();
+    return;
+  }
+
   sensor_dht_init();
   sensor_ds18b20_init();
   sensor_tds_init();
@@ -224,6 +317,14 @@ static void initAllSensors()
 
 static void readAll()
 {
+  // Demo mode (Part 1.6): populate currentSensors with simulated values
+  // instead of calling the real sensor_*_read() functions.
+  if (currentConfig.demo_mode)
+  {
+    readAllDemo();
+    return;
+  }
+
   // DHT (temp + humidity)
   if (currentConfig.sensor_enabled[S_DHT])
   {
@@ -324,9 +425,13 @@ void initSensorTask()
   s_initialized = true;
   webLog(1, LOG_INFO, "Sensor task started on core " + String(xPortGetCoreID()));
 
-  // Bring the WS2812 status LED online before touching any sensor hardware
-  // so it's ready the moment sensorTaskLoop() starts reporting health.
-  ledStatusInit();
+  // NOTE (Part 5.9): ledStatusInit() used to also be called here, duplicating
+  // the call already made in HyGrow_IoT.ino's setup() (step 1c), before
+  // either task starts. Adafruit_NeoPixel::begin() is idempotent so the
+  // duplicate call wasn't breaking anything, but it's redundant and could
+  // mislead a future reader into thinking the sensor task owns LED init.
+  // The .ino's call is kept as the single owner since it already runs
+  // before either task starts, which is the safer point.
 
   initAllSensors();
 }
@@ -371,31 +476,15 @@ void sensorTaskLoop()
   vTaskDelay(pdMS_TO_TICKS(50));
 }
 
-static void sensorTaskFn(void *)
-{
-  initSensorTask();
-  for (;;)
-  {
-    sensorTaskLoop();
-  }
-}
-
-void sensor_task_start()
-{
-  if (s_sensorTask)
-    return;
-  xTaskCreatePinnedToCore(
-      sensorTaskFn,
-      "sensorTask",
-      8192,
-      nullptr,
-      1, // priority
-      &s_sensorTask,
-      1 // Core 1
-  );
-}
-
-void sensor_task_kick()
-{
-  s_kick = true;
-}
+// NOTE (Part 5.6): sensorTaskFn(), sensor_task_start(), and sensor_task_kick()
+// used to live here as an alternate task-creation entry point. They were
+// never called from anywhere in the project — task_sensor.h didn't even
+// declare them — and the real sensor task is started from HyGrow_IoT.ino's
+// own sensorTaskWrapper()/xTaskCreatePinnedToCore() call. This looked like
+// leftover scaffolding from an earlier iteration of the task-management
+// architecture, and it was actively dangerous to keep: if anything ever
+// called sensor_task_start() by mistake, it would spin up a SECOND FreeRTOS
+// task pinned to Core 1 doing sensor init/reads concurrently with the real
+// one, corrupting shared currentSensors/currentConfig state and likely
+// double-driving the I2C bus and WS2812. Removed entirely — the .ino's
+// sensorTaskWrapper() is the sole, correct entry point.

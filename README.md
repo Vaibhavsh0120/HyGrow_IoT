@@ -14,14 +14,16 @@ A compact ESP32-S3 firmware for monitoring hydroponic and environmental data fro
 - **Dual-Core Processing (FreeRTOS):**
   - **Core 0:** Handles WiFi, the LittleFS Web Server, WebSockets, NVS storage, and asynchronous Firebase uploads.
   - **Core 1:** Exclusively dedicated to precise hardware timing, sensor reads, and Vapor Pressure Deficit (VPD) calculations without network-induced latency.
-- **Offline-First "Stitch" UI:** A beautiful, responsive "liquid-glass" Single Page Application hosted directly on the ESP32's flash memory. No internet or external CDNs required.
+- **Offline-First "Stitch" UI:** A beautiful, responsive "liquid-glass" Single Page Application hosted directly on the ESP32's flash memory. No internet or external CDNs required — fonts and icons are self-hosted from `data/fonts/` (see the build-step note at the top of `data/css/style.css`).
 - **True Offline Fallback:** If the configured WiFi fails, the ESP32 automatically broadcasts a `HyGrow-Setup` Access Point (SoftAP) for local configuration and diagnostics.
-- **Dynamic NVS Configuration (Web Doctor):** Update WiFi credentials, Firebase keys, sensor GPIO pins, and interval timings directly from the web dashboard. Settings persist across reboots via Non-Volatile Storage (NVS).
+- **Dynamic NVS Configuration (Web Doctor):** Update WiFi credentials, Firebase keys, sensor GPIO pins, feature flags, and interval timings directly from the web dashboard. Settings persist across reboots via Non-Volatile Storage (NVS).
+- **Feature Flags:** Demo Mode (simulate all six sensors for testing the dashboard with no hardware wired up), a Firebase Upload master switch, and an OTA Updates switch — all live-toggleable from Settings with no reboot required.
 - **Live Sensor Calibration:** Calibrate pH (slope/offset) and TDS (K-factor) live from the browser without recompiling code.
-- **Startup Validation & Auto-Disable:** Every enabled sensor gets 5 boot-time read attempts before the system trusts it; a sensor that fails all 5 is automatically disabled and the reason is logged to the web terminal, instead of spamming read failures forever.
+- **Startup Validation & Auto-Disable:** Every enabled sensor gets 5 boot-time read attempts before the system trusts it; a sensor that fails all 5 is automatically disabled and the reason is logged to the web terminal, instead of spamming read failures forever. Fully re-enabling it (pin restored **and** its enabled flag cleared) is a single click from the Web UI — see [Startup Validation & Auto-Disable](#startup-validation--auto-disable) below.
+- **Inline Firmware Updates:** Upload a `.bin` file directly from the Firmware tab — no separate page, a real progress bar, and inline success/failure state.
 - **Light / Dark / Auto Theme:** The dashboard theme is switchable from Settings and persisted per-browser; "Auto" follows the OS `prefers-color-scheme`.
-- **Over-The-Air (OTA) Updates:** Flash new `.bin` firmware files wirelessly via the built-in OTA portal.
-- **RGB Status LED:** The onboard WS2812 NeoPixel is initialized at boot (`led_status.cpp` provides `ledSetSolid()` and a per-sensor `ledCycleErrors()` helper) for future system-health signalling.
+- **Over-The-Air (OTA) Updates:** Flash new `.bin` firmware files wirelessly, inline from the dashboard's Firmware tab (or via the standalone `/update` fallback page). Gated by the OTA Updates feature flag.
+- **RGB Status LED:** The onboard WS2812 NeoPixel (`led_status.cpp`) shows solid green while every enabled sensor is healthy, and cycles through a per-sensor error color (see [LED Error Color Codes](#-led-error-color-codes)) whenever an enabled sensor's most recent read failed — driven every read cycle from `task_sensor.cpp`.
 
 ---
 
@@ -47,22 +49,48 @@ _\*Note: GPIO pins can now be dynamically reassigned in the Web UI Settings tab.
 
 > **⚡ Power Note:** Thanks to the V2 specifications of the DFRobot modules, **every single sensor in this project shares a unified 3.3V and GND rail**. No 5V logic-level shifting is required!
 
+> **🔌 Default Enabled State:** On first boot (and after a factory reset), every sensor ships **enabled** except **pH**, which ships **disabled**. pH needs a probe calibrated in real liquid to read anything meaningful, so it's off until you've calibrated it and turn it on yourself — from the pH sensor's detail page (**Enable Power**) or its pinout card in Settings (**Enabled** toggle, under Sensor Implementation Config). Its pin still defaults to GPIO 7 either way, so turning it on doesn't require re-wiring, just a reboot to apply.
+
 ### ⚠️ Forbidden Pins: GPIO 19 & GPIO 20
 
 **Never assign any sensor, LED, or other peripheral to GPIO 19 or GPIO 20.**
 
 On the ESP32-S3, these two pins are the native USB D-/D+ lines. This firmware builds with `-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1` (see `platformio.ini`), which means `Serial` **is** the native USB CDC peripheral, and it lives on GPIO 19/20. Calling `pinMode()`, `analogRead()`, `digitalWrite()`, or any other GPIO function on either pin fights the USB stack for the same lines. In practice this shows up as the board appearing to randomly disconnect from your computer while a serial monitor is attached, or the upload port silently vanishing.
 
-The firmware defends against this in two layers:
+The firmware defends against this in three layers:
 
-1. **Boot guard (`enforceForbiddenPins()` in `HyGrow_IoT.ino`):** runs before any sensor is touched. If any configured pin was somehow saved as 19 or 20 (bad manual edit, migration, factory-reset race, etc.), it is forced back to `-1` (disabled) and the change is persisted to NVS.
-2. **Web UI:** when reassigning a pin from the Settings tab, avoid 19 and 20 — the UI does not currently block the input client-side, so the boot guard above is the authoritative safety net.
+1. **Client-side validation (Settings tab, `data/js/app.js`):** every pin field is checked the moment you type — 19/20 is flagged instantly with an inline warning naming the offending field, and duplicate pin assignments across two different sensors are flagged the same way. The Save button is disabled while any field is invalid. This is a UX nicety only — it runs in the browser and can be bypassed by a hand-crafted WebSocket message.
+2. **Server-side validation (`save_pins` / `save_sensor_enabled` handlers in `src/core/task_network.cpp`):** the real safety boundary. Before anything is written to `currentConfig`/NVS, the proposed full pin set is checked for GPIO 19/20 and for duplicate assignments between two enabled sensors; the whole command is rejected (with a `webLog(LOG_ERR, ...)` explaining why) if either check fails.
+3. **Boot guard (`enforceForbiddenPins()` in `HyGrow_IoT.ino`):** runs before any sensor is touched, on every boot. If any configured pin was somehow saved as 19 or 20 anyway (a bad manual edit, a migration, a factory-reset race, or an older NVS blob written before layer 2 existed), it is forced back to `-1` (disabled) and the change is persisted to NVS. This is the last-resort, authoritative safety net and is never weakened or removed by the two layers above.
 
 ### Startup Validation & Auto-Disable
 
-Every enabled sensor is validated at boot before the system settles into its normal read loop: `task_sensor.cpp` attempts up to **5 reads** (250ms apart) per sensor. If all 5 attempts fail, that sensor's pin(s) are set to `-1`, its feature flag is turned off, the change is saved to NVS, and a warning is pushed to the web terminal explaining why. This keeps a genuinely unwired or dead sensor from spamming "read failed" into the terminal forever. Re-enable it from the Web UI (which restores the compiled default pin) once the wiring is fixed, then reboot.
+Every enabled sensor is validated at boot before the system settles into its normal read loop: `task_sensor.cpp` attempts up to **5 reads** (250ms apart) per sensor. If all 5 attempts fail, that sensor's pin(s) are set to `-1`, its feature flag is turned off, the change is saved to NVS, and a warning is pushed to the web terminal explaining why. This keeps a genuinely unwired or dead sensor from spamming "read failed" into the terminal forever.
+
+**Re-enabling it from the Web UI:** once the wiring is fixed, either click **Reset** on that sensor's pinout card in Settings (restores the compiled default pin(s) **and** clears the auto-disable flag, then reboots automatically), or flip its **Enabled** toggle back on (sends `save_sensor_enabled`, which also restores the pin(s) if they're still `-1`, then prompts you to reboot). Either path fully undoes the auto-disable — you do **not** need a factory reset just to bring one sensor back.
 
 The BH1750 light sensor additionally gets a bus-level check ahead of the 5x retry: `sensor_light.cpp` performs a bounded I2C presence probe (ACK check, 1s timeout) before ever calling into the BH1750 library, so a floating/stuck I2C bus can't hang the sensor task and trip the Core 1 watchdog.
+
+### Per-Sensor Control: Local Reads vs. Firestore Uploads
+
+Two independent things are controlled per sensor, and it's worth being explicit about how they relate:
+
+1. **Whether a sensor is read at all** — `currentConfig.sensor_enabled[]`, set from Settings' per-sensor **Enabled** toggle (or the sensor detail page's **Enable Power** toggle). A disabled sensor is skipped entirely in `readAll()` (`task_sensor.cpp`) — its `currentSensors` value just holds whatever it last read (or 0, if never read this boot) and stops updating.
+2. **Whether that sensor's field is included in the Firestore upload** — gated the same way, on the same six `sensor_enabled[]` flags, inside `firebaseUploadCycle()` (`task_network.cpp`). A field for a disabled sensor is left out of both the PATCH request body **and** its `updateMask.fieldPaths`, so Firestore doesn't touch that field on the existing document at all — it's not overwritten with a stale local value, and it's not left silently frozen at whatever it was uploaded as before the sensor was turned off.
+
+In other words: turning a sensor off in Settings stops it being read locally, and — as of the same toggle — also stops its field from being pushed to Firestore on the next upload cycle. You don't need a separate "send to cloud" switch per sensor; the one **Enabled** toggle covers both.
+
+**Derived fields follow their source sensor(s).** `vpd_kpa` (Vapor Pressure Deficit) isn't its own sensor — it's calculated in `computeVPD()` from DHT22's temperature and humidity readings. It's gated on the DHT22 **Enabled** flag specifically: turn DHT22 off and `temp_c`, `humidity`, and `vpd_kpa` are all dropped from the upload together, since VPD can't be meaningfully computed without the temperature/humidity it depends on. `uptime_s` and `server_timestamp` are always sent — they're firmware bookkeeping, not sensor readings.
+
+| Firestore field | Uploaded when... |
+| --- | --- |
+| `tds_ppm` | TDS sensor enabled |
+| `temp_c`, `humidity`, `vpd_kpa` | DHT22 sensor enabled (VPD is derived from these two) |
+| `water_temp_c` | DS18B20 (Water Temp) sensor enabled |
+| `lux` | BH1750 (Light) sensor enabled |
+| `ph_val` | pH sensor enabled |
+| `wl_percent` | Water Level sensor enabled |
+| `uptime_s`, `server_timestamp` | always |
 
 ---
 
@@ -180,9 +208,12 @@ The Web Doctor UI communicates with the ESP32 entirely over a single WebSocket c
 ### Commands (Client -> ESP32)
 
 - `{"command": "save_wifi", "ssid": "...", "pass": "..."}`
-- `{"command": "save_firebase", "proj": "...", "api": "...", "email": "...", "col": "..."}`
-- `{"command": "save_pins", "pin_tds": 2, "pin_dht": 6, "pin_ph": 7, "pin_wt": 4, "pin_wl": 1, "pin_sda": 8, "pin_scl": 9, "pin_wlp": 5}` _(any field can be omitted to leave that pin unchanged; `-1` disables that sensor; requires reboot to apply)_
-- `{"command": "reset_sensor_pin", "sensor": "tds" | "dht" | "ph" | "wt" | "wl" | "light"}` _(resets that sensor's pin(s) to the compiled default and reboots automatically)_
+- `{"command": "save_firebase", "proj": "...", "api": "...", "email": "...", "pass": "...", "col": "..."}`
+- `{"command": "save_pins", "pin_tds": 2, "pin_dht": 6, "pin_ph": 7, "pin_wt": 4, "pin_wl": 1, "pin_sda": 8, "pin_scl": 9, "pin_wlp": 5}` _(any field can be omitted to leave that pin unchanged; `-1` disables that sensor; requires reboot to apply; rejected server-side if any pin is 19/20 or duplicates another enabled sensor's pin — see [Forbidden Pins](#️-forbidden-pins-gpio-19--gpio-20))_
+- `{"command": "reset_sensor_pin", "sensor": "tds" | "dht" | "ph" | "wt" | "wl" | "light"}` _(resets that sensor's pin(s) to the compiled default, clears its auto-disable flag, and reboots automatically)_
+- `{"command": "save_sensor_enabled", "sensor": "tds" | "dht" | "ph" | "wt" | "wl" | "light", "enabled": true}` _(the per-sensor counterpart to `save_pins` — flips `sensor_enabled[i]`; enabling also restores that sensor's pin(s) from `-1` if needed; requires reboot to apply)_
+- `{"command": "save_features", "demo": false, "fb_en": true, "ota_en": true}` _(any field can be omitted to leave that flag unchanged; none of the three require a reboot)_
+- `{"command": "save_intervals", "int_read": 2000, "int_ws": 1000, "int_vit": 1000, "int_fb": 10000}` _(all values in ms, clamped server-side to 500–60000; any field can be omitted to leave that interval unchanged)_
 - `{"command": "calibrate_tds", "tds_k": 1.05}`
 - `{"command": "calibrate_ph", "offset": 0.1, "slope": 1.02}`
 - `{"command": "reboot"}`
@@ -193,7 +224,7 @@ The Web Doctor UI communicates with the ESP32 entirely over a single WebSocket c
 
 ## 🌈 LED Error Color Codes
 
-`led_status.cpp` defines a color per sensor for `ledCycleErrors()` to cycle through on the onboard WS2812. As of this build that helper is implemented but not yet called from the boot/read loop — wiring it into `task_sensor.cpp`'s read cycle is a good next contribution. The intended mapping:
+`led_status.cpp` defines a color per sensor for `ledCycleErrors()` to cycle through on the onboard WS2812. `task_sensor.cpp`'s read loop calls it every cycle: solid green while every enabled sensor's last read succeeded, or a 500ms cycle through the colors below for whichever enabled sensors currently have a failed last read. The mapping:
 
 - 🔴 **Red**: Water Level failure
 - 🟡 **Yellow**: BH1750 Light failure

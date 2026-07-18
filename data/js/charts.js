@@ -17,7 +17,12 @@ function drawChart(context, cvs, dataArr, colorStr) {
     context.lineCap = 'round';
     context.lineJoin = 'round';
 
-    const step = w / (dataArr.length - 1);
+    // Guard divide-by-zero: with exactly one buffered point, length-1 is 0
+    // and step becomes Infinity, which turns every x coordinate into NaN
+    // and silently draws nothing. Falling back to width for a single point
+    // is an arbitrary-but-harmless choice — there's nothing to connect a
+    // single point to anyway.
+    const step = w / Math.max(dataArr.length - 1, 1);
     const max = Math.max(...dataArr, 10); // Minimum scale of 10 to prevent flatlining at 0
 
     dataArr.forEach((val, i) => {
@@ -59,7 +64,7 @@ function drawDualChart(context, cvs, dataArr1, dataArr2) {
     context.beginPath();
     context.strokeStyle = '#afc6ff';
     context.lineWidth = 3;
-    const step = w / (dataArr1.length - 1);
+    const step = w / Math.max(dataArr1.length - 1, 1); // see drawChart() for why Math.max guards against a single-point buffer
 
     dataArr1.forEach((val, i) => {
         const x = i * step;

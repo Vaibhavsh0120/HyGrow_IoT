@@ -17,12 +17,12 @@
         })();
     </script>
 
-    <!-- External Fonts/Icons (Local hosting recommended for strict offline) -->
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-    <link href="https://fonts.googleapis.com" rel="preconnect"/>
-    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+    <!-- Fonts/Icons — self-hosted locally in data/fonts/ via @font-face in
+         style.css (see the comment block at the top of that file for the
+         one-time build step to add the actual .woff2 files). This used to
+         load from fonts.googleapis.com/fonts.gstatic.com, which broke the
+         "Offline-First" / "no external CDNs" claim on a real SoftAP-only
+         deployment with no uplink. -->
 
     <!-- Offline First Stylesheet -->
     <link rel="stylesheet" href="css/style.css">
@@ -55,6 +55,13 @@
                     <button id="btn-export-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
                         <span class="material-symbols-outlined text-[20px]">download</span> Export CSV
                     </button>
+                    <!-- Demo Mode badge (Part 1.6) — hidden unless demo_mode is
+                         on, so simulated readings are never mistaken for real
+                         sensor data. -->
+                    <div class="hidden items-center gap-2 liquid-glass px-4 py-2 rounded-2xl border border-secondary/40 bg-secondary/10" id="demo-mode-badge">
+                        <span class="material-symbols-outlined text-[18px] text-secondary">science</span>
+                        <span class="font-label-sm text-label-sm text-secondary font-bold tracking-widest">DEMO MODE</span>
+                    </div>
                     <div class="flex items-center gap-2 liquid-glass px-4 py-2 rounded-2xl w-full sm:w-auto justify-center">
                         <span id="vital-link-dot" class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
                         <span id="vital-link-text" class="font-label-sm text-label-sm text-secondary">LIVE SYS.LINK</span>
@@ -266,64 +273,130 @@
             <header class="flex justify-between items-end pb-4 border-b border-[rgba(255,255,255,0.08)]">
                 <h2 class="font-headline-lg text-headline-lg text-white">System Settings</h2>
             </header>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 pb-12">
+            <!-- Two independent column stacks instead of relying on CSS Grid
+                 auto-placement. items-start stops the default align-items:stretch
+                 behavior, which used to stretch every card in a row to match the
+                 tallest one (Network Settings was being stretched to Cloud
+                 Provisioning's height, and Display sat alone with an empty cell
+                 next to it). Each column is its own flex flex-col stack so a
+                 short card never gets stretched by a tall neighbor in the same row. -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start pb-12">
 
-                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
-                    <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Network Settings</h3>
-                    <p class="text-on-surface-variant text-body-md mb-2">Configure device network connection (Wi-Fi).</p>
-                    <div class="flex flex-col gap-2">
-                        <label class="font-label-md text-on-surface-variant">SSID</label>
-                        <input id="cfg-wifi-ssid" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Network Name" type="text"/>
+                <!-- LEFT COLUMN: shorter cards stacked together -->
+                <div class="flex flex-col gap-8">
+                    <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                        <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Network Settings</h3>
+                        <p class="text-on-surface-variant text-body-md mb-2">Configure device network connection (Wi-Fi).</p>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">SSID</label>
+                            <input id="cfg-wifi-ssid" maxlength="32" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Network Name" type="text"/>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">Password</label>
+                            <input id="cfg-wifi-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                        </div>
+                        <button id="btn-save-wifi" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Update Network</button>
                     </div>
-                    <div class="flex flex-col gap-2">
-                        <label class="font-label-md text-on-surface-variant">Password</label>
-                        <input id="cfg-wifi-pass" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+
+                    <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                        <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Display</h3>
+                        <p class="text-on-surface-variant text-body-md mb-2">Choose how the dashboard looks on this device. Saved locally in this browser.</p>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">Dashboard Theme</label>
+                            <select id="cfg-theme-select" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md">
+                                <option value="dark">Dark Mode</option>
+                                <option value="light">Light Mode</option>
+                                <option value="auto">System Auto</option>
+                            </select>
+                        </div>
                     </div>
-                    <button id="btn-save-wifi" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Update Network</button>
+
+                    <!-- NEW: Feature Flags card (Part 2.3) -->
+                    <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                        <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Feature Flags</h3>
+                        <p class="text-on-surface-variant text-body-md mb-2">Toggle whole-system behaviors. None of these require a reboot.</p>
+
+                        <label class="relative flex items-center justify-between gap-4 cursor-pointer">
+                            <span class="flex flex-col gap-0.5">
+                                <span class="font-label-md text-label-md text-white">Demo Mode</span>
+                                <span class="font-label-sm text-label-sm text-on-surface-variant">Simulate sensor data instead of reading real hardware. Useful for testing the dashboard before wiring anything up.</span>
+                            </span>
+                            <span class="relative inline-flex items-center shrink-0">
+                                <input class="sr-only peer" id="cfg-demo-mode" type="checkbox"/>
+                                <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+                            </span>
+                        </label>
+
+                        <label class="relative flex items-center justify-between gap-4 cursor-pointer">
+                            <span class="flex flex-col gap-0.5">
+                                <span class="font-label-md text-label-md text-white">Firebase Upload</span>
+                                <span class="font-label-sm text-label-sm text-on-surface-variant">Push sensor readings to Firestore on the interval configured in Cloud Provisioning.</span>
+                            </span>
+                            <span class="relative inline-flex items-center shrink-0">
+                                <input class="sr-only peer" id="cfg-fb-enabled" type="checkbox"/>
+                                <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+                            </span>
+                        </label>
+
+                        <label class="relative flex items-center justify-between gap-4 cursor-pointer">
+                            <span class="flex flex-col gap-0.5">
+                                <span class="font-label-md text-label-md text-white">OTA Updates</span>
+                                <span class="font-label-sm text-label-sm text-on-surface-variant">Allow firmware uploads from the Firmware tab. Turn off when not actively updating for a smaller attack surface.</span>
+                            </span>
+                            <span class="relative inline-flex items-center shrink-0">
+                                <input class="sr-only peer" id="cfg-ota-enabled" type="checkbox"/>
+                                <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+                            </span>
+                        </label>
+
+                        <button id="btn-save-features" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Feature Flags</button>
+                    </div>
                 </div>
 
-                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
-                    <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Cloud Provisioning</h3>
-                    <p class="text-on-surface-variant text-body-md mb-2">Configure connection to Firebase RTDB.</p>
-                    <div class="flex flex-col gap-2">
-                        <label class="font-label-md text-on-surface-variant">Project ID</label>
-                        <input id="cfg-fb-proj" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="e.g. my-iot-project" type="text"/>
-                    </div>
-                    <div class="flex flex-col gap-2">
-                        <label class="font-label-md text-on-surface-variant">Web API Key</label>
-                        <input id="cfg-fb-api" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="AIzaSy..." type="password"/>
-                    </div>
-                    <div class="flex flex-col gap-2">
-                        <label class="font-label-md text-on-surface-variant">Email</label>
-                        <input id="cfg-fb-email" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="device@project.com" type="email"/>
-                    </div>
-                    <div class="flex flex-col gap-2">
-                        <label class="font-label-md text-on-surface-variant">Password</label>
-                        <input id="cfg-fb-pass" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
-                    </div>
-                    <div class="flex flex-col gap-2">
-                        <label class="font-label-md text-on-surface-variant">Firestore Collection</label>
-                        <input id="cfg-fb-col" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="sensor_data" type="text"/>
-                    </div>
-                    <button id="btn-save-firebase" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Credentials</button>
-                </div>
-
-                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
-                    <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Display</h3>
-                    <p class="text-on-surface-variant text-body-md mb-2">Choose how the dashboard looks on this device. Saved locally in this browser.</p>
-                    <div class="flex flex-col gap-2">
-                        <label class="font-label-md text-on-surface-variant">Dashboard Theme</label>
-                        <select id="cfg-theme-select" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md">
-                            <option value="dark">Dark Mode</option>
-                            <option value="light">Light Mode</option>
-                            <option value="auto">System Auto</option>
-                        </select>
+                <!-- RIGHT COLUMN: the naturally tall card, alone, so it isn't
+                     stretched by a short neighbor. -->
+                <div class="flex flex-col gap-8">
+                    <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                        <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Cloud Provisioning</h3>
+                        <p class="text-on-surface-variant text-body-md mb-2">Configure connection to Cloud Firestore.</p>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">Project ID</label>
+                            <input id="cfg-fb-proj" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="e.g. my-iot-project" type="text"/>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">Web API Key</label>
+                            <input id="cfg-fb-api" maxlength="127" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="AIzaSy..." type="password"/>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">Email</label>
+                            <input id="cfg-fb-email" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="device@project.com" type="email"/>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">Password</label>
+                            <input id="cfg-fb-pass" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant">Firestore Collection</label>
+                            <input id="cfg-fb-col" maxlength="31" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="sensor_data" type="text"/>
+                        </div>
+                        <button id="btn-save-firebase" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Credentials</button>
                     </div>
                 </div>
 
-                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 md:col-span-2">
+                <!-- FULL WIDTH ROWS below both columns. lg:col-span-2 matches
+                     the new lg:grid-cols-2 breakpoint (was md:col-span-2 /
+                     md:grid-cols-2) — still stacks single-column on tablet/mobile. -->
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 lg:col-span-2">
                     <h3 class="font-headline-md text-headline-md text-white">Sensor Implementation Config</h3>
                     <p class="text-on-surface-variant text-body-md mb-2">Manage physical hardware pinouts and status. (-1 disables sensor)</p>
+                    <!-- Client-side pin validation banner (Part 4.2) — hidden by
+                         default, shown by app.js when any pin field is 19, 20, or
+                         a forbidden/duplicate value. Styled consistently with the
+                         existing #sensor-error banner (border-error/text-error). -->
+                    <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" id="pin-validation-error">
+                        <span class="material-symbols-outlined">warning</span>
+                        <span id="pin-validation-error-text">GPIO 19 and 20 are reserved for USB on this board and can't be used for a sensor. Change that pin and try again.</span>
+                    </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -332,10 +405,17 @@
                             </div>
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="text-on-surface-variant font-label-sm">Sig:</span>
-                                <input id="cfg-pin-wl" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="1"/>
+                                <input id="cfg-pin-wl" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="1"/>
                                 <span class="text-on-surface-variant font-label-sm">Pwr:</span>
-                                <input id="cfg-pin-wlp" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="5"/>
+                                <input id="cfg-pin-wlp" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="5"/>
                             </div>
+                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                                <span class="font-label-sm text-on-surface-variant">Enabled</span>
+                                <span class="relative inline-flex items-center shrink-0">
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-wl" data-sensor-enable="wl" type="checkbox"/>
+                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
+                                </span>
+                            </label>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -344,10 +424,17 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">SDA/SCL:</span>
-                                <input id="cfg-pin-sda" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="8"/>
+                                <input id="cfg-pin-sda" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="8"/>
                                 <span class="text-on-surface-variant font-label-sm">/</span>
-                                <input id="cfg-pin-scl" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="9"/>
+                                <input id="cfg-pin-scl" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="9"/>
                             </div>
+                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                                <span class="font-label-sm text-on-surface-variant">Enabled</span>
+                                <span class="relative inline-flex items-center shrink-0">
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-light" data-sensor-enable="light" type="checkbox"/>
+                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
+                                </span>
+                            </label>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -356,8 +443,15 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-tds" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="2"/>
+                                <input id="cfg-pin-tds" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="2"/>
                             </div>
+                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                                <span class="font-label-sm text-on-surface-variant">Enabled</span>
+                                <span class="relative inline-flex items-center shrink-0">
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-tds" data-sensor-enable="tds" type="checkbox"/>
+                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
+                                </span>
+                            </label>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -366,8 +460,15 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-dht" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="6"/>
+                                <input id="cfg-pin-dht" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="6"/>
                             </div>
+                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                                <span class="font-label-sm text-on-surface-variant">Enabled</span>
+                                <span class="relative inline-flex items-center shrink-0">
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-dht" data-sensor-enable="dht" type="checkbox"/>
+                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
+                                </span>
+                            </label>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -376,8 +477,15 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-ph" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="7"/>
+                                <input id="cfg-pin-ph" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="7"/>
                             </div>
+                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                                <span class="font-label-sm text-on-surface-variant">Enabled</span>
+                                <span class="relative inline-flex items-center shrink-0">
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-ph" data-sensor-enable="ph" type="checkbox"/>
+                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
+                                </span>
+                            </label>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -386,14 +494,46 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-wt" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="4"/>
+                                <input id="cfg-pin-wt" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="4"/>
                             </div>
+                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                                <span class="font-label-sm text-on-surface-variant">Enabled</span>
+                                <span class="relative inline-flex items-center shrink-0">
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-wt" data-sensor-enable="wt" type="checkbox"/>
+                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
+                                </span>
+                            </label>
                         </div>
                     </div>
                     <button id="btn-save-pins" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Pinout Config (Requires Reboot)</button>
                 </div>
 
-                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 items-start border border-error/30 md:col-span-2">
+                <!-- NEW: Timing card (Part 5.8) -->
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 lg:col-span-2">
+                    <h3 class="font-headline-md text-headline-md text-white">Timing</h3>
+                    <p class="text-on-surface-variant text-body-md mb-2">Adjust sample rate and push cadence. All values in milliseconds (500&ndash;60000).</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-sm text-on-surface-variant">Sensor Sample Rate</label>
+                            <input id="cfg-int-read" min="500" max="60000" step="100" class="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" type="number" value="2000"/>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-sm text-on-surface-variant">WebSocket Push</label>
+                            <input id="cfg-int-ws" min="500" max="60000" step="100" class="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" type="number" value="1000"/>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-sm text-on-surface-variant">Vitals Push</label>
+                            <input id="cfg-int-vit" min="500" max="60000" step="100" class="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" type="number" value="1000"/>
+                        </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-sm text-on-surface-variant">Firestore Push</label>
+                            <input id="cfg-int-fb" min="500" max="60000" step="100" class="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" type="number" value="10000"/>
+                        </div>
+                    </div>
+                    <button id="btn-save-intervals" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Timing</button>
+                </div>
+
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 items-start border border-error/30 lg:col-span-2">
                     <h3 class="font-headline-md text-headline-md text-error flex items-center gap-2"><span class="material-symbols-outlined">warning</span> Memory &amp; Power</h3>
                     <p class="text-on-surface-variant text-body-md mb-2">Perform hard system resets. Use with caution.</p>
                     <div class="flex flex-col sm:flex-row gap-4 w-full">
@@ -429,17 +569,70 @@
             <header class="flex justify-between items-end pb-4 border-b border-[rgba(255,255,255,0.08)]">
                 <h2 class="font-headline-lg text-headline-lg text-white">Firmware Management</h2>
             </header>
-            <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 max-w-2xl">
-                <div class="flex justify-between items-center mb-2">
-                    <span class="font-headline-md text-headline-md text-white">Firmware Update</span>
-                    <span class="font-label-sm text-label-sm text-secondary bg-secondary/10 px-2 py-1 rounded-lg border border-secondary/20">OTA</span>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start pb-12">
+
+                <!-- Inline uploader (Part 3.2) — replaces the old
+                     window.open('/update') link to a separate, un-themed page.
+                     Everything happens in this card: file select, upload via
+                     XHR (not a <form> submit), progress bar, and inline
+                     success/failure state. Never navigates away. -->
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="font-headline-md text-headline-md text-white">Firmware Update</span>
+                        <span class="font-label-sm text-label-sm text-secondary bg-secondary/10 px-2 py-1 rounded-lg border border-secondary/20">OTA</span>
+                    </div>
+
+                    <!-- Shown when ota_en is false (Part 1.6) — the button
+                         below is disabled/grayed instead of letting the user
+                         click into a 403. -->
+                    <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" id="ota-disabled-notice">
+                        <span class="material-symbols-outlined">warning</span>
+                        <span>OTA is turned off &mdash; enable it in Settings to update firmware.</span>
+                    </div>
+
+                    <div class="flex flex-col gap-4">
+                        <label for="firmware-file-input" class="w-full border-2 border-dashed border-white/15 rounded-2xl p-6 flex flex-col items-center gap-2 text-center cursor-pointer hover:border-primary/50 hover:bg-white/5 transition-all">
+                            <span class="material-symbols-outlined text-[32px] text-on-surface-variant">upload_file</span>
+                            <span class="font-label-md text-label-md text-white">Choose a <span class="font-bold">.bin</span> file</span>
+                            <span class="font-label-sm text-label-sm text-on-surface-variant" id="firmware-file-label">No file selected</span>
+                        </label>
+                        <input type="file" id="firmware-file-input" accept=".bin" class="hidden"/>
+
+                        <button id="btn-firmware-upload" disabled class="w-full bg-primary-container text-on-primary-container font-label-md text-label-md py-3 px-4 rounded-xl flex items-center justify-center gap-2 hover:brightness-110 transition-all shadow-lg disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:brightness-100">
+                            <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">system_update_alt</span>
+                            <span class="whitespace-nowrap">Update Firmware</span>
+                        </button>
+
+                        <!-- Progress bar, hidden until an upload starts -->
+                        <div class="hidden flex-col gap-2" id="firmware-progress-wrap">
+                            <div class="w-full h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div class="h-full bg-primary transition-all duration-150" id="firmware-progress-bar" style="width: 0%"></div>
+                            </div>
+                            <div class="flex justify-between font-label-sm text-label-sm text-on-surface-variant">
+                                <span id="firmware-status-text">Uploading…</span>
+                                <span id="firmware-progress-pct">0%</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="flex flex-col gap-4">
-                    <p class="text-on-surface-variant text-body-md mb-2">Launch the ElegantOTA portal to upload a compiled .bin file directly to the ESP32.</p>
-                    <button id="btn-ota-portal" onclick="window.open('/update', '_blank')" class="w-full bg-primary-container text-on-primary-container font-label-md text-label-md py-3 px-4 rounded-xl flex items-center justify-center gap-2 hover:brightness-110 transition-all shadow-lg">
-                        <span class="material-symbols-outlined text-[20px]" style="font-variation-settings: 'FILL' 1;">system_update_alt</span>
-                        <span class="whitespace-nowrap">Open OTA Portal</span>
-                    </button>
+
+                <!-- Plain-English explainer (Part 3.3) — lives permanently on
+                     this page, not linked elsewhere. -->
+                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-4">
+                    <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">What is a firmware update?</h3>
+                    <p class="text-on-surface-variant text-body-md">Firmware is the software that runs on your ESP32 board &mdash; it's what reads the sensors, runs the web dashboard you're looking at right now, and talks to the network. Updating it replaces that software with a newer version, without needing to plug the board into a computer.</p>
+
+                    <h4 class="font-label-md text-label-md text-white mt-2">How it works, step by step:</h4>
+                    <ol class="text-on-surface-variant text-body-md flex flex-col gap-2 list-decimal list-inside">
+                        <li>Someone builds a new version of this project's code and produces a single file ending in <span class="text-white font-bold">.bin</span> &mdash; that file <span class="italic">is</span> the new firmware.</li>
+                        <li>You select that .bin file above and press <span class="text-white font-bold">Update Firmware</span>.</li>
+                        <li>Your browser sends the file to the ESP32 over your local Wi-Fi network (not the internet).</li>
+                        <li>The ESP32 writes it into a spare flash memory slot while the old firmware keeps running, so a dropped connection mid-upload doesn't brick the device.</li>
+                        <li>Once the file finishes transferring and checks out, the board automatically restarts and boots into the new firmware. Your saved Wi-Fi, Firebase, pin, and calibration settings are kept &mdash; only the code changes, not your configuration.</li>
+                        <li>The dashboard will briefly disconnect during the restart and reconnect on its own a few seconds later.</li>
+                    </ol>
+
+                    <p class="text-on-surface-variant text-body-md mt-2 italic">Keep this browser tab open and stay on the same Wi-Fi network until the upload finishes &mdash; closing the tab or losing Wi-Fi mid-upload can interrupt the transfer.</p>
                 </div>
             </div>
         </section>
