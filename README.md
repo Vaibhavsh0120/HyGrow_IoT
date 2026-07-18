@@ -219,6 +219,39 @@ arduino-cli compile --fqbn esp32:esp32:esp32s3:UploadSpeed=115200,USBMode=hwcdc,
 
 The Web Doctor UI communicates with the ESP32 entirely over a single WebSocket connection at `/ws`.
 
+### Authentication (single-owner login)
+
+Every WebSocket connection starts unauthenticated — including reconnects — and must complete a handshake before any other command is accepted. An unauthenticated connection that sends anything other than `auth` is silently dropped (no error frame), so it can't learn anything about command validity either.
+
+**Connection sequence:**
+
+1. On connect, the server immediately sends `{"type": "auth_status", "setup_required": true | false}` — `true` if no admin password has ever been set on this device, `false` if one already exists.
+2. The client responds with `{"command": "auth", "password": "..."}` (first-time setup: this also sets the password) or `{"command": "auth", "token": "..."}` (a previously-issued session token, tried silently before ever showing a login screen).
+3. The server replies with `{"type": "auth_result", "ok": true | false, "token": "..."}`. On success, `token` is a fresh session token the client should store (the frontend keeps it in `localStorage`) and replay as step 2 on future connections. On failure, the client falls back to a password prompt.
+4. Once authenticated, the connection immediately receives a full snapshot (`config`, `vitals`, `data`) rather than waiting for the next broadcast tick, plus any backlogged terminal log lines.
+
+**Single remembered session:** the device holds exactly one valid session token at a time (`s_sessionToken` in `task_network.cpp`), not one per device. Logging in from a second browser/device overwrites that token — the first device's *live* connection keeps working until it reloads or reconnects, at which point its stored token is no longer recognized and it's sent back to the login screen. This is intentional single-owner behavior, not a bug, but it's worth knowing if you're wondering why a previously-logged-in tab suddenly asks for the password again.
+
+- `{"command": "change_password", "current": "...", "new_pass": "..."}` — requires the current password even though the connection is already authenticated, so a stolen/left-open session token alone can't lock the real owner out. Response: `{"type": "change_password_result", "ok": true | false, "token": "...", "error": "..."}`. On success, the response's `token` re-authenticates this same connection against the fresh password (every other session's token, including this one's old value, is invalidated).
+
+**BOOT-button recovery:** holding the onboard BOOT button resets the admin password/session so a lost password doesn't permanently lock a device out (see `state.cpp` / `led_status.cpp` for the hold-duration thresholds).
+
+### Command acknowledgements
+
+Every state-changing command below (everything except `request_vitals`, and except `reset_sensor_pin`/`reboot`/`factory_reset`, which restart the device before a reply would matter) replies directly to the requesting client with:
+
+```json
+{"type": "command_result", "command": "save_wifi", "ok": true}
+```
+
+or, if rejected:
+
+```json
+{"type": "command_result", "command": "save_pins", "ok": false, "error": "GPIO 19 and 20 are reserved for USB..."}
+```
+
+The frontend's save buttons wait for this ack before showing "Saved!" — the socket being open is not the same as the device having actually applied the change, so nothing shows success until this frame confirms it.
+
 ### Commands (Client -> ESP32)
 
 - `{"command": "save_wifi", "ssid": "...", "pass": "..."}`
@@ -234,11 +267,15 @@ The Web Doctor UI communicates with the ESP32 entirely over a single WebSocket c
 - `{"command": "factory_reset"}` _(Wipes NVS namespace and reboots into SoftAP mode)_
 - `{"command": "request_vitals"}` _(asks the device to immediately push a vitals frame)_
 
+### Vitals fields worth knowing about
+
+Every `vitals` frame also includes `wifi_status` (`"connected"` | `"ap_mode"` — shown on the dashboard's Uplink Status tile so a user on the SoftAP fallback network can tell) and Firebase upload health (`firebase_ready`, `firebase_last_ok_ms`, `firebase_last_error` — shown under Cloud Provisioning's Save Credentials button) so a silently-failing Firestore upload doesn't go unnoticed until the mobile app's data goes stale.
+
 ---
 
 ## 🌈 LED Error Color Codes
 
-`led_status.cpp` defines a color per sensor for `ledCycleErrors()` to cycle through on the onboard WS2812. `task_sensor.cpp`'s read loop calls it every cycle: solid green while every enabled sensor's last read succeeded, or a 500ms cycle through the colors below for whichever enabled sensors currently have a failed last read. The mapping:
+`led_status.cpp` defines a color per sensor for `ledCycleErrors()` to cycle through on the onboard WS2812. `task_sensor.cpp`'s read loop calls it every cycle: the LED is off while every enabled sensor's last read succeeded, or cycles through the colors below every 500ms for whichever enabled sensors currently have a failed last read. The mapping:
 
 - 🔴 **Red**: Water Level failure
 - 🟡 **Yellow**: BH1750 Light failure
@@ -246,4 +283,4 @@ The Web Doctor UI communicates with the ESP32 entirely over a single WebSocket c
 - 🟠 **Orange**: DHT22 failure
 - 🔵 **Blue**: pH Sensor failure
 - 🩵 **Cyan**: DS18B20 Water Temp failure
-- 🟢 **Green / Blue / Red (Solid)**: System Healthy (Water/Air Temp: Normal / Cold / Hot)
+- ⚫ **Off**: System Healthy — every enabled sensor's last read succeeded

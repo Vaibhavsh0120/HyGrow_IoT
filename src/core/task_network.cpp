@@ -76,6 +76,26 @@ static void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocume
 void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len);
 void firebaseUploadCycle();
 
+// Sends a per-command acknowledgement directly to the requesting client only
+// (never broadcast) — the frontend's real-ack save flow (app.js sendCommand())
+// waits for exactly this frame before showing "Saved!", instead of assuming
+// success the instant websocket.send() returns. `cmd` echoes back the command
+// name so the client can match the ack to the button that sent it even if
+// several saves are in flight at once; `error` is optional context for a
+// rejected command (e.g. pin validation failure) and is omitted when ok.
+static void sendCmdAck(AsyncWebSocketClient *client, const String &cmd, bool ok, const String &error = "")
+{
+    JsonDocument resp;
+    resp["type"] = "command_result";
+    resp["command"] = cmd;
+    resp["ok"] = ok;
+    if (!ok && error.length() > 0)
+        resp["error"] = error;
+    String payload;
+    serializeJson(resp, payload);
+    client->text(payload);
+}
+
 // ----------------------------------------------------------------------------
 // Firebase / Firestore upload (Part 5.3)
 // ----------------------------------------------------------------------------
@@ -728,6 +748,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "WiFi config saved. Reboot to apply.");
+            sendCmdAck(client, cmd, true);
         }
         else if (cmd == "save_firebase")
         {
@@ -739,6 +760,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "Firebase config updated.");
+            sendCmdAck(client, cmd, true);
         }
         else if (cmd == "save_pins")
         {
@@ -771,6 +793,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             if (problem.length() > 0)
             {
                 webLog(0, LOG_ERR, "save_pins rejected: " + problem);
+                sendCmdAck(client, cmd, false, problem);
                 return;
             }
 
@@ -785,6 +808,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "Pinout config saved. Reboot required.");
+            sendCmdAck(client, cmd, true);
         }
         else if (cmd == "calibrate_ph")
         {
@@ -793,6 +817,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "pH Calibration saved.");
+            sendCmdAck(client, cmd, true);
         }
         else if (cmd == "calibrate_tds")
         {
@@ -800,6 +825,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "TDS Calibration saved.");
+            sendCmdAck(client, cmd, true);
         }
         else if (cmd == "save_features")
         {
@@ -812,6 +838,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "Feature flags updated.");
+            sendCmdAck(client, cmd, true);
         }
         else if (cmd == "save_sensor_enabled")
         {
@@ -843,6 +870,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             if (!matched)
             {
                 webLog(0, LOG_ERR, "save_sensor_enabled: unknown sensor id '" + sensor + "'");
+                sendCmdAck(client, cmd, false, "Unknown sensor id '" + sensor + "'");
                 return;
             }
 
@@ -906,6 +934,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
                 if (problem.length() > 0)
                 {
                     webLog(0, LOG_ERR, "save_sensor_enabled rejected: " + problem);
+                    sendCmdAck(client, cmd, false, problem);
                     return;
                 }
             }
@@ -913,6 +942,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             state_save();
             broadcastConfig();
             webLog(0, LOG_WARN, "Sensor '" + sensor + "' " + String(enabled ? "enabled" : "disabled") + ". Reboot required to apply.");
+            sendCmdAck(client, cmd, true);
         }
         else if (cmd == "save_intervals")
         {
@@ -935,6 +965,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             state_save();
             broadcastConfig();
             webLog(0, LOG_INFO, "Timing intervals updated.");
+            sendCmdAck(client, cmd, true);
         }
         else if (cmd == "reset_sensor_pin")
         {
@@ -993,6 +1024,7 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             else
             {
                 webLog(0, LOG_ERR, "reset_sensor_pin: unknown sensor id '" + sensor + "'");
+                sendCmdAck(client, cmd, false, "Unknown sensor id '" + sensor + "'");
             }
         }
         else if (cmd == "factory_reset")

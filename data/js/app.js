@@ -56,15 +56,26 @@ function initNavigation() {
     const navTabsContainer = document.getElementById('nav-tabs');
     if (!navTabsContainer) return;
 
+    navTabsContainer.setAttribute('role', 'tablist');
+
     tabsData.labels.forEach((label, index) => {
         const li = document.createElement('li');
         li.className = `${tabsData.baseStyle} ${index === 0 ? tabsData.activeStyle : tabsData.inactiveStyle}`;
         li.dataset.id = index;
+        // Fix (gap #8): nav items were plain <li> click targets with no
+        // keyboard or screen-reader support at all — a mouse-only control.
+        li.setAttribute('role', 'tab');
+        li.setAttribute('tabindex', '0');
+        li.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
+        li.setAttribute('aria-label', label);
         li.innerHTML = `
-            <span class="material-symbols-outlined">${tabsData.icons[index]}</span>
+            <span class="material-symbols-outlined" aria-hidden="true">${tabsData.icons[index]}</span>
             <span class="font-label-md text-label-md whitespace-nowrap hidden lg:block">${label}</span>
         `;
         li.addEventListener('click', () => switchTab(index, li));
+        li.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab(index, li); }
+        });
         navTabsContainer.appendChild(li);
     });
 }
@@ -87,8 +98,10 @@ function switchTab(index, element) {
     // Update Active Classes
     Array.from(navTabsContainer.children).forEach(child => {
         child.className = `${tabsData.baseStyle} ${tabsData.inactiveStyle}`;
+        child.setAttribute('aria-selected', 'false');
     });
     element.className = `${tabsData.baseStyle} ${tabsData.activeStyle} scale-95 transition-transform duration-150`;
+    element.setAttribute('aria-selected', 'true');
     setTimeout(() => { element.classList.remove('scale-95'); }, 150);
 
     // Hide all pages
@@ -293,6 +306,25 @@ function handleChangePasswordResult(msg) {
 let gateway = `ws://${window.location.hostname}/ws`;
 let websocket;
 let wsBackoff = 2000;
+let wsConnectAttempt = 0;
+
+// Fix (gap #4): the spinner used to just say "CONNECTING..." forever with no
+// feedback about how long it had been retrying, and no way to force a retry
+// sooner than the current backoff. This surfaces the attempt count once the
+// backoff has clearly kicked in (a fast first reconnect is normal and not
+// worth alarming anyone about) and offers a manual "Retry now" button.
+function updateSpinnerStatus() {
+    const label = document.getElementById('auth-spinner-status');
+    const retryBtn = document.getElementById('auth-spinner-retry');
+    if (!label) return;
+    if (wsConnectAttempt <= 1) {
+        label.innerText = '';
+        if (retryBtn) retryBtn.classList.add('hidden');
+    } else {
+        label.innerText = `Still trying to connect… (attempt ${wsConnectAttempt})`;
+        if (retryBtn) retryBtn.classList.remove('hidden');
+    }
+}
 
 function initWebSocket() {
     // Every fresh connection starts unauthenticated — including reconnects —
@@ -301,6 +333,8 @@ function initWebSocket() {
     // backend: authentication state lives per-WebSocket-connection, not per
     // browser tab, so a dropped/reconnected socket must prove itself again.
     showAuthPanel('spinner');
+    wsConnectAttempt++;
+    updateSpinnerStatus();
     websocket = new WebSocket(gateway);
     websocket.onopen = onOpen;
     websocket.onclose = onClose;
@@ -309,6 +343,8 @@ function initWebSocket() {
 
 function onOpen(event) {
     wsBackoff = 2000;
+    wsConnectAttempt = 0;
+    updateSpinnerStatus();
     document.getElementById('vital-link-dot').classList.remove('bg-error');
     document.getElementById('vital-link-dot').classList.add('bg-secondary', 'animate-pulse');
     document.getElementById('vital-link-text').innerText = 'LIVE SYS.LINK';
@@ -320,8 +356,97 @@ function onClose(event) {
     document.getElementById('vital-link-dot').classList.add('bg-error');
     document.getElementById('vital-link-text').innerText = 'OFFLINE';
     document.getElementById('vital-link-text').classList.replace('text-secondary', 'text-error');
-    setTimeout(initWebSocket, wsBackoff);
+    // Any save awaiting an ack can no longer receive one on this (now dead)
+    // socket — reject them immediately instead of letting them time out.
+    rejectAllPendingCommands('Connection lost before the device could confirm.');
+    reconnectTimer = setTimeout(initWebSocket, wsBackoff);
     wsBackoff = Math.min(60000, wsBackoff * 2);
+}
+
+let reconnectTimer = null;
+
+// Fix (gap #4): lets a user staring at a stuck spinner force an immediate
+// retry instead of waiting out the current exponential-backoff delay.
+function retryConnectionNow() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    if (websocket) { try { websocket.close(); } catch (e) { /* already closed */ } }
+    initWebSocket();
+}
+
+// ------------------------------------------------------------------
+// Fix (gap #1 - the biggest one): every "Saved!" button used to call
+// websocket.send() and immediately show success, with no check that the
+// socket was even open and no wait for the device to actually confirm it.
+// During a reconnect window, send() on a CLOSED/CONNECTING socket either
+// throws (swallowed, since there was no try/catch) or silently drops the
+// frame — either way the button lied.
+//
+// sendCommand() replaces every raw websocket.send(JSON.stringify(...)) call
+// used by a save/calibrate action. It:
+//   1. Refuses to send at all if the socket isn't OPEN, returning a
+//      rejected promise the caller can show an error for.
+//   2. Tags the outgoing command with the same object the device echoes
+//      back in its "command_result" ack (see sendCmdAck() in
+//      task_network.cpp), and resolves/rejects the returned promise only
+//      when that specific ack arrives.
+//   3. Falls back to a timeout so a lost ack (e.g. the connection drops
+//      mid-flight) doesn't leave a button stuck showing "Saving..." forever.
+// ------------------------------------------------------------------
+const ACK_TIMEOUT_MS = 5000;
+let pendingCommands = []; // { command, resolve, reject, timer }
+
+function rejectAllPendingCommands(reason) {
+    pendingCommands.forEach((p) => { clearTimeout(p.timer); p.reject(new Error(reason)); });
+    pendingCommands = [];
+}
+
+function handleCommandResult(msg) {
+    const idx = pendingCommands.findIndex((p) => p.command === msg.command);
+    if (idx === -1) return; // no button waiting on this ack (or it already timed out)
+    const pending = pendingCommands[idx];
+    pendingCommands.splice(idx, 1);
+    clearTimeout(pending.timer);
+    if (msg.ok) pending.resolve(msg);
+    else pending.reject(new Error(msg.error || 'Device rejected the command.'));
+}
+
+function sendCommand(payload) {
+    return new Promise((resolve, reject) => {
+        if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+            reject(new Error('Not connected to the device right now.'));
+            return;
+        }
+        try {
+            websocket.send(JSON.stringify(payload));
+        } catch (e) {
+            reject(e);
+            return;
+        }
+        const timer = setTimeout(() => {
+            pendingCommands = pendingCommands.filter((p) => p.command !== payload.command);
+            reject(new Error('No response from the device — it may be offline.'));
+        }, ACK_TIMEOUT_MS);
+        pendingCommands.push({ command: payload.command, resolve, reject, timer });
+    });
+}
+
+// Shared success/failure UI for a save button: shows the normal transient
+// "Saved!" state only once the device actually confirms, and an inline error
+// state (auto-reverting) if the command was rejected, dropped, or timed out.
+function runSaveButton(btn, payload, savedText, idleText) {
+    if (!btn) { sendCommand(payload).catch(() => {}); return; }
+    const original = idleText || btn.innerText;
+    btn.disabled = true;
+    btn.innerText = 'Saving…';
+    sendCommand(payload).then(() => {
+        btn.disabled = false;
+        btn.innerText = savedText || 'Saved!';
+        setTimeout(() => { btn.innerText = original; }, 2000);
+    }).catch((err) => {
+        btn.disabled = false;
+        btn.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
+        setTimeout(() => { btn.innerText = original; }, 3000);
+    });
 }
 
 function onMessage(event) {
@@ -331,6 +456,7 @@ function onMessage(event) {
     if (msg.type === "auth_status") handleAuthStatus(msg);
     else if (msg.type === "auth_result") handleAuthResult(msg);
     else if (msg.type === "change_password_result") handleChangePasswordResult(msg);
+    else if (msg.type === "command_result") handleCommandResult(msg);
     else if (msg.type === "vitals") updateVitals(msg);
     else if (msg.type === "data") updateTelemetry(msg);
     else if (msg.type === "config") updateConfigForm(msg);
@@ -349,6 +475,51 @@ function updateVitals(msg) {
     let h = Math.floor(u % (3600*24) / 3600);
     let m = Math.floor(u % 3600 / 60);
     document.getElementById('dash-uptime').innerText = `${d}d ${h}h ${m}m`;
+
+    // Fix (gap #2): surface wifi_status ("connected" | "ap_mode") — the
+    // backend has always sent this, but nothing read it, so a user on the
+    // HyGrow-Setup fallback AP had no way to tell from the dashboard.
+    const wifiModeEl = document.getElementById('dash-wifi-mode');
+    const wifiModeTextEl = document.getElementById('dash-wifi-mode-text');
+    if (wifiModeEl && wifiModeTextEl) {
+        const onFallbackAp = msg.wifi_status === 'ap_mode';
+        wifiModeEl.classList.toggle('hidden', !onFallbackAp);
+        wifiModeEl.classList.toggle('flex', onFallbackAp);
+        wifiModeEl.classList.toggle('text-error', onFallbackAp);
+        if (onFallbackAp) {
+            wifiModeTextEl.innerText = 'On setup network — go to Settings → Network to connect Wi-Fi';
+        }
+    }
+
+    // Fix (gap #3): surface Firebase/Firestore upload health
+    // (firebase_ready, firebase_last_ok_ms, firebase_last_error) — all
+    // already sent by the backend, none of it previously shown anywhere, so
+    // uploads could fail silently forever with zero visibility here.
+    const fbDot = document.getElementById('dash-fb-status-dot');
+    const fbText = document.getElementById('dash-fb-status-text');
+    if (fbDot && fbText) {
+        fbDot.classList.remove('bg-white/30', 'bg-secondary', 'bg-error', 'animate-pulse');
+        if (msg.firebase_ready) {
+            fbDot.classList.add('bg-secondary');
+            // Both firebase_last_ok_ms and the device's uptime are millis()
+            // timestamps from the same clock, so (uptime_ms - last_ok_ms)
+            // gives elapsed time since the last successful upload without
+            // needing the browser's clock at all.
+            const secsAgo = msg.firebase_last_ok_ms ? Math.max(0, Math.floor((u * 1000 - msg.firebase_last_ok_ms) / 1000)) : null;
+            if (secsAgo !== null && !isNaN(secsAgo)) {
+                const mins = Math.floor(secsAgo / 60);
+                fbText.innerText = mins > 0 ? `Last upload: ${mins}m ago` : `Last upload: ${secsAgo}s ago`;
+            } else {
+                fbText.innerText = 'Uploading normally';
+            }
+        } else if (msg.firebase_last_error && msg.firebase_last_error.length > 0) {
+            fbDot.classList.add('bg-error');
+            fbText.innerText = `Last error: ${msg.firebase_last_error}`;
+        } else {
+            fbDot.classList.add('bg-white/30');
+            fbText.innerText = 'Never uploaded — check credentials, or enable Firebase Upload in Feature Flags';
+        }
+    }
 }
 
 function updateTelemetry(msg) {
@@ -598,6 +769,9 @@ document.addEventListener('DOMContentLoaded', () => {
     initWebSocket();
     setTimeout(resizeCanvas, 100);
 
+    const btnSpinnerRetry = document.getElementById('auth-spinner-retry');
+    if (btnSpinnerRetry) btnSpinnerRetry.addEventListener('click', retryConnectionNow);
+
     // ------------------------------------------------------------------
     // Auth overlay button bindings. The "auth" command's response
     // (auth_result) is handled centrally in onMessage()/handleAuthResult()
@@ -621,6 +795,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 err.classList.remove('hidden');
                 return;
             }
+            if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                err.innerText = 'Not connected to the device right now — try again in a moment.';
+                err.classList.remove('hidden');
+                return;
+            }
             err.classList.add('hidden');
             websocket.send(JSON.stringify({ command: "auth", password: pass }));
         });
@@ -632,6 +811,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const err = document.getElementById('auth-login-error');
         if (!pass) {
             err.innerText = 'Please enter your password.';
+            err.classList.remove('hidden');
+            return;
+        }
+        if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+            err.innerText = 'Not connected to the device right now — try again in a moment.';
             err.classList.remove('hidden');
             return;
         }
@@ -665,6 +849,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 err.classList.remove('hidden');
                 return;
             }
+            if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                err.innerText = 'Not connected to the device right now — try again in a moment.';
+                err.classList.remove('hidden');
+                return;
+            }
             err.classList.add('hidden');
             websocket.send(JSON.stringify({ command: "change_password", current: current, new_pass: next }));
         });
@@ -678,12 +867,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 ssid: document.getElementById('cfg-wifi-ssid').value,
                 pass: document.getElementById('cfg-wifi-pass').value
             };
-            websocket.send(JSON.stringify(payload));
-            btnSaveWifi.innerText = "Saved!";
-            setTimeout(() => { btnSaveWifi.innerText = "Update Network"; }, 2000);
-            if(confirm("Wi-Fi credentials saved. The ESP32 must reboot to connect with the new credentials. Reboot now?")) {
-                websocket.send(JSON.stringify({command: "reboot"}));
-            }
+            sendCommand(payload).then(() => {
+                btnSaveWifi.innerText = "Saved!";
+                setTimeout(() => { btnSaveWifi.innerText = "Update Network"; }, 2000);
+                // Fix (gap #6): if the new credentials are wrong, the device
+                // safely falls back to its HyGrow-Setup SoftAP after ~15s
+                // (see initNetworkTask() in task_network.cpp) — but this
+                // browser tab has no way to follow it there, since its IP
+                // changes. Tell the user what to do before they're staring at
+                // a dead "OFFLINE" indicator with no explanation.
+                if(confirm("Wi-Fi credentials saved. The ESP32 must reboot to connect with the new credentials. Reboot now?\n\nIf these credentials turn out to be wrong, the device will automatically fall back to its own \"HyGrow-Setup\" Wi-Fi network after about 15 seconds — reconnect to that network and browse to 192.168.4.1 to try again.")) {
+                    sendCommand({command: "reboot"}).catch(() => {});
+                }
+            }).catch((err) => {
+                btnSaveWifi.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
+                setTimeout(() => { btnSaveWifi.innerText = "Update Network"; }, 3000);
+            });
         });
     }
 
@@ -698,9 +897,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 pass: document.getElementById('cfg-fb-pass').value,
                 col: document.getElementById('cfg-fb-col').value
             };
-            websocket.send(JSON.stringify(payload));
-            btnSaveFb.innerText = "Credentials Saved";
-            setTimeout(() => { btnSaveFb.innerText = "Save Credentials"; }, 2000);
+            runSaveButton(btnSaveFb, payload, "Credentials Saved", "Save Credentials");
         });
     }
 
@@ -737,10 +934,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 pin_scl: parseInt(document.getElementById('cfg-pin-scl').value)
             };
             if (wlpEl) payload.pin_wlp = parseInt(wlpEl.value);
-            websocket.send(JSON.stringify(payload));
-            if(confirm("Pinout saved. The ESP32 must reboot to reassign hardware interrupts safely. Reboot now?")) {
-                websocket.send(JSON.stringify({command: "reboot"}));
-            }
+            const original = btnSavePins.innerText;
+            btnSavePins.disabled = true;
+            btnSavePins.innerText = 'Saving…';
+            sendCommand(payload).then(() => {
+                btnSavePins.disabled = false;
+                btnSavePins.innerText = original;
+                if(confirm("Pinout saved. The ESP32 must reboot to reassign hardware interrupts safely. Reboot now?")) {
+                    sendCommand({command: "reboot"}).catch(() => {});
+                }
+            }).catch((err) => {
+                btnSavePins.disabled = false;
+                btnSavePins.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
+                setTimeout(() => { btnSavePins.innerText = original; }, 3000);
+            });
         });
     }
 
@@ -757,9 +964,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const newK = currentK * (targetPpm / currentPpm);
 
             const payload = { command: "calibrate_tds", tds_k: parseFloat(newK.toFixed(2)) };
-            websocket.send(JSON.stringify(payload));
-            btnCalTds.innerText = "Saved!";
-            setTimeout(() => { btnCalTds.innerText = "Calibrate & Save"; }, 2000);
+            runSaveButton(btnCalTds, payload, "Saved!", "Calibrate & Save");
         });
     }
 
@@ -805,17 +1010,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 offset: parseFloat(newOff.toFixed(2)),
                 slope: parseFloat(newSlope.toFixed(2))
             };
-            websocket.send(JSON.stringify(payload));
-            btnCalPhSave.innerText = "Saved!";
-            setTimeout(() => { btnCalPhSave.innerText = "Calculate & Save"; }, 2000);
+            runSaveButton(btnCalPhSave, payload, "Saved!", "Calculate & Save");
         });
     }
 
     const btnReboot = document.getElementById('btn-reboot');
-    if(btnReboot) btnReboot.addEventListener('click', () => { if(confirm("Reboot the device?")) websocket.send(JSON.stringify({command: "reboot"})); });
+    if(btnReboot) btnReboot.addEventListener('click', () => {
+        if(!confirm("Reboot the device?")) return;
+        if (!websocket || websocket.readyState !== WebSocket.OPEN) { alert("Not connected to the device right now."); return; }
+        websocket.send(JSON.stringify({command: "reboot"}));
+    });
 
     const btnReset = document.getElementById('btn-factory-reset');
-    if(btnReset) btnReset.addEventListener('click', () => { if(confirm("DANGER! Wipe all NVS data?")) websocket.send(JSON.stringify({command: "factory_reset"})); });
+    if(btnReset) btnReset.addEventListener('click', () => {
+        if(!confirm("DANGER! Wipe all NVS data?")) return;
+        if (!websocket || websocket.readyState !== WebSocket.OPEN) { alert("Not connected to the device right now."); return; }
+        websocket.send(JSON.stringify({command: "factory_reset"}));
+    });
 
     const btnTermPause = document.getElementById('btn-term-pause');
     if(btnTermPause) btnTermPause.addEventListener('click', () => {
@@ -883,37 +1094,41 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (tabId === 6) { payload.pin_ph = isEnabled ? DEFAULT_PINS.ph : -1; sensorName = "pH"; sensorId = "ph"; }
 
         if (sensorName !== "") {
-            websocket.send(JSON.stringify(payload));
-
-            // Part 5.1 fix: restoring the pin alone used to leave
-            // sensor_enabled[id] permanently false once a sensor had
-            // auto-disabled — nothing else ever set it back to true from this
-            // toggle. Send save_sensor_enabled on BOTH paths so this toggle's
-            // "enabled" flag always matches its pin state:
-            //  - power ON: also clears any lingering auto-disable flag, same
-            //    as before.
-            //  - power OFF: also flips sensor_enabled[id] to false. Without
-            //    this, sensor_enabled[] stayed true while the pin went to -1,
-            //    so every read after reboot would fail forever (pin -1 always
-            //    fails) and permanently trip the error LED for a sensor the
-            //    user deliberately turned off — the "solid green = healthy"
-            //    guarantee broke the moment anyone used this toggle to power
-            //    something down. (An earlier version of this comment argued
-            //    sending enabled:false here was unsafe because the pin-restore
-            //    branch in save_sensor_enabled's server handler would refire —
-            //    it doesn't: that branch only runs when enabled is true, so
-            //    enabled:false here never touches pins, only the flag.)
-            if (sensorId) {
-                websocket.send(JSON.stringify({ command: "save_sensor_enabled", sensor: sensorId, enabled: isEnabled }));
-            }
-
-            const status = isEnabled ? "POWERED ON" : "POWERED OFF";
-            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${sensorName} ${status}.</div>`;
-            setTimeout(() => {
+            e.target.disabled = true;
+            sendCommand(payload).then(() => {
+                // Part 5.1 fix: restoring the pin alone used to leave
+                // sensor_enabled[id] permanently false once a sensor had
+                // auto-disabled — nothing else ever set it back to true from this
+                // toggle. Send save_sensor_enabled on BOTH paths so this toggle's
+                // "enabled" flag always matches its pin state:
+                //  - power ON: also clears any lingering auto-disable flag, same
+                //    as before.
+                //  - power OFF: also flips sensor_enabled[id] to false. Without
+                //    this, sensor_enabled[] stayed true while the pin went to -1,
+                //    so every read after reboot would fail forever (pin -1 always
+                //    fails) and permanently trip the error LED for a sensor the
+                //    user deliberately turned off — the "solid green = healthy"
+                //    guarantee broke the moment anyone used this toggle to power
+                //    something down. (An earlier version of this comment argued
+                //    sending enabled:false here was unsafe because the pin-restore
+                //    branch in save_sensor_enabled's server handler would refire —
+                //    it doesn't: that branch only runs when enabled is true, so
+                //    enabled:false here never touches pins, only the flag.)
+                if (sensorId) {
+                    return sendCommand({ command: "save_sensor_enabled", sensor: sensorId, enabled: isEnabled });
+                }
+            }).then(() => {
+                e.target.disabled = false;
+                const status = isEnabled ? "POWERED ON" : "POWERED OFF";
+                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${sensorName} ${status}.</div>`;
                 if(confirm(`Sensor power state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
-                    websocket.send(JSON.stringify({command: "reboot"}));
+                    sendCommand({command: "reboot"}).catch(() => {});
                 } else { e.target.checked = !isEnabled; }
-            }, 300);
+            }).catch((err) => {
+                e.target.disabled = false;
+                e.target.checked = !isEnabled; // revert — the device never actually applied this
+                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${sensorName} power change failed: ${err && err.message ? err.message : 'error'}.</div>`;
+            });
         }
     };
 
@@ -927,6 +1142,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // on the per-sensor offline banner that resets whichever sensor tab is open.
     const sendResetSensorPin = (sensorId) => {
         if (!confirm(`Reset the '${sensorId}' pin(s) to the factory default and reboot?`)) return;
+        if (!websocket || websocket.readyState !== WebSocket.OPEN) { alert("Not connected to the device right now."); return; }
         websocket.send(JSON.stringify({ command: "reset_sensor_pin", sensor: sensorId }));
     };
 
@@ -956,9 +1172,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 demo: !!document.getElementById('cfg-demo-mode')?.checked,
                 fb_en: !!document.getElementById('cfg-fb-enabled')?.checked
             };
-            websocket.send(JSON.stringify(payload));
-            btnSaveFeatures.innerText = "Saved!";
-            setTimeout(() => { btnSaveFeatures.innerText = "Save Feature Flags"; }, 2000);
+            runSaveButton(btnSaveFeatures, payload, "Saved!", "Save Feature Flags");
         });
     }
 
@@ -972,15 +1186,20 @@ document.addEventListener('DOMContentLoaded', () => {
         el.addEventListener('change', (e) => {
             const sensorId = el.dataset.sensorEnable;
             const enabled = e.target.checked;
-            websocket.send(JSON.stringify({ command: "save_sensor_enabled", sensor: sensorId, enabled }));
-            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${sensorId}' ${enabled ? "ENABLED" : "DISABLED"}.</div>`;
-            setTimeout(() => {
+            e.target.disabled = true;
+            sendCommand({ command: "save_sensor_enabled", sensor: sensorId, enabled }).then(() => {
+                e.target.disabled = false;
+                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${sensorId}' ${enabled ? "ENABLED" : "DISABLED"}.</div>`;
                 if (confirm(`Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
-                    websocket.send(JSON.stringify({ command: "reboot" }));
+                    sendCommand({ command: "reboot" }).catch(() => {});
                 } else {
                     e.target.checked = !enabled;
                 }
-            }, 300);
+            }).catch((err) => {
+                e.target.disabled = false;
+                e.target.checked = !enabled; // revert — the device never actually applied this
+                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${sensorId}' enable change failed: ${err && err.message ? err.message : 'error'}.</div>`;
+            });
         });
     });
 
@@ -1004,9 +1223,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 int_vit: clamp(document.getElementById('cfg-int-vit')?.value, 1000),
                 int_fb: clamp(document.getElementById('cfg-int-fb')?.value, 10000)
             };
-            websocket.send(JSON.stringify(payload));
-            btnSaveIntervals.innerText = "Saved!";
-            setTimeout(() => { btnSaveIntervals.innerText = "Save Timing"; }, 2000);
+            runSaveButton(btnSaveIntervals, payload, "Saved!", "Save Timing");
         });
     }
 

@@ -3,6 +3,10 @@
 
 void ledStatusInit();
 void ledSetSolid(uint8_t r, uint8_t g, uint8_t b);
+// Turns the status LED off. Used when every enabled sensor's last read
+// succeeded — the LED only ever lights up to signal a problem now, so no
+// light means "healthy," not "unknown"/"still starting."
+void ledStatusOff();
 void ledCycleErrors(const bool sensorErrors[], const bool sensorEnabled[]);
 
 // Blocking blink of `times` on/off cycles at the given color, `onMs`/`offMs`

@@ -470,7 +470,10 @@ void sensorTaskLoop()
     }
     else
     {
-      ledSetSolid(0, 255, 0);
+      // No LED shown while healthy — only errors light it up now, so a
+      // dark/off LED means "everything is fine," not "still booting" or
+      // "no error yet checked." See ledStatusOff() in led_status.cpp.
+      ledStatusOff();
     }
   }
   vTaskDelay(pdMS_TO_TICKS(50));

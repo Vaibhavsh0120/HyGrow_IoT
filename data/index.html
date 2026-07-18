@@ -40,12 +40,19 @@
          AP mode does NOT skip this overlay — the gatekeeper is enforced
          identically over Wi-Fi STA and the SoftAP (see task_network.cpp).
     -->
-    <div id="auth-overlay" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl">
+    <div id="auth-overlay" role="dialog" aria-modal="true" aria-label="Device authentication" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl">
 
         <!-- 1. Loading spinner -->
         <div id="auth-spinner" class="flex flex-col items-center gap-4">
             <div class="w-12 h-12 border-4 border-white/10 border-t-primary rounded-full animate-spin"></div>
             <p class="font-label-md text-label-md text-on-surface-variant tracking-widest">CONNECTING...</p>
+            <!-- Fix (gap #4): the spinner used to give zero feedback if the
+                 connection never came up — no attempt count, no manual retry.
+                 updateSpinnerStatus() in app.js only fills this in once the
+                 backoff has clearly kicked in, so a normal fast reconnect
+                 stays silent. -->
+            <p id="auth-spinner-status" class="font-label-sm text-label-sm text-on-surface-variant/70 text-center"></p>
+            <button id="auth-spinner-retry" class="hidden font-label-sm text-label-sm text-primary underline hover:opacity-80 transition-opacity">Retry now</button>
         </div>
 
         <!-- 2. First-time "Set Password" modal -->
@@ -56,14 +63,14 @@
                 <p class="font-body-md text-body-md text-on-surface-variant">This device is unconfigured. Set an admin password to secure it.</p>
             </div>
             <div class="flex flex-col gap-2">
-                <label class="font-label-md text-on-surface-variant">New Password</label>
+                <label class="font-label-md text-on-surface-variant" for="auth-setup-pass">New Password</label>
                 <input id="auth-setup-pass" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
             </div>
             <div class="flex flex-col gap-2">
-                <label class="font-label-md text-on-surface-variant">Confirm Password</label>
+                <label class="font-label-md text-on-surface-variant" for="auth-setup-pass-confirm">Confirm Password</label>
                 <input id="auth-setup-pass-confirm" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
             </div>
-            <p id="auth-setup-error" class="hidden font-label-sm text-label-sm text-error"></p>
+            <p id="auth-setup-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
             <button id="btn-auth-setup" class="w-full bg-primary-container text-on-primary-container font-label-md py-3 rounded-xl hover:opacity-90 transition-all">Set Password &amp; Continue</button>
         </div>
 
@@ -75,11 +82,17 @@
                 <p class="font-body-md text-body-md text-on-surface-variant">Enter the admin password to access this device.</p>
             </div>
             <div class="flex flex-col gap-2">
-                <label class="font-label-md text-on-surface-variant">Password</label>
+                <label class="font-label-md text-on-surface-variant" for="auth-login-pass">Password</label>
                 <input id="auth-login-pass" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
             </div>
-            <p id="auth-login-error" class="hidden font-label-sm text-label-sm text-error"></p>
+            <p id="auth-login-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
             <button id="btn-auth-login" class="w-full bg-primary-container text-on-primary-container font-label-md py-3 rounded-xl hover:opacity-90 transition-all">Login</button>
+            <!-- Fix (gap #5): this device supports one remembered session at
+                 a time — logging in here silently signs out any other
+                 browser/device's saved login next time it reloads (see
+                 s_sessionToken in task_network.cpp). Not disruptive, but a
+                 real surprise nobody explained until now. -->
+            <p class="font-label-sm text-label-sm text-on-surface-variant/70 text-center">Logging in here will sign out any other device that was previously logged in.</p>
         </div>
     </div>
 
@@ -117,7 +130,7 @@
                     </div>
                     <div class="flex items-center gap-2 liquid-glass px-4 py-2 rounded-2xl w-full sm:w-auto justify-center">
                         <span id="vital-link-dot" class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
-                        <span id="vital-link-text" class="font-label-sm text-label-sm text-secondary">LIVE SYS.LINK</span>
+                        <span id="vital-link-text" aria-live="polite" class="font-label-sm text-label-sm text-secondary">LIVE SYS.LINK</span>
                     </div>
                 </div>
             </header>
@@ -128,6 +141,16 @@
                     <div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                     <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">wifi</span> <span class="hidden sm:inline">Uplink Status</span></span>
                     <div class="font-data-num text-[16px] md:text-data-num text-white" id="dash-rssi">-- dBm</div>
+                    <!-- Fix (gap #2): the device already broadcasts wifi_status
+                         ("connected" | "ap_mode") in every vitals frame, but
+                         nothing in the UI surfaced it — someone on the
+                         HyGrow-Setup fallback AP had no way to tell from this
+                         dashboard. updateVitals() in app.js toggles both the
+                         text and the warning color. -->
+                    <div class="font-label-sm text-label-sm hidden items-center gap-1" id="dash-wifi-mode" aria-live="polite">
+                        <span class="material-symbols-outlined text-[14px]">warning</span>
+                        <span id="dash-wifi-mode-text">Setup network</span>
+                    </div>
                 </div>
                 <div class="liquid-glass rounded-3xl p-5 md:p-6 flex flex-col gap-2 relative overflow-hidden group">
                     <div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
@@ -234,7 +257,7 @@
                     <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
                 </label>
             </header>
-            <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center justify-between gap-2 shadow-lg" id="sensor-error">
+            <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center justify-between gap-2 shadow-lg" id="sensor-error" role="alert">
                 <span class="flex items-center gap-2"><span class="material-symbols-outlined">warning</span> Sensor reading offline or disabled.</span>
                 <button id="btn-reset-current-sensor" class="text-error underline underline-offset-2 text-label-md whitespace-nowrap">Reset to default &amp; reboot</button>
             </div>
@@ -296,7 +319,7 @@
                         <div class="font-display-lg-mobile text-white"><span id="cal-tds-raw">--</span> ppm</div>
                     </div>
                     <div class="flex flex-col gap-2">
-                        <label class="font-label-md text-on-surface-variant">Target PPM (Calibration Fluid)</label>
+                        <label class="font-label-md text-on-surface-variant" for="cfg-tds-target">Target PPM (Calibration Fluid)</label>
                         <input id="cfg-tds-target" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-lg" type="number" step="1" value="1000"/>
                     </div>
                     <button id="btn-cal-tds" class="w-full bg-secondary-container text-on-secondary-container font-label-md py-3 rounded-xl hover:brightness-110 transition-all mt-auto shadow-lg">Calibrate & Save</button>
@@ -338,11 +361,11 @@
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Network Settings</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Configure device network connection (Wi-Fi).</p>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">SSID</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-wifi-ssid">SSID</label>
                             <input id="cfg-wifi-ssid" maxlength="32" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Network Name" type="text"/>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">Password</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-wifi-pass">Password</label>
                             <input id="cfg-wifi-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                         </div>
                         <button id="btn-save-wifi" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Update Network</button>
@@ -356,18 +379,18 @@
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Change Password</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Update the admin password used to access this device's dashboard.</p>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">Current Password</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-pass-current">Current Password</label>
                             <input id="cfg-pass-current" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">New Password</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-pass-new">New Password</label>
                             <input id="cfg-pass-new" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">Confirm New Password</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-pass-confirm">Confirm New Password</label>
                             <input id="cfg-pass-confirm" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                         </div>
-                        <p id="cfg-pass-error" class="hidden font-label-sm text-label-sm text-error"></p>
+                        <p id="cfg-pass-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
                         <button id="btn-change-password" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Update Password</button>
                     </div>
 
@@ -375,7 +398,7 @@
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Display</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Choose how the dashboard looks on this device. Saved locally in this browser.</p>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">Dashboard Theme</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-theme-select">Dashboard Theme</label>
                             <select id="cfg-theme-select" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md">
                                 <option value="dark">Dark Mode</option>
                                 <option value="light">Light Mode</option>
@@ -422,26 +445,37 @@
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Cloud Provisioning</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Configure connection to Cloud Firestore.</p>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">Project ID</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-fb-proj">Project ID</label>
                             <input id="cfg-fb-proj" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="e.g. my-iot-project" type="text"/>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">Web API Key</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-fb-api">Web API Key</label>
                             <input id="cfg-fb-api" maxlength="127" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="AIzaSy..." type="password"/>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">Email</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-fb-email">Email</label>
                             <input id="cfg-fb-email" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="device@project.com" type="email"/>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">Password</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-fb-pass">Password</label>
                             <input id="cfg-fb-pass" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant">Firestore Collection</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-fb-col">Firestore Collection</label>
                             <input id="cfg-fb-col" maxlength="31" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="sensor_data" type="text"/>
                         </div>
                         <button id="btn-save-firebase" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Credentials</button>
+                        <!-- Fix (gap #3): the device already tracks real
+                             Firebase/Firestore upload health (firebase_ready,
+                             firebase_last_ok_ms, firebase_last_error) and sends
+                             it in every vitals frame, but none of it reached
+                             the UI — uploads could fail silently forever with
+                             zero visibility here. updateVitals() in app.js
+                             fills this in and colors it based on health. -->
+                        <div class="flex items-center gap-2 font-label-sm text-label-sm text-on-surface-variant" id="dash-fb-status" aria-live="polite">
+                            <span class="w-2 h-2 rounded-full bg-white/30 shrink-0" id="dash-fb-status-dot"></span>
+                            <span id="dash-fb-status-text">Upload status unknown</span>
+                        </div>
                     </div>
                 </div>
 
@@ -455,7 +489,7 @@
                          default, shown by app.js when any pin field is 19, 20, or
                          a forbidden/duplicate value. Styled consistently with the
                          existing #sensor-error banner (border-error/text-error). -->
-                    <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" id="pin-validation-error">
+                    <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" id="pin-validation-error" role="alert">
                         <span class="material-symbols-outlined">warning</span>
                         <span id="pin-validation-error-text">GPIO 19 and 20 are reserved for USB on this board and can't be used for a sensor. Change that pin and try again.</span>
                     </div>
@@ -576,19 +610,19 @@
                     <p class="text-on-surface-variant text-body-md mb-2">Adjust sample rate and push cadence. All values in milliseconds (2000&ndash;60000).</p>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-sm text-on-surface-variant">Sensor Sample Rate</label>
+                            <label class="font-label-sm text-on-surface-variant" for="cfg-int-read">Sensor Sample Rate</label>
                             <input id="cfg-int-read" min="2000" max="60000" step="100" class="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" type="number" value="2000"/>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-sm text-on-surface-variant">WebSocket Push</label>
+                            <label class="font-label-sm text-on-surface-variant" for="cfg-int-ws">WebSocket Push</label>
                             <input id="cfg-int-ws" min="2000" max="60000" step="100" class="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" type="number" value="1000"/>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-sm text-on-surface-variant">Vitals Push</label>
+                            <label class="font-label-sm text-on-surface-variant" for="cfg-int-vit">Vitals Push</label>
                             <input id="cfg-int-vit" min="2000" max="60000" step="100" class="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" type="number" value="1000"/>
                         </div>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-sm text-on-surface-variant">Firestore Push</label>
+                            <label class="font-label-sm text-on-surface-variant" for="cfg-int-fb">Firestore Push</label>
                             <input id="cfg-int-fb" min="2000" max="60000" step="100" class="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-white text-sm" type="number" value="10000"/>
                         </div>
                     </div>
