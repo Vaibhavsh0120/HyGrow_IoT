@@ -3,23 +3,35 @@
  * task_sensor.cpp — Sensor Task (Core 1)
  * ============================================================================
  * Single source of truth for all sensor hardware interaction. Owns:
- *   1. Boot-time init of every sensor (including the BH1750 I2C presence
- *      probe, which used to live in the now-deleted sensors.cpp).
+ *   1. Boot-time init of every sensor, including sole ownership of the I2C
+ *      bus (Wire.begin() + the BH1750 presence probe) — see
+ *      bringUpI2CAndProbeLight() below. sensor_light.cpp no longer touches
+ *      Wire.begin()/timeouts/probing itself; it assumes the bus is already
+ *      live by the time sensor_lux_init() runs.
  *   2. Startup validation: each enabled sensor gets up to 5 read attempts
  *      before the task commits to it being "live". A sensor that fails all
  *      5 boot attempts is auto-disabled (pin -> -1) and persisted, so a
  *      genuinely unwired/dead sensor doesn't spam "read failed" into the
  *      web terminal forever.
  *   3. The steady-state read loop.
+ *   4. The WS2812 status LED, updated every read cycle to reflect live
+ *      sensor health (solid green when healthy, cycling error colors when
+ *      an enabled sensor's last read failed).
  * ============================================================================
  */
 #include "task_sensor.h"
 #include "state.h"
+#include "../utils/led_status.h"
+#include <Wire.h>
 #include <math.h>
 
 static TaskHandle_t s_sensorTask = nullptr;
 static volatile bool s_kick = false;
 static bool s_initialized = false;
+
+// BH1750 default I2C address (ADDR pin low/floating). Used only for the
+// bounded presence probe below, before we hand off to the BH1750 library.
+#define BH1750_PROBE_ADDR 0x23
 
 // Number of boot-time read attempts before an enabled-but-unresponsive
 // sensor is auto-disabled. Kept small so a genuinely missing sensor doesn't
@@ -91,6 +103,53 @@ static void autoDisable(SensorID id, const char *name)
 }
 
 // ----------------------------------------------------------------------------
+// I2C bus ownership
+// ----------------------------------------------------------------------------
+// The sensor task is the sole owner of the I2C bus on this board. It brings
+// Wire up and performs a bounded presence probe for the BH1750 here, before
+// ever handing control to the BH1750 library — sensor_lux_init() (in
+// sensor_light.cpp) assumes Wire is already configured and just calls
+// lightMeter.begin().
+static bool bringUpI2CAndProbeLight()
+{
+  // Guard check: if either SDA or SCL is < 0 (e.g., -1), completely disable
+  // the sensor and never touch Wire.
+  if (currentConfig.pin_lux_sda < 0 || currentConfig.pin_lux_scl < 0)
+  {
+    webLog(1, LOG_WARN, "BH1750 Light sensor disabled (SDA/SCL set to -1)");
+    return false;
+  }
+
+  // Initialize the I2C bus using the dynamic pins from Web Doctor
+  Wire.begin(currentConfig.pin_lux_sda, currentConfig.pin_lux_scl);
+
+  // CRITICAL: bound every I2C transaction. Without this, a floating or
+  // stuck SDA/SCL line can make the ESP32 Wire driver block forever
+  // (no ACK, no clock-stretch timeout), which starves the sensor task
+  // and trips the Core 1 task watchdog -> panic -> reboot. 1000ms is
+  // generous for a healthy bus and still finite for a broken one.
+  Wire.setTimeOut(1000);
+
+  // Non-blocking presence probe BEFORE calling into the BH1750 library.
+  // beginTransmission/endTransmission respects the timeout set above, so
+  // this can now only ever take up to ~1s, never hang indefinitely.
+  Wire.beginTransmission(BH1750_PROBE_ADDR);
+  uint8_t probeResult = Wire.endTransmission();
+
+  if (probeResult != 0)
+  {
+    // 0 = ACK received, sensor is there. Anything else (timeout, NACK,
+    // bus error) means nothing responded on that address.
+    webLog(1, LOG_ERR, "BH1750 not detected on I2C (SDA: " + String(currentConfig.pin_lux_sda) +
+                            ", SCL: " + String(currentConfig.pin_lux_scl) +
+                            "). Check wiring/pull-ups. Sensor disabled for this session.");
+    return false;
+  }
+
+  return true;
+}
+
+// ----------------------------------------------------------------------------
 // Startup validation
 // ----------------------------------------------------------------------------
 // For every sensor whose pin(s) are currently assigned (>= 0) AND whose
@@ -121,18 +180,18 @@ static void validateSensor(SensorID id, const char *name, bool (*readFn)())
 
 static void initAllSensors()
 {
-  // BH1750 is the one sensor with a reliable "is it actually wired up" probe
-  // at init time (I2C ACK on the bus) — see sensor_light.cpp. Run that probe
-  // first; if nothing ACKed, disable it immediately rather than letting the
-  // 5x startup-validation loop below burn through retries on a device that
-  // was never there.
   sensor_dht_init();
   sensor_ds18b20_init();
   sensor_tds_init();
   sensor_ph_init();
   sensor_wl_init();
 
-  bool lightDetected = sensor_lux_init();
+  // BH1750 is the one sensor with a reliable "is it actually wired up" probe
+  // at init time (I2C ACK on the bus) — see bringUpI2CAndProbeLight() above.
+  // Run that probe first; if nothing ACKed, disable it immediately rather
+  // than letting the 5x startup-validation loop below burn through retries
+  // on a device that was never there.
+  bool lightDetected = bringUpI2CAndProbeLight() && sensor_lux_init();
   if (!lightDetected && currentConfig.sensor_enabled[S_LIGHT])
   {
     currentConfig.sensor_enabled[S_LIGHT] = false;
@@ -264,6 +323,11 @@ void initSensorTask()
     return;
   s_initialized = true;
   webLog(1, LOG_INFO, "Sensor task started on core " + String(xPortGetCoreID()));
+
+  // Bring the WS2812 status LED online before touching any sensor hardware
+  // so it's ready the moment sensorTaskLoop() starts reporting health.
+  ledStatusInit();
+
   initAllSensors();
 }
 
@@ -276,6 +340,33 @@ void sensorTaskLoop()
     s_kick = false;
     lastRead = now;
     readAll();
+
+    // Mirror live hardware health on the WS2812 status LED right after the
+    // read that just happened above. last_err[i] reflects only the most
+    // recent read cycle for sensor i (markOk()/markErr() overwrite it every
+    // time), so this always tracks the read we just did, not stale history.
+    bool sensorErrors[S_COUNT] = {false};
+    bool anyEnabledError = false;
+    for (int i = 0; i < S_COUNT; i++)
+    {
+      if (currentSensors.last_err[i][0] != '\0')
+      {
+        sensorErrors[i] = true;
+        if (currentConfig.sensor_enabled[i])
+        {
+          anyEnabledError = true;
+        }
+      }
+    }
+
+    if (anyEnabledError)
+    {
+      ledCycleErrors(sensorErrors, currentConfig.sensor_enabled);
+    }
+    else
+    {
+      ledSetSolid(0, 255, 0);
+    }
   }
   vTaskDelay(pdMS_TO_TICKS(50));
 }

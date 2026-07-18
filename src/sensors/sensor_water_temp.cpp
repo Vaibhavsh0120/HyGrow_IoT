@@ -12,6 +12,21 @@ void initWaterTemp()
 {
     if (currentConfig.pin_ds18b20 >= 0)
     {
+        // The pin can be reassigned at runtime from the Web Doctor dashboard,
+        // so initWaterTemp() may run more than once per boot. Free any
+        // previously allocated instances before replacing the pointers,
+        // otherwise every reassignment leaks the old objects. Delete the
+        // DallasTemperature instance first since it holds a reference to the
+        // OneWire instance.
+        if (waterTempSensor != nullptr)
+        {
+            delete waterTempSensor;
+        }
+        if (oneWire != nullptr)
+        {
+            delete oneWire;
+        }
+
         oneWire = new OneWire(currentConfig.pin_ds18b20);
         waterTempSensor = new DallasTemperature(oneWire);
         waterTempSensor->begin();

@@ -7,61 +7,29 @@ float readLight();
 BH1750 lightMeter;
 bool isLightSensorReady = false;
 
-// BH1750 default I2C address (ADDR pin low/floating). Used only for the
-// bounded presence probe below, before we hand off to the BH1750 library.
-#define BH1750_PROBE_ADDR 0x23
-
-void initLight()
+// I2C bus ownership — Wire.begin(), the transaction timeout, and the BH1750
+// presence probe — now lives in task_sensor.cpp, the sole owner of the I2C
+// bus on Core 1. By the time this runs, Wire has already been brought up
+// and ACK-probed for a BH1750 at this address, so all that's left to do
+// here is hand off to the library itself.
+bool initLight()
 {
-    // 1. Guard check: if either SDA or SCL is < 0 (e.g., -1), completely disable the sensor
-    if (currentConfig.pin_lux_sda < 0 || currentConfig.pin_lux_scl < 0)
-    {
-        isLightSensorReady = false;
-        webLog(1, LOG_WARN, "BH1750 Light sensor disabled (SDA/SCL set to -1)");
-        return;
-    }
-
-    // Initialize the I2C bus using the dynamic pins from Web Doctor
-    Wire.begin(currentConfig.pin_lux_sda, currentConfig.pin_lux_scl);
-
-    // 2. CRITICAL: bound every I2C transaction. Without this, a floating or
-    // stuck SDA/SCL line can make the ESP32 Wire driver block forever
-    // (no ACK, no clock-stretch timeout), which starves the sensor task
-    // and trips the Core 1 task watchdog -> panic -> reboot. 1000ms is
-    // generous for a healthy bus and still finite for a broken one.
-    Wire.setTimeOut(1000);
-
-    // 3. Non-blocking presence probe BEFORE calling into the BH1750 library.
-    // beginTransmission/endTransmission respects the timeout set above, so
-    // this can now only ever take up to ~1s, never hang indefinitely.
-    Wire.beginTransmission(BH1750_PROBE_ADDR);
-    uint8_t probeResult = Wire.endTransmission();
-
-    if (probeResult != 0)
-    {
-        // 0 = ACK received, sensor is there. Anything else (timeout,
-        // NACK, bus error) means nothing responded on that address.
-        isLightSensorReady = false;
-        webLog(1, LOG_ERR, "BH1750 not detected on I2C (SDA: " + String(currentConfig.pin_lux_sda) + ", SCL: " + String(currentConfig.pin_lux_scl) + "). Check wiring/pull-ups. Sensor disabled for this session.");
-        return;
-    }
-
-    if (lightMeter.begin())
-    {
-        isLightSensorReady = true;
-        webLog(1, LOG_INFO, "BH1750 Light sensor initialized on I2C (SDA: " + String(currentConfig.pin_lux_sda) + ", SCL: " + String(currentConfig.pin_lux_scl) + ")");
-    }
-    else
-    {
-        isLightSensorReady = false;
-        webLog(1, LOG_ERR, "Failed to initialize BH1750 Light sensor. Check wiring.");
-    }
+    isLightSensorReady = lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE, 0x23, &Wire);
+    return isLightSensorReady;
 }
 
 bool sensor_lux_init()
 {
-    initLight();
-    return isLightSensorReady;
+    bool ok = initLight();
+    if (ok)
+    {
+        webLog(1, LOG_INFO, "BH1750 Light sensor initialized on I2C (SDA: " + String(currentConfig.pin_lux_sda) + ", SCL: " + String(currentConfig.pin_lux_scl) + ")");
+    }
+    else
+    {
+        webLog(1, LOG_ERR, "Failed to initialize BH1750 Light sensor. Check wiring.");
+    }
+    return ok;
 }
 
 bool sensor_lux_read(float &lux)

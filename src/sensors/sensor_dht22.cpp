@@ -11,6 +11,15 @@ void initDHT22()
 {
     if (currentConfig.pin_dht >= 0)
     {
+        // The pin can be reassigned at runtime from the Web Doctor dashboard,
+        // so initDHT22() may run more than once per boot. Free any previously
+        // allocated sensor before replacing the pointer, otherwise every
+        // reassignment leaks the old DHT instance.
+        if (dhtSensor != nullptr)
+        {
+            delete dhtSensor;
+        }
+
         dhtSensor = new DHT(currentConfig.pin_dht, DHT22);
         dhtSensor->begin();
         webLog(1, LOG_INFO, "DHT22 initialized on pin " + String(currentConfig.pin_dht));
