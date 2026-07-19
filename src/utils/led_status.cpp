@@ -94,3 +94,42 @@ void ledCycleErrors(const bool sensorErrors[], const bool sensorEnabled[]) {
         }
     }
 }
+
+// Fast solid-white strobe (150ms on/off) for "2+ enabled sensors failed at
+// once". Deliberately not one of the per-sensor ERROR_COLORS and deliberately
+// faster than ledCycleErrors()'s 500ms per-color dwell time, so a single
+// glance tells you "multiple failures" apart from "one sensor is down" —
+// you don't have to sit and watch a color-cycle to count how many sensors
+// are unhappy. Same non-blocking, self-timed-off-millis() shape as
+// ledCycleErrors() so it's a drop-in per-cycle call from sensorTaskLoop().
+void ledMultiSensorFailure() {
+    static bool on = false;
+    static unsigned long lastToggle = 0;
+
+    if (millis() - lastToggle > 150) {
+        lastToggle = millis();
+        on = !on;
+        ledLock();
+        if (on) {
+            pixel.setPixelColor(0, pixel.Color(255, 255, 255)); // White
+        } else {
+            pixel.clear();
+        }
+        pixel.show();
+        ledUnlock();
+    }
+}
+
+// Solid magenta — used ONLY for "LittleFS mount failed at boot" (setup()
+// halt loop). Intentionally NOT reused for any runtime error: every runtime
+// signal above is either a specific sensor color or the white multi-failure
+// strobe, so solid magenta is reserved to mean exactly one thing —
+// "filesystem missing, sensors were never even checked, re-flash the
+// filesystem image" — and nothing else on this board ever produces it.
+// Call once (not in a loop) — it just sets the pixel and returns.
+void ledFilesystemHaltSolid() {
+    ledLock();
+    pixel.setPixelColor(0, pixel.Color(255, 0, 255)); // Magenta
+    pixel.show();
+    ledUnlock();
+}

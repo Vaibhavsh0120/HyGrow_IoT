@@ -3,6 +3,7 @@
 #include <Preferences.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
+#include <esp_partition.h> // esp_partition_find_first() — [FS DIAG] block in state_init()
 
 // ---------- Globals ----------
 ConfigState currentConfig;
@@ -174,7 +175,47 @@ static uint32_t clampInterval(uint32_t ms)
 // ---------- Init ----------
 void state_init()
 {
+  // Init telemetry — deliberately BEFORE the LittleFS mount below, not
+  // after. This used to run here, AFTER littlefs_ok was already set from
+  // LittleFS.begin()'s real result a few lines up — silently zeroing it
+  // straight back to false on every single boot, even on a fully successful
+  // mount. That's why the [FS DIAG] log could show "LittleFS.begin(false)
+  // returned: true" and the .ino's halt gate still fire two lines later:
+  // this memset was clobbering the result before setup() ever got to check
+  // it. Moving it to the top of the function means nothing this function
+  // writes later (littlefs_ok, or anything else added to VitalsState in the
+  // future) can ever be wiped out by it again.
+  memset(&currentSensors, 0, sizeof(currentSensors));
+  memset(&currentVitals, 0, sizeof(currentVitals));
+
   // LittleFS (web assets)
+  //
+  // Diagnostic run BEFORE the mount attempt: independently confirm, via the
+  // ESP-IDF partition API directly (not through LittleFS at all), that a
+  // partition labeled "spiffs" actually exists in the partition table
+  // currently flashed to this chip, and print its real offset/size. This
+  // is deliberately independent of CORE_DEBUG_LEVEL/esp_littlefs's own
+  // logging — if this block ever prints "NOT FOUND", the problem is the
+  // partition table itself (wrong/stale table on the chip, or a label
+  // mismatch), not the filesystem image content. If it prints a
+  // size/address that doesn't match partitions.csv, the chip is still
+  // running an old/different table than the one just flashed.
+  {
+    const esp_partition_t *fsPart = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "spiffs");
+    if (fsPart)
+    {
+      Serial.printf("[FS DIAG] Found partition label='spiffs' at offset=0x%06X size=0x%06X (%u bytes)\n",
+                     fsPart->address, fsPart->size, fsPart->size);
+    }
+    else
+    {
+      Serial.println("[FS DIAG] NO partition labeled 'spiffs' found in the currently-flashed "
+                      "partition table — this means the partition table on the chip does not "
+                      "match partitions.csv, or a full chip erase + fresh upload is still needed.");
+    }
+  }
+
   // NOTE: Do NOT auto-format on a failed mount here. Silently retrying with
   // LittleFS.begin(true) used to mask a failed/empty mount by reporting
   // littlefs_ok = true even though the web asset partition was just wiped.
@@ -182,6 +223,7 @@ void state_init()
   // (setup()) catch a bad mount and stop, instead of continuing silently
   // into a broken state.
   currentVitals.littlefs_ok = LittleFS.begin(false);
+  Serial.printf("[FS DIAG] LittleFS.begin(false) returned: %s\n", currentVitals.littlefs_ok ? "true" : "false");
 
   // NVS
   if (!prefs.begin(NVS_NS, false)) {
@@ -242,10 +284,6 @@ void state_init()
     snprintf(k, sizeof(k), "en_%d", i);
     currentConfig.sensor_enabled[i] = prefs.getBool(k, DEFAULT_SENSOR_ENABLED[i]);
   }
-
-  // Init telemetry
-  memset(&currentSensors, 0, sizeof(currentSensors));
-  memset(&currentVitals, 0, sizeof(currentVitals));
 
   // Crash/reboot diagnostics — mount the namespace and pull in whatever
   // reason was recorded on the PREVIOUS boot, before state_log_reset_reason()

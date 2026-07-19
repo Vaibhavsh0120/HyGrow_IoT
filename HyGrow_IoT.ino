@@ -194,6 +194,25 @@ void setup()
     delay(1000); // Give serial monitor time to connect
     Serial.println("\n--- HyGrow IoT Booting ---");
 
+    // PSRAM check — printed unconditionally, every boot. This is the ONLY
+    // reliable way to confirm PSRAM is actually enabled: the "PLATFORM:"
+    // and "HARDWARE:" lines PlatformIO prints during compilation come from
+    // the esp32-s3-devkitc-1 board JSON's static metadata (that board
+    // profile is the N8/no-PSRAM variant — platform-espressif32 has no
+    // dedicated N16R8 profile) and never reflect the board_build.arduino.
+    // memory_type / -DBOARD_HAS_PSRAM overrides in platformio.ini, so they
+    // will keep printing "No PSRAM" at compile time even when PSRAM is
+    // correctly enabled and working. psramFound() asks the chip directly,
+    // at runtime, after boot — this is ground truth.
+    if (psramFound())
+    {
+        Serial.printf("PSRAM: OK — %u bytes detected\n", ESP.getPsramSize());
+    }
+    else
+    {
+        Serial.println("PSRAM: NOT DETECTED — check board_build.arduino.memory_type in platformio.ini");
+    }
+
     // Log WHY we rebooted. If this ever prints TASK_WDT or PANIC, the
     // previous boot crashed/hung — it did not just lose its USB connection.
     esp_reset_reason_t reason = esp_reset_reason();
@@ -234,18 +253,29 @@ void setup()
     // the web UI (and everything served from it) is unavailable — continuing
     // to boot would silently start serving nothing, or a broken partial site.
     // Halt loudly instead so a bad/missing filesystem image is obvious.
+    //
+    // This halt happens BEFORE either FreeRTOS task is created (the
+    // xTaskCreatePinnedToCore() calls are further down in setup()), and
+    // state_factory_reset()/ESP.restart() are never reached from here either
+    // — so with no filesystem, sensor init/reads and the network/web server
+    // never start at all. Nothing "keeps checking sensors" once this branch
+    // is taken; the board does nothing else but blink and wait to be
+    // re-flashed or power-cycled.
     if (!currentVitals.littlefs_ok)
     {
         Serial.println("FATAL: LittleFS mount failed. The web UI cannot be served.");
+        Serial.println("Sensor and network tasks will NOT be started — halting here.");
         Serial.println("Re-flash the filesystem image (Upload Filesystem Image) and reset the board.");
         ledStatusInit();
-        bool toggle = false;
+        // Distinct solid magenta — reserved exclusively for this failure
+        // mode so it's never confused with a runtime sensor-error color or
+        // the multi-sensor-failure white strobe. See ledFilesystemHaltSolid()
+        // in led_status.cpp. Set once; the LED needs no further attention
+        // since nothing else runs past this point.
+        ledFilesystemHaltSolid();
         while (true)
         {
-            if (toggle) ledSetSolid(255, 0, 0); // Red
-            else ledSetSolid(255, 0, 255); // Magenta
-            toggle = !toggle;
-            delay(100);
+            delay(1000);
         }
     }
 

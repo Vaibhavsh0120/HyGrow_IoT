@@ -15,8 +15,12 @@
  *      web terminal forever.
  *   3. The steady-state read loop.
  *   4. The WS2812 status LED, updated every read cycle to reflect live
- *      sensor health (solid green when healthy, cycling error colors when
- *      an enabled sensor's last read failed).
+ *      sensor health: LED off when every enabled sensor is healthy, the
+ *      per-sensor error color cycling when exactly one enabled sensor's
+ *      last read failed, and a distinct fast white strobe
+ *      (ledMultiSensorFailure(), led_status.cpp) when TWO OR MORE enabled
+ *      sensors failed in the same cycle. Disabled/OFF sensors are never
+ *      counted or shown here, regardless of their last_err[] state.
  * ============================================================================
  */
 #include "task_sensor.h"
@@ -451,20 +455,32 @@ void sensorTaskLoop()
     // recent read cycle for sensor i (markOk()/markErr() overwrite it every
     // time), so this always tracks the read we just did, not stale history.
     bool sensorErrors[S_COUNT] = {false};
-    bool anyEnabledError = false;
+    uint8_t enabledErrorCount = 0;
     for (int i = 0; i < S_COUNT; i++)
     {
+      // Disabled/OFF sensors are skipped entirely — never counted, never
+      // shown on the LED, exactly like the rest of this codebase already
+      // treats them (autoDisable(), the Web UI, etc). Only a sensor that is
+      // both enabled AND currently erroring counts toward anything below.
+      if (!currentConfig.sensor_enabled[i])
+      {
+        continue;
+      }
       if (currentSensors.last_err[i][0] != '\0')
       {
         sensorErrors[i] = true;
-        if (currentConfig.sensor_enabled[i])
-        {
-          anyEnabledError = true;
-        }
+        enabledErrorCount++;
       }
     }
 
-    if (anyEnabledError)
+    if (enabledErrorCount >= 2)
+    {
+      // 2 or more enabled sensors failed this cycle — distinct fast white
+      // strobe takes priority over the single-sensor color cycle so this
+      // reads unambiguously as "multiple failures" at a glance.
+      ledMultiSensorFailure();
+    }
+    else if (enabledErrorCount == 1)
     {
       ledCycleErrors(sensorErrors, currentConfig.sensor_enabled);
     }

@@ -37,7 +37,7 @@ HyGrow is built on a strictly decoupled, 3-pillar architecture. This codebase re
 - **Guided Sensor Calibration:** Calibrate pH via a guided 2-point wizard, and TDS via a 1-point target wizard, calculated entirely in the browser UI.
 - **Startup Validation & Auto-Disable:** Every enabled sensor gets 5 boot-time read attempts before the system trusts it; a sensor that fails all 5 is automatically disabled. Fully re-enabling it is a single click from the Web UI.
 - **Light / Dark / Auto Theme:** The dashboard theme is switchable from Settings and persisted per-browser; "Auto" follows the OS `prefers-color-scheme`.
-- **RGB Status LED:** The onboard WS2812 NeoPixel shows solid green while every enabled sensor is healthy, and cycles through a per-sensor error color whenever an enabled sensor's most recent read failed. Also provides a fatal blinking Red/Magenta error for flash mounting failures.
+- **RGB Status LED:** The onboard WS2812 NeoPixel is off while every enabled sensor is healthy, shows a solid per-sensor error color when exactly one enabled sensor's most recent read failed, and switches to a fast white strobe when two or more enabled sensors are failing at once. A distinct, boot-time-only solid magenta signals a fatal LittleFS mount failure — the board halts before touching any sensor or starting Wi-Fi.
 
 ---
 
@@ -150,6 +150,8 @@ The PlatformIO environment in [platformio.ini](platformio.ini) is configured to 
 - `board_build.flash_mode = qio`
 - `board_build.f_cpu = 240000000L`
 - `board_upload.flash_size = 16MB`
+- `build_flags` includes `-DBOARD_HAS_PSRAM`, and `board_build.arduino.memory_type = qio_opi` — together these enable the 8MB Octal PSRAM this module actually has. `esp32-s3-devkitc-1`'s board JSON (platform-espressif32 has no dedicated N16R8 profile) describes the N8 variant with **no PSRAM at all**; without both of these overrides, PSRAM is silently unavailable to the firmware even though the chip has it (confirmed by esptool's own probe: `Embedded PSRAM 8MB (AP_3v3)`). Matches the Arduino IDE/CLI `PSRAM=opi` setting above.
+- `board_build.partitions = partitions.csv` — custom 16MB table (3MB/3MB OTA app slots + 9.87MB LittleFS/SPIFFS). Without this, PlatformIO falls back to the `esp32-s3-devkitc-1` board's default 8MB-sized partition map, and the LittleFS image build fails with `Error: File system is full` / `lfs_write error(-28)` even though the chip has 16MB of flash — the board default simply never gets told about the extra 8MB.
 - `lib_deps` uses `ESP32Async/AsyncTCP` and `ESP32Async/ESPAsyncWebServer` for the async web stack
 
 If you want an Arduino IDE build to match exactly, keep the board profile and the settings above aligned with the README section.
@@ -293,12 +295,24 @@ Every `vitals` frame also includes `wifi_status` (`"connected"` | `"ap_mode"` �
 
 ## 🌈 LED Error Color Codes
 
-`led_status.cpp` defines a color per sensor for `ledCycleErrors()` to cycle through on the onboard WS2812. `task_sensor.cpp`'s read loop calls it every cycle: the LED is off while every enabled sensor's last read succeeded, or cycles through the colors below every 500ms for whichever enabled sensors currently have a failed last read. The mapping:
+`led_status.cpp` defines a color per sensor for `ledCycleErrors()` to cycle through on the onboard WS2812. `task_sensor.cpp`'s read loop counts, every cycle, how many **enabled** sensors currently have a failed last read, and picks one of three states:
 
-- 🔴 **Red**: Water Level failure
-- 🟡 **Yellow**: BH1750 Light failure
-- 🟣 **Purple**: TDS failure
-- 🟠 **Orange**: DHT22 failure
-- 🔵 **Blue**: pH Sensor failure
-- 🩵 **Cyan**: DS18B20 Water Temp failure
-- ⚫ **Off**: System Healthy — every enabled sensor's last read succeeded
+- **0 enabled sensors failing** → LED off (system healthy)
+- **Exactly 1 enabled sensor failing** → `ledCycleErrors()` shows that sensor's color, solid
+- **2 or more enabled sensors failing at once** → `ledMultiSensorFailure()` takes over instead: a fast white strobe (150ms on/off), so you can tell "multiple things are wrong" apart from "one sensor is down" at a glance, without having to watch a full color-cycle and count colors
+
+Disabled/OFF sensors are never counted and never shown on the LED, no matter what their last recorded error was.
+
+| Signal | Meaning |
+|---|---|
+| ⚫ **Off** | System Healthy — every enabled sensor's last read succeeded |
+| 🔴 **Red** (solid) | Water Level failure (only failing sensor) |
+| 🟡 **Yellow** (solid) | BH1750 Light failure (only failing sensor) |
+| 🟣 **Purple** (solid) | TDS failure (only failing sensor) |
+| 🟠 **Orange** (solid) | DHT22 failure (only failing sensor) |
+| 🔵 **Blue** (solid) | pH Sensor failure (only failing sensor) |
+| 🩵 **Cyan** (solid) | DS18B20 Water Temp failure (only failing sensor) |
+| ⚪ **White** (fast strobe, 150ms) | 2+ enabled sensors failing at once |
+| 🟣 **Magenta** (solid, boot-time only) | LittleFS mount failed — firmware halts in `setup()` before either FreeRTOS task starts; sensors are never initialized or read, the web UI/network never come up. Re-flash the filesystem image and reset the board. |
+
+The Magenta halt indicator is intentionally reserved for the filesystem-missing case only — it's never reused for a runtime sensor error, so it's recognizable on sight as "nothing was even checked, the board never got past boot." Unlike the sensor-error signals, it does not blink — it's held solid for as long as the board is halted.
