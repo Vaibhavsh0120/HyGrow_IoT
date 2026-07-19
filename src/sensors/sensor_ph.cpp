@@ -27,8 +27,13 @@ void sensor_ph_init()
 
 bool sensor_ph_read(float ph_offset, float ph_slope, float &ph_value)
 {
-    currentConfig.ph_offset = ph_offset;
-    currentConfig.ph_slope = ph_slope;
+    // NOTE: ph_offset/ph_slope are accepted as parameters to match the other
+    // sensor_*_read() signatures' style, but readPH() below reads
+    // currentConfig.ph_offset/ph_slope directly — and the call site
+    // (task_sensor.cpp) always passes those exact same fields back in, so
+    // there's nothing to apply here. (This used to write the parameters back
+    // into currentConfig.ph_offset/ph_slope, which was a pure self-assignment
+    // no-op every single read — removed.)
     float value = readPH();
     ph_value = value;
     return !isnan(value);

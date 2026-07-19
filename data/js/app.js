@@ -27,6 +27,11 @@ const tabsData = {
     // validation) — the per-sensor detail page toggle should reflect this real
     // flag, not just "does this tab have a pin assigned".
     enabled: [null, true, true, true, true, true, false, null, null, null],
+    // Per-tab health status from msg.s_ok[] (0=disabled, 1=healthy, 2=enabled
+    // but failing to read), populated in updateTelemetry() once a "data" WS
+    // frame arrives. null until then — matches `enabled`'s null-until-synced
+    // convention above for tabs with no corresponding sensor (0, 7, 8, 9).
+    ok: [null, null, null, null, null, null, null, null, null, null],
     units: ["", "ppm", "", "°C", "lux", "%", "pH", "", "", ""]
 };
 
@@ -91,6 +96,19 @@ function resolveSensorOn(index, pin) {
     return (enabled !== null && enabled !== undefined) ? enabled : (pin >= 0);
 }
 
+// Keeps the small "ON"/"OFF" text next to a power toggle in sync with its
+// checked state. The toggle's blue-vs-dark track color alone was hard to
+// read at a glance in this dark theme, especially before the knob position
+// registers — this makes the state unambiguous regardless of color contrast.
+function syncPowerToggleLabel(toggleId, labelId) {
+    const toggle = document.getElementById(toggleId);
+    const label = document.getElementById(labelId);
+    if (!toggle || !label) return;
+    label.innerText = toggle.checked ? 'ON' : 'OFF';
+    label.classList.toggle('text-secondary', toggle.checked);
+    label.classList.toggle('text-on-surface-variant', !toggle.checked);
+}
+
 function switchTab(index, element) {
     currentTabId = index;
     const navTabsContainer = document.getElementById('nav-tabs');
@@ -129,6 +147,7 @@ function switchTab(index, element) {
         let pin = tabsData.gpios[index];
         document.getElementById('dual-sensor-pin').innerText = (pin === null || pin < 0) ? '-- (Disabled)' : pin;
         document.getElementById('dual-sensor-toggle').checked = resolveSensorOn(index, pin);
+        syncPowerToggleLabel('dual-sensor-toggle', 'dual-sensor-toggle-state');
 
         setTimeout(resizeCanvas, 50);
     } else {
@@ -147,11 +166,24 @@ function switchTab(index, element) {
 
         const sensorOn = resolveSensorOn(index, pin);
         document.getElementById('sensor-toggle').checked = sensorOn;
+        syncPowerToggleLabel('sensor-toggle', 'sensor-toggle-state');
 
+        // tabsData.ok[index] (from the latest "data" frame's s_ok[], see
+        // updateTelemetry()) distinguishes "disabled" from "enabled but not
+        // actually reading" — resolveSensorOn() alone only knows disabled.
+        // null/undefined means no "data" frame has arrived yet for this tab;
+        // fall back to the disabled-only check in that case.
+        const okCode = tabsData.ok[index];
+        const errorBanner = document.getElementById('sensor-error');
+        const errorText = document.getElementById('sensor-error-text');
         if (!sensorOn) {
-            document.getElementById('sensor-error').classList.remove('hidden');
+            if (errorText) errorText.innerText = 'Sensor disabled.';
+            errorBanner.classList.remove('hidden');
+        } else if (okCode === 2) {
+            if (errorText) errorText.innerText = 'Sensor enabled but not reading — check wiring, then see the Terminal log for the last error.';
+            errorBanner.classList.remove('hidden');
         } else {
-            document.getElementById('sensor-error').classList.add('hidden');
+            errorBanner.classList.add('hidden');
         }
 
         sensorCanvasContainer.innerHTML = '';
@@ -227,9 +259,9 @@ function showAuthPanel(panel) {
         return;
     }
     overlay.classList.remove('hidden');
-    spinner.classList.toggle('hidden', panel !== 'spinner');
-    setup.classList.toggle('hidden', panel !== 'setup');
-    login.classList.toggle('hidden', panel !== 'login');
+    if (spinner) spinner.classList.toggle('hidden', panel !== 'spinner');
+    if (setup) setup.classList.toggle('hidden', panel !== 'setup');
+    if (login) login.classList.toggle('hidden', panel !== 'login');
 }
 
 // Handles the device's "auth_status" frame — the very first message sent on
@@ -393,13 +425,24 @@ function retryConnectionNow() {
 //      mid-flight) doesn't leave a button stuck showing "Saving..." forever.
 // ------------------------------------------------------------------
 const ACK_TIMEOUT_MS = 5000;
-let pendingCommands = []; // { command, resolve, reject, timer }
+let pendingCommands = []; // { id, command, resolve, reject, timer }
+let nextPendingId = 1;
 
 function rejectAllPendingCommands(reason) {
     pendingCommands.forEach((p) => { clearTimeout(p.timer); p.reject(new Error(reason)); });
     pendingCommands = [];
 }
 
+// The device's command_result ack only echoes back the command name (see
+// sendCmdAck() in command_handlers.cpp), not a per-request id — so if two
+// commands of the SAME type are ever in flight at once, there's no way to
+// tell which ack belongs to which from the wire alone. We match the oldest
+// still-pending entry for that command name (FIFO — the ack for a command
+// almost always arrives before the ack for one sent later), which is the
+// best a client can do without protocol changes. sendCommand() below closes
+// the actual race this used to cause by refusing to send a second copy of
+// the same command while one is already pending, rather than leaving two
+// ambiguous entries in the queue at once.
 function handleCommandResult(msg) {
     const idx = pendingCommands.findIndex((p) => p.command === msg.command);
     if (idx === -1) return; // no button waiting on this ack (or it already timed out)
@@ -416,17 +459,29 @@ function sendCommand(payload) {
             reject(new Error('Not connected to the device right now.'));
             return;
         }
+        // Refuse a second copy of the same command while one is already
+        // awaiting its ack — without this, two same-type commands in
+        // flight together are indistinguishable once the ack comes back
+        // (see the note on handleCommandResult() above), and a timeout on
+        // either one used to be able to wipe out the OTHER's pending entry
+        // too (a plain command-name filter removed every match, not just
+        // the one that timed out), permanently stalling its promise.
+        if (pendingCommands.some((p) => p.command === payload.command)) {
+            reject(new Error('A previous request for this action is still in progress.'));
+            return;
+        }
         try {
             websocket.send(JSON.stringify(payload));
         } catch (e) {
             reject(e);
             return;
         }
+        const id = nextPendingId++;
         const timer = setTimeout(() => {
-            pendingCommands = pendingCommands.filter((p) => p.command !== payload.command);
+            pendingCommands = pendingCommands.filter((p) => p.id !== id);
             reject(new Error('No response from the device — it may be offline.'));
         }, ACK_TIMEOUT_MS);
-        pendingCommands.push({ command: payload.command, resolve, reject, timer });
+        pendingCommands.push({ id, command: payload.command, resolve, reject, timer });
     });
 }
 
@@ -522,6 +577,28 @@ function updateVitals(msg) {
     }
 }
 
+// Colors one dashboard tile's status dot from an s_ok[] code (0=disabled,
+// 1=healthy, 2=enabled-but-failing). Mirrors the existing fbDot convention
+// above (updateVitals): bg-secondary+animate-pulse = live, bg-error = failing,
+// bg-white/30 (no pulse) = off/disabled. `code` may be undefined if s_ok[]
+// wasn't sent yet (e.g. before the first "data" frame) — treated as healthy
+// so a tile doesn't flash "disabled" for a moment before real data lands.
+function setDashDotStatus(dotId, code) {
+    const dot = document.getElementById(dotId);
+    if (!dot) return;
+    dot.classList.remove('bg-white/30', 'bg-secondary', 'bg-error', 'animate-pulse');
+    if (code === 0) {
+        dot.classList.add('bg-white/30');
+        dot.title = 'Sensor disabled';
+    } else if (code === 2) {
+        dot.classList.add('bg-error');
+        dot.title = 'Sensor enabled but not reading — check wiring/Terminal log';
+    } else {
+        dot.classList.add('bg-secondary', 'animate-pulse');
+        dot.title = 'Live';
+    }
+}
+
 function updateTelemetry(msg) {
     // `|| 0` on every field here (not just some) protects against a partial
     // "data" frame — e.g. if broadcastData() is ever extended to omit a
@@ -538,6 +615,33 @@ function updateTelemetry(msg) {
     if(document.getElementById('dash-val-lux')) document.getElementById('dash-val-lux').innerText = (msg.lux || 0).toFixed(0);
     if(document.getElementById('dash-val-wl')) document.getElementById('dash-val-wl').innerText = (msg.wl_percent || 0).toFixed(0);
     if(document.getElementById('dash-val-vpd')) document.getElementById('dash-val-vpd').innerText = (msg.vpd_kpa || 0).toFixed(2);
+
+    // Color each dashboard tile's status dot from msg.s_ok[] (see S_EN_INDEX
+    // below for the SensorID-order mapping; VPD has no sensor of its own —
+    // it's derived from DHT temp+humidity, so it mirrors DHT's status).
+    // Dots default to "live" green in the HTML, so this only needs to
+    // override that when a sensor is actually disabled or failing.
+    if (Array.isArray(msg.s_ok)) {
+        setDashDotStatus('dash-dot-tds', msg.s_ok[S_EN_INDEX.tds]);
+        setDashDotStatus('dash-dot-ph', msg.s_ok[S_EN_INDEX.ph]);
+        setDashDotStatus('dash-dot-atemp', msg.s_ok[S_EN_INDEX.dht]);
+        setDashDotStatus('dash-dot-hum', msg.s_ok[S_EN_INDEX.dht]);
+        setDashDotStatus('dash-dot-wtemp', msg.s_ok[S_EN_INDEX.wt]);
+        setDashDotStatus('dash-dot-lux', msg.s_ok[S_EN_INDEX.light]);
+        setDashDotStatus('dash-dot-wl', msg.s_ok[S_EN_INDEX.wl]);
+        setDashDotStatus('dash-dot-vpd', msg.s_ok[S_EN_INDEX.dht]);
+
+        // Mirror the same signal into tabsData.ok[], parallel to the existing
+        // tabsData.enabled[], so the per-sensor detail page banner (switchTab)
+        // can also distinguish "disabled" from "enabled but not reading"
+        // instead of only checking enabled state.
+        tabsData.ok[1] = msg.s_ok[S_EN_INDEX.tds];
+        tabsData.ok[2] = msg.s_ok[S_EN_INDEX.dht];
+        tabsData.ok[3] = msg.s_ok[S_EN_INDEX.wt];
+        tabsData.ok[4] = msg.s_ok[S_EN_INDEX.light];
+        tabsData.ok[5] = msg.s_ok[S_EN_INDEX.wl];
+        tabsData.ok[6] = msg.s_ok[S_EN_INDEX.ph];
+    }
 
     if(document.getElementById('cal-tds-raw')) document.getElementById('cal-tds-raw').innerText = (msg.tds || 0).toFixed(1);
     if(document.getElementById('cal-ph-raw')) document.getElementById('cal-ph-raw').innerText = (msg.ph_val || 0).toFixed(2);
@@ -686,6 +790,27 @@ function validateWifiForm() {
     return !problem;
 }
 
+// Validates the optional SoftAP recovery password field. Blank means "leave
+// the current one unchanged" (never a problem — this mirrors how
+// cfg-wifi-pass/cfg-fb-pass work, since passwords are never sent back down
+// from the device, so there's nothing to show as "current"). Only a
+// non-empty value under 8 characters is a problem, matching the server-side
+// WPA2 minimum enforced in save_wifi (command_handlers.cpp).
+function validateApPassField() {
+    const apPassEl = document.getElementById('cfg-ap-pass');
+    const err = document.getElementById('cfg-ap-pass-error');
+    if (!apPassEl) return true;
+    const val = apPassEl.value;
+    const problem = val.length > 0 && val.length < 8;
+    apPassEl.classList.toggle('border-error', problem);
+    apPassEl.classList.toggle('text-error', problem);
+    if (err) {
+        err.innerText = 'SoftAP recovery password must be at least 8 characters.';
+        err.classList.toggle('hidden', !problem);
+    }
+    return !problem;
+}
+
 function validateFirebaseForm() {
     const projEl = document.getElementById('cfg-fb-proj');
     const err = document.getElementById('cfg-fb-error');
@@ -717,6 +842,7 @@ function updateConfigForm(msg) {
     // Re-run form validation now that fresh values landed in these fields —
     // same reasoning as the pin-field re-validation below.
     if (typeof validateWifiForm === 'function') validateWifiForm();
+    if (typeof validateApPassField === 'function') validateApPassField();
     if (typeof validateFirebaseForm === 'function') validateFirebaseForm();
 
     // Note: raw pH offset/slope and TDS K-factor are no longer shown as
@@ -794,6 +920,18 @@ function updateConfigForm(msg) {
     }
 }
 
+// Escapes text that will be inserted into innerHTML so device-supplied
+// strings (log messages, sensor names echoed back, etc.) are always
+// rendered as plain text and never parsed as markup. Used anywhere a
+// WS-sourced string is interpolated into innerHTML across this file —
+// see updateTerminal() and the terminal-log lines in handleToggle() /
+// the sensor-enable handler below.
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+}
+
 function updateTerminal(msg) {
     if (isTerminalPaused) return;
     const term = document.getElementById('terminal-output');
@@ -803,7 +941,7 @@ function updateTerminal(msg) {
     const log = document.createElement('div');
     const colorClass = msg.core === 0 ? "log-core-0" : "log-core-1";
     const levelClass = msg.level === "error" ? "text-error font-bold" : (msg.level === "warn" ? "text-secondary" : "");
-    log.innerHTML = `<span class="${colorClass} opacity-80">[CORE ${msg.core}]</span> <span class="${levelClass}">${msg.msg}</span>`;
+    log.innerHTML = `<span class="${colorClass} opacity-80">[CORE ${msg.core}]</span> <span class="${levelClass}">${escapeHtml(msg.msg)}</span>`;
     term.appendChild(log);
     term.scrollTop = term.scrollHeight;
 }
@@ -917,6 +1055,11 @@ document.addEventListener('DOMContentLoaded', () => {
         wifiSsidInput.addEventListener('input', validateWifiForm);
         wifiSsidInput.addEventListener('change', validateWifiForm);
     }
+    const apPassInput = document.getElementById('cfg-ap-pass');
+    if (apPassInput) {
+        apPassInput.addEventListener('input', validateApPassField);
+        apPassInput.addEventListener('change', validateApPassField);
+    }
     const fbProjInput = document.getElementById('cfg-fb-proj');
     if (fbProjInput) {
         fbProjInput.addEventListener('input', validateFirebaseForm);
@@ -926,22 +1069,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnSaveWifi = document.getElementById('btn-save-wifi');
     if(btnSaveWifi) {
         btnSaveWifi.addEventListener('click', () => {
-            if (!validateWifiForm()) return;
+            if (!validateWifiForm() || !validateApPassField()) return;
+            const apPassEl = document.getElementById('cfg-ap-pass');
+            const newApPass = apPassEl ? apPassEl.value : '';
             const payload = {
                 command: "save_wifi",
                 ssid: document.getElementById('cfg-wifi-ssid').value,
                 pass: document.getElementById('cfg-wifi-pass').value
             };
+            if (newApPass) payload.ap_pass = newApPass; // omit entirely when blank — server keeps the current one
             sendCommand(payload).then(() => {
                 btnSaveWifi.innerText = "Saved!";
                 setTimeout(() => { btnSaveWifi.innerText = "Update Network"; }, 2000);
+                if (apPassEl) apPassEl.value = ''; // never leave a saved password sitting in the field
                 // Fix (gap #6): if the new credentials are wrong, the device
                 // safely falls back to its HyGrow-Setup SoftAP after ~15s
                 // (see initNetworkTask() in task_network.cpp) — but this
                 // browser tab has no way to follow it there, since its IP
                 // changes. Tell the user what to do before they're staring at
-                // a dead "OFFLINE" indicator with no explanation.
-                if(confirm("Wi-Fi credentials saved. The ESP32 must reboot to connect with the new credentials. Reboot now?\n\nIf these credentials turn out to be wrong, the device will automatically fall back to its own \"HyGrow-Setup\" Wi-Fi network after about 15 seconds — reconnect to that network and browse to 192.168.4.1 to try again.")) {
+                // a dead "OFFLINE" indicator with no explanation. If the AP
+                // password was just changed too, say so explicitly — the OLD
+                // one won't get them back into the recovery network anymore.
+                const apPassNote = newApPass
+                    ? "\n\nNote: you also just changed the SoftAP recovery password — use the NEW one, not the old one, when reconnecting."
+                    : "";
+                if(confirm("Wi-Fi credentials saved. The ESP32 must reboot to connect with the new credentials. Reboot now?\n\nIf these credentials turn out to be wrong, the device will automatically fall back to its own \"HyGrow-Setup\" Wi-Fi network after about 15 seconds — reconnect to that network and browse to 192.168.4.1 to try again." + apPassNote)) {
                     sendCommand({command: "reboot"}).catch(() => {});
                 }
             }).catch((err) => {
@@ -1247,6 +1399,29 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('terminal-output').innerHTML = '<div><span class="text-secondary opacity-70">[SYS]</span> Terminal cleared.</div>';
     });
 
+    // Per-sensor detail page CSV export — uses exportSeriesToCsv() (charts.js),
+    // which was defined but never wired to any button before this. The
+    // dashboard's "Export CSV" button above has its own bundled multi-sensor
+    // export; this one exports just the currently-viewed sensor's buffer.
+    const btnExportSensor = document.getElementById('btn-export-sensor-csv');
+    if (btnExportSensor) {
+        btnExportSensor.addEventListener('click', () => {
+            const buf = sensorBuffers[currentTabId];
+            // Only tabs 1,3,4,5,6 have a flat array buffer (tab 2 is the dual
+            // Air Temp/Hum page with its own {hum,temp} shape, not a plain
+            // array exportSeriesToCsv expects) — guard the same way
+            // updateTelemetry() already gates chart drawing for these tabs.
+            if (!Array.isArray(buf)) {
+                alert("CSV export isn't available for this page.");
+                return;
+            }
+            const sensorName = (tabsData.labels[currentTabId] || "sensor").replace(/\s+/g, '_');
+            if (typeof exportSeriesToCsv === 'function') {
+                exportSeriesToCsv(sensorName, buf);
+            }
+        });
+    }
+
     // Advanced CSV Export (Bundles config and the 20-point buffers for all 8 sensors)
     const btnExport = document.getElementById('btn-export-csv');
     if(btnExport) {
@@ -1293,12 +1468,21 @@ document.addEventListener('DOMContentLoaded', () => {
         let sensorName = "";
         let sensorId = ""; // short id used by save_sensor_enabled / TAB_TO_SENSOR_ID
 
-        if (tabId === 1) { payload.pin_tds = isEnabled ? DEFAULT_PINS.tds : -1; sensorName = "TDS"; sensorId = "tds"; }
-        else if (tabId === 2) { payload.pin_dht = isEnabled ? DEFAULT_PINS.dht : -1; sensorName = "DHT"; sensorId = "dht"; }
-        else if (tabId === 3) { payload.pin_wt = isEnabled ? DEFAULT_PINS.wt : -1; sensorName = "Water Temp"; sensorId = "wt"; }
-        else if (tabId === 4) { payload.pin_sda = isEnabled ? DEFAULT_PINS.sda : -1; payload.pin_scl = isEnabled ? DEFAULT_PINS.scl : -1; sensorName = "I2C Light"; sensorId = "light"; }
-        else if (tabId === 5) { payload.pin_wl = isEnabled ? DEFAULT_PINS.wl : -1; payload.pin_wlp = isEnabled ? DEFAULT_PINS.wlp : -1; sensorName = "Water Level"; sensorId = "wl"; }
-        else if (tabId === 6) { payload.pin_ph = isEnabled ? DEFAULT_PINS.ph : -1; sensorName = "pH"; sensorId = "ph"; }
+        let pinDesc = ""; // human-readable pin(s) restored, for the terminal log below
+
+        // e.target is whichever of the two power toggles fired this handler
+        // (single-sensor page or dual-sensor/Air-Temp-Hum page) — map it to
+        // its matching ON/OFF label so syncPowerToggleLabel() below updates
+        // the right one regardless of which toggle was clicked.
+        const toggleLabelId = e.target.id === 'dual-sensor-toggle' ? 'dual-sensor-toggle-state' : 'sensor-toggle-state';
+        syncPowerToggleLabel(e.target.id, toggleLabelId); // immediate feedback on click, before the round-trip completes
+
+        if (tabId === 1) { payload.pin_tds = isEnabled ? DEFAULT_PINS.tds : -1; sensorName = "TDS"; sensorId = "tds"; pinDesc = `GPIO ${DEFAULT_PINS.tds}`; }
+        else if (tabId === 2) { payload.pin_dht = isEnabled ? DEFAULT_PINS.dht : -1; sensorName = "DHT"; sensorId = "dht"; pinDesc = `GPIO ${DEFAULT_PINS.dht}`; }
+        else if (tabId === 3) { payload.pin_wt = isEnabled ? DEFAULT_PINS.wt : -1; sensorName = "Water Temp"; sensorId = "wt"; pinDesc = `GPIO ${DEFAULT_PINS.wt}`; }
+        else if (tabId === 4) { payload.pin_sda = isEnabled ? DEFAULT_PINS.sda : -1; payload.pin_scl = isEnabled ? DEFAULT_PINS.scl : -1; sensorName = "I2C Light"; sensorId = "light"; pinDesc = `SDA ${DEFAULT_PINS.sda} / SCL ${DEFAULT_PINS.scl}`; }
+        else if (tabId === 5) { payload.pin_wl = isEnabled ? DEFAULT_PINS.wl : -1; payload.pin_wlp = isEnabled ? DEFAULT_PINS.wlp : -1; sensorName = "Water Level"; sensorId = "wl"; pinDesc = `GPIO ${DEFAULT_PINS.wl} (power ${DEFAULT_PINS.wlp})`; }
+        else if (tabId === 6) { payload.pin_ph = isEnabled ? DEFAULT_PINS.ph : -1; sensorName = "pH"; sensorId = "ph"; pinDesc = `GPIO ${DEFAULT_PINS.ph}`; }
 
         if (sensorName !== "") {
             e.target.disabled = true;
@@ -1327,14 +1511,23 @@ document.addEventListener('DOMContentLoaded', () => {
             }).then(() => {
                 e.target.disabled = false;
                 const status = isEnabled ? "POWERED ON" : "POWERED OFF";
-                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${sensorName} ${status}.</div>`;
+                // On power-on, this toggle also restores the sensor's compiled
+                // default pin(s) (see payload above and save_sensor_enabled's
+                // server-side pin-restore branch) — say so explicitly instead of
+                // just "POWERED ON", since that restore was previously silent.
+                const pinNote = isEnabled ? ` — pin restored to default (${pinDesc})` : "";
+                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} ${status}${escapeHtml(pinNote)}.</div>`;
                 if(confirm(`Sensor power state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
                     sendCommand({command: "reboot"}).catch(() => {});
-                } else { e.target.checked = !isEnabled; }
+                } else {
+                    e.target.checked = !isEnabled;
+                    syncPowerToggleLabel(e.target.id, toggleLabelId);
+                }
             }).catch((err) => {
                 e.target.disabled = false;
                 e.target.checked = !isEnabled; // revert — the device never actually applied this
-                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${sensorName} power change failed: ${err && err.message ? err.message : 'error'}.</div>`;
+                syncPowerToggleLabel(e.target.id, toggleLabelId);
+                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} power change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
             });
         }
     };
@@ -1396,7 +1589,12 @@ document.addEventListener('DOMContentLoaded', () => {
             e.target.disabled = true;
             sendCommand({ command: "save_sensor_enabled", sensor: sensorId, enabled }).then(() => {
                 e.target.disabled = false;
-                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${sensorId}' ${enabled ? "ENABLED" : "DISABLED"}.</div>`;
+                // On enable, the server also restores any pin(s) still at -1 to
+                // their compiled default (command_handlers.cpp: save_sensor_enabled
+                // only touches pins that are currently unset) — surface that here
+                // instead of leaving it silent, same as the pinout-card toggle above.
+                const pinNote = enabled ? " — any unset pin(s) restored to default" : "";
+                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${escapeHtml(sensorId)}' ${enabled ? "ENABLED" : "DISABLED"}${escapeHtml(pinNote)}.</div>`;
                 if (confirm(`Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
                     sendCommand({ command: "reboot" }).catch(() => {});
                 } else {
@@ -1405,7 +1603,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }).catch((err) => {
                 e.target.disabled = false;
                 e.target.checked = !enabled; // revert — the device never actually applied this
-                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${sensorId}' enable change failed: ${err && err.message ? err.message : 'error'}.</div>`;
+                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${escapeHtml(sensorId)}' enable change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
             });
         });
     });

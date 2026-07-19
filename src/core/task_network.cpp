@@ -224,6 +224,27 @@ void broadcastData()
     doc["ph_val"] = currentSensors.ph_val;
     doc["vpd_kpa"] = currentSensors.vpd_kpa;
 
+    // Per-sensor status, one code per SensorID (same enum order as s_en[] in
+    // broadcastConfig() above: S_WL, S_LIGHT, S_TDS, S_DHT, S_PH, S_WTEMP):
+    //   0 = disabled (sensor_enabled[i] is false — not an error, just off)
+    //   1 = healthy   (enabled, last_err[i] empty — most recent read cycle ok)
+    //   2 = failing    (enabled, last_err[i] non-empty — most recent read cycle failed)
+    // This mirrors exactly what sensorTaskLoop() (task_sensor.cpp) already
+    // computes every cycle to drive the status LED, just serialized here too
+    // instead of being LED-only. The dashboard and per-sensor detail page use
+    // this to distinguish "disabled" from "enabled but not actually reading"
+    // — previously neither state reached the client at all.
+    JsonArray sOk = doc["s_ok"].to<JsonArray>();
+    for (int i = 0; i < S_COUNT; i++)
+    {
+        if (!currentConfig.sensor_enabled[i])
+            sOk.add(0);
+        else if (currentSensors.last_err[i][0] != '\0')
+            sOk.add(2);
+        else
+            sOk.add(1);
+    }
+
     String payload;
     serializeJson(doc, payload);
     wsTextAllAuthed(payload);

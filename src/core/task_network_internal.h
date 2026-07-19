@@ -59,6 +59,10 @@ void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc
 // Fires one Firestore PATCH with the current sensor snapshot, at most once
 // per currentConfig.interval_fb_ms. Called from networkTaskLoop().
 void firebaseUploadCycle();
+// Clears the cached Identity Toolkit ID token so the next upload cycle signs
+// in fresh. Call this any time fb_email/fb_pass/fb_project/fb_api_key change
+// — see save_firebase in command_handlers.cpp.
+void firebaseInvalidateToken();
 
 // ---------- command_handlers.cpp ----------
 // Sends a per-command acknowledgement directly to the requesting client only

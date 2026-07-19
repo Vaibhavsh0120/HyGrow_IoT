@@ -37,7 +37,7 @@
 #define FALLBACK_FIREBASE_USER_PASSWORD "YOUR_SECURE_PASSWORD"
 
 // --- Firestore Default Collection ---
-#define FALLBACK_FIRESTORE_COLLECTION "sensor_data"
+#define FALLBACK_FIRESTORE_COLLECTION "sensor_readings"
 
 // --- Device Identity ---
 // Used to separate data if you have multiple ESP32s running this firmware

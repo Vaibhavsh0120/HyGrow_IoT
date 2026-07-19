@@ -142,8 +142,34 @@ void bootButtonTaskWrapper(void *parameter)
         }
         else if (!down && pressed)
         {
-            // Released before reaching even the 10s threshold — nothing to do.
+            // Released — log how long it was actually held. This is the key
+            // diagnostic for the "3 blinks at 10s, then 3 blinks again at 20s
+            // instead of 5" symptom: that happens when contact bounces mid-hold
+            // (a brief down->up->down blip the 50ms poll sees as a real
+            // release), which silently resets pressStart on the next tick and
+            // restarts the 10s count from zero. Without this log, that reset is
+            // invisible — the user only sees the blink pattern and has no way
+            // to tell "restarted the count" apart from "genuinely held to 20s".
+            unsigned long heldMs = millis() - pressStart;
             pressed = false;
+
+            if (factoryResetFired)
+            {
+                // Already handled: state_factory_reset() reboots and never
+                // returns, so this branch is effectively unreachable, but
+                // kept for clarity/symmetry with the other two cases.
+            }
+            else if (authResetFired)
+            {
+                webLog(0, LOG_INFO, "BOOT button released after " + String(heldMs) + "ms (auth reset already fired; kept holding but never reached 20s, or contact broke before then).");
+            }
+            else if (heldMs >= BOOT_POLL_MS)
+            {
+                // Only log ordinary short presses/taps if they're at least one
+                // poll interval, to avoid spamming the log for pure electrical
+                // noise shorter than the loop can even observe meaningfully.
+                webLog(0, LOG_INFO, "BOOT button released after " + String(heldMs) + "ms (no reset triggered; hold 10s for auth reset, 20s for factory reset).");
+            }
         }
 
         vTaskDelay(pdMS_TO_TICKS(BOOT_POLL_MS));

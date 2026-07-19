@@ -169,8 +169,26 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
             return;
         }
 
+        // AP fallback password ("ap_pass") is optional in this payload —
+        // an empty/absent "ap_pass" key means "leave it unchanged", which
+        // lets the frontend always send ssid/pass without forcing the AP
+        // password field to be re-entered on every Wi-Fi save. Only
+        // validate it when the user is actually changing it: WPA2 requires
+        // an 8+ character PSK, so a shorter one would leave the recovery
+        // SoftAP unreachable (or silently open) after the next reboot.
+        bool changingApPass = doc["ap_pass"].is<const char *>() && String((const char *)doc["ap_pass"]).length() > 0;
+        String apPass = changingApPass ? String((const char *)doc["ap_pass"]) : "";
+        if (changingApPass && apPass.length() < 8)
+        {
+            webLog(0, LOG_ERR, "save_wifi rejected: AP password too short.");
+            sendCmdAck(client, cmd, false, "SoftAP recovery password must be at least 8 characters.");
+            return;
+        }
+
         strlcpy(currentConfig.wifi_ssid, ssid.c_str(), sizeof(currentConfig.wifi_ssid));
         strlcpy(currentConfig.wifi_pass, doc["pass"] | "", sizeof(currentConfig.wifi_pass));
+        if (changingApPass)
+            strlcpy(currentConfig.ap_pass, apPass.c_str(), sizeof(currentConfig.ap_pass));
         if (!state_save())
         {
             webLog(0, LOG_ERR, "save_wifi: state_save() failed — settings may not be fully persisted.");
@@ -178,7 +196,8 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
             return;
         }
         broadcastConfig();
-        webLog(0, LOG_INFO, "WiFi config saved. Reboot to apply.");
+        webLog(0, LOG_INFO, changingApPass ? "WiFi config + AP recovery password saved. Reboot to apply."
+                                            : "WiFi config saved. Reboot to apply.");
         sendCmdAck(client, cmd, true);
     }
     else if (cmd == "save_firebase")
@@ -200,6 +219,7 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
         strlcpy(currentConfig.fb_email, doc["email"] | "", sizeof(currentConfig.fb_email));
         strlcpy(currentConfig.fb_pass, doc["pass"] | "", sizeof(currentConfig.fb_pass));
         strlcpy(currentConfig.fb_collection, doc["col"] | "", sizeof(currentConfig.fb_collection));
+        firebaseInvalidateToken(); // credentials changed — don't keep uploading under the old identity
         if (!state_save())
         {
             webLog(0, LOG_ERR, "save_firebase: state_save() failed — settings may not be fully persisted.");

@@ -24,6 +24,19 @@
 static String s_fbIdToken;
 static uint32_t s_fbTokenExpiryMs = 0; // millis() timestamp after which the cached token is considered stale
 
+// Forces the next firebaseUploadCycle() to sign in again from scratch
+// instead of reusing a cached ID token. Must be called whenever
+// fb_email/fb_pass/fb_project/fb_api_key change (see save_firebase in
+// command_handlers.cpp) — without this, a credential change while a
+// still-valid cached token exists would keep uploading under the OLD
+// identity/project until that token's ~1hr lifetime naturally expired,
+// silently ignoring the just-saved credentials in the meantime.
+void firebaseInvalidateToken()
+{
+    s_fbIdToken = "";
+    s_fbTokenExpiryMs = 0;
+}
+
 // Exchange fb_email/fb_pass for a Firebase Identity Toolkit ID token.
 // Caches the token and its expiry so normal upload cycles don't sign in
 // every time — only when the cache is empty or has expired.
@@ -115,7 +128,7 @@ void firebaseUploadCycle()
     HTTPClient https;
     https.setTimeout(5000);
 
-    String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "sensor_data";
+    String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "sensor_readings";
     String docId = String(currentConfig.device_id).length() > 0 ? String(currentConfig.device_id) : "esp32_device";
 
     // ------------------------------------------------------------------
@@ -152,7 +165,7 @@ void firebaseUploadCycle()
 
     // updateMask.fieldPaths must appear as one repeated query param per
     // field -- Firestore does not accept a single comma-joined param here.
-    String maskParams = "&updateMask.fieldPaths=uptime_s&updateMask.fieldPaths=server_timestamp";
+    String maskParams = "&updateMask.fieldPaths=uptime_s";
     if (wantTds)
         maskParams += "&updateMask.fieldPaths=tds_ppm";
     if (wantDht)
@@ -200,9 +213,20 @@ void firebaseUploadCycle()
     if (wantWl)
         fields["wl_percent"]["doubleValue"] = currentSensors.wl_percent;
 
-    // Always-present bookkeeping fields -- not tied to any sensor.
+    // Always-present bookkeeping field -- not tied to any sensor.
+    //
+    // NOTE: this used to also send fields["server_timestamp"]["timestampValue"]
+    // = "REQUEST_TIME", intending Firestore's server-timestamp sentinel. That
+    // sentinel is only honored via a field TRANSFORM
+    // (fieldTransforms[].setToServerValue in the REST API), not as a plain
+    // field value in a PATCH body -- sending it as a timestampValue string
+    // either gets rejected as an invalid timestamp or stored as a literal,
+    // useless string, on every single upload. Removed rather than fixed
+    // properly with a transform, since uptime_s below (device clock, already
+    // sent) plus currentVitals.firebase_last_ok_ms (millis() of the last
+    // successful upload, tracked device-side below) already cover freshness
+    // without needing a second, server-side timestamp field.
     fields["uptime_s"]["integerValue"] = String(millis() / 1000);
-    fields["server_timestamp"]["timestampValue"] = "REQUEST_TIME"; // Firestore special sentinel isn't supported via plain PATCH body; kept as a marker field for downstream tooling.
 
     String payload;
     serializeJson(doc, payload);

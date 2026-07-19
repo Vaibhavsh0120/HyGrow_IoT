@@ -169,7 +169,7 @@
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">water_drop</span> TDS</span>
-                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                        <span id="dash-dot-tds" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-tds">--</span> <span class="text-headline-md text-white/50 ml-1">ppm</span></div>
@@ -178,7 +178,7 @@
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">science</span> pH Level</span>
-                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                        <span id="dash-dot-ph" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-ph">--</span></div>
@@ -187,7 +187,7 @@
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">thermostat</span> Air Temp</span>
-                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                        <span id="dash-dot-atemp" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-atemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
@@ -196,7 +196,7 @@
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">cloud</span> Humidity</span>
-                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                        <span id="dash-dot-hum" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-hum">--</span> <span class="text-headline-md text-white/50 ml-1">%</span></div>
@@ -205,7 +205,7 @@
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">device_thermostat</span> Water Temp</span>
-                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                        <span id="dash-dot-wtemp" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-wtemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
@@ -214,7 +214,7 @@
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">light_mode</span> Light</span>
-                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                        <span id="dash-dot-lux" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-lux">--</span> <span class="text-headline-md text-white/50 ml-1">lx</span></div>
@@ -223,7 +223,7 @@
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">waves</span> Tank Level</span>
-                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                        <span id="dash-dot-wl" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-wl">--</span> <span class="text-headline-md text-white/50 ml-1">%</span></div>
@@ -232,7 +232,7 @@
                 <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">air</span> VPD</span>
-                        <span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                        <span id="dash-dot-vpd" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-vpd">--</span> <span class="text-headline-md text-white/50 ml-1">kPa</span></div>
@@ -251,14 +251,20 @@
                     </h2>
                     <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">GPIO PIN: <span class="text-primary" id="sensor-pin">--</span></p>
                 </div>
-                <label class="relative inline-flex items-center cursor-pointer">
-                    <input checked="" class="sr-only peer" id="sensor-toggle" type="checkbox"/>
-                    <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
-                    <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
-                </label>
+                <div class="flex items-center gap-4">
+                    <button id="btn-export-sensor-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
+                        <span class="material-symbols-outlined text-[20px]">download</span> Export CSV
+                    </button>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input checked="" class="sr-only peer" id="sensor-toggle" type="checkbox"/>
+                        <div class="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+                        <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
+                        <span id="sensor-toggle-state" class="ml-3 font-label-sm text-label-sm text-secondary">ON</span>
+                    </label>
+                </div>
             </header>
             <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center justify-between gap-2 shadow-lg" id="sensor-error" role="alert">
-                <span class="flex items-center gap-2"><span class="material-symbols-outlined">warning</span> Sensor reading offline or disabled.</span>
+                <span class="flex items-center gap-2"><span class="material-symbols-outlined">warning</span> <span id="sensor-error-text">Sensor reading offline or disabled.</span></span>
                 <button id="btn-reset-current-sensor" class="text-error underline underline-offset-2 text-label-md whitespace-nowrap">Reset to default &amp; reboot</button>
             </div>
             <div class="flex-1 liquid-glass rounded-3xl p-6 md:p-8 flex flex-col relative min-h-[400px]">
@@ -284,8 +290,9 @@
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer">
                     <input checked="" class="sr-only peer" id="dual-sensor-toggle" type="checkbox"/>
-                    <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+                    <div class="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
                     <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
+                    <span id="dual-sensor-toggle-state" class="ml-3 font-label-sm text-label-sm text-secondary">ON</span>
                 </label>
             </header>
             <div class="flex-1 liquid-glass rounded-3xl p-6 md:p-8 flex flex-col relative min-h-[400px]">
@@ -390,7 +397,8 @@
                          before Step 2/3 render their own copies. -->
                     <span id="cal-ph-4-val" class="hidden"></span>
                 </div>
-
+            </div>
+        </section>
 
         <!-- PAGE 8: System Settings -->
         <section class="page-section flex-col gap-8 hidden" id="page-8">
@@ -419,6 +427,12 @@
                             <label class="font-label-md text-on-surface-variant" for="cfg-wifi-pass">Password</label>
                             <input id="cfg-wifi-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                         </div>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant" for="cfg-ap-pass">SoftAP Recovery Password</label>
+                            <input id="cfg-ap-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
+                            <p class="font-label-sm text-label-sm text-on-surface-variant">Password for the "HyGrow-Setup" recovery network the device falls back to if Wi-Fi fails. Minimum 8 characters. Leave blank to keep the current one.</p>
+                        </div>
+                        <p id="cfg-ap-pass-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
                         <!-- Client-side form validation: an empty SSID can't be
                              connected to. Mirrors the #cfg-pass-error pattern
                              below. The real boundary is server-side
@@ -519,7 +533,7 @@
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-col">Firestore Collection</label>
-                            <input id="cfg-fb-col" maxlength="31" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="sensor_data" type="text"/>
+                            <input id="cfg-fb-col" maxlength="31" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="sensor_readings" type="text"/>
                         </div>
                         <!-- Client-side form validation: a Project ID, if
                              given, must look like a real Firebase project ID
