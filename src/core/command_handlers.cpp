@@ -11,7 +11,7 @@
 //   - handleDeviceCommand(): every command name other than "auth"/
 //     "change_password" (those live in auth.cpp) — save_wifi, save_firebase,
 //     save_pins, calibrate_ph, calibrate_tds, save_features,
-//     save_sensor_enabled, save_intervals, reset_sensor_pin, factory_reset,
+//     save_sensor_enabled, save_intervals, reset_sensor_pin, test_firebase, factory_reset,
 //     reboot, request_vitals
 //
 // Structural split from the original file, PLUS new input validation that
@@ -62,16 +62,18 @@ void sendCmdAck(AsyncWebSocketClient *client, const String &cmd, bool ok, const 
 // currentConfig/NVS". Neither one is a substitute for enforceForbiddenPins()
 // in HyGrow_IoT.ino, which remains the last-resort boot-time guard.
 
-// True if `pin` is a reserved USB D-/D+ line. -1 (disabled) is always fine.
+// True if `pin` is a reserved USB D-/D+ line. Any negative value (not a real
+// GPIO) is always fine — it simply can't match 19 or 20.
 static bool isForbiddenPin(int pin)
 {
     return pin == 19 || pin == 20;
 }
 
 // Checks a proposed full set of sensor pins for GPIO19/20 use and for
-// duplicate assignments between two different *enabled* sensors. -1 never
-// conflicts with anything. Returns "" if the whole set is valid, or a
-// human-readable reason naming the offending sensor(s)/pin if not.
+// duplicate assignments between different sensors. A negative value never
+// conflicts with anything (it isn't a real GPIO). Returns "" if the whole
+// set is valid, or a human-readable reason naming the offending sensor(s)/
+// pin if not.
 struct PinCheckEntry
 {
     int pin;
@@ -149,7 +151,7 @@ static bool isRealisticTdsPpm(float ppm)
 
 // Every command name other than "auth"/"change_password" (those live in
 // auth.cpp) — save_wifi, save_firebase, save_pins, calibrate_ph,
-// calibrate_tds, save_features, save_sensor_enabled, save_intervals,
+// calibrate_tds, save_features, save_sensor_enabled, save_intervals, test_firebase,
 // reset_sensor_pin, factory_reset, reboot, request_vitals. Only ever called
 // once the client has passed auth (see the gate in handleWebSocketMessage(),
 // websocket.cpp).
@@ -185,8 +187,26 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
             return;
         }
 
+        // Wi-Fi password ("pass") is the SAME "empty = leave unchanged"
+        // pattern as ap_pass just above. The field is a `type="password"`
+        // input the device never echoes a saved secret back into (see
+        // broadcastConfig() / updateConfigForm() in app.js), so it always
+        // LOOKS empty right after a page load or any config refresh — with
+        // no guard here, clicking "Update Network" to change only the SSID
+        // (or after any refresh repopulated the form) silently overwrote a
+        // perfectly good saved Wi-Fi password with "", which then only
+        // surfaces as a mysterious connect failure on the next reboot. An
+        // open/no-password network is set by first blanking it, saving,
+        // then genuinely leaving it empty on save — the two are
+        // indistinguishable from an empty field alone, so this matches
+        // ap_pass's existing rule: to actually clear it, use a dedicated
+        // "forget/clear password" affordance rather than an empty field
+        // silently doing so on every unrelated save.
+        bool changingWifiPass = doc["pass"].is<const char *>() && String((const char *)doc["pass"]).length() > 0;
+
         strlcpy(currentConfig.wifi_ssid, ssid.c_str(), sizeof(currentConfig.wifi_ssid));
-        strlcpy(currentConfig.wifi_pass, doc["pass"] | "", sizeof(currentConfig.wifi_pass));
+        if (changingWifiPass)
+            strlcpy(currentConfig.wifi_pass, ((const char *)doc["pass"]), sizeof(currentConfig.wifi_pass));
         if (changingApPass)
             strlcpy(currentConfig.ap_pass, apPass.c_str(), sizeof(currentConfig.ap_pass));
         if (!state_save())
@@ -214,10 +234,20 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
             return;
         }
 
+        // Same "empty = leave unchanged" rule as save_wifi's Wi-Fi password,
+        // and for the identical reason: this field is never re-populated
+        // from the device (see broadcastConfig()/updateConfigForm() in
+        // app.js), so it always looks empty. Without this guard, saving
+        // Project ID/API Key/Email/Collection while the password field sits
+        // at its default empty state silently erased the saved Firebase
+        // account password on every such save.
+        bool changingFbPass = doc["pass"].is<const char *>() && String((const char *)doc["pass"]).length() > 0;
+
         strlcpy(currentConfig.fb_api_key, doc["api"] | "", sizeof(currentConfig.fb_api_key));
         strlcpy(currentConfig.fb_project, projectId.c_str(), sizeof(currentConfig.fb_project));
         strlcpy(currentConfig.fb_email, doc["email"] | "", sizeof(currentConfig.fb_email));
-        strlcpy(currentConfig.fb_pass, doc["pass"] | "", sizeof(currentConfig.fb_pass));
+        if (changingFbPass)
+            strlcpy(currentConfig.fb_pass, ((const char *)doc["pass"]), sizeof(currentConfig.fb_pass));
         strlcpy(currentConfig.fb_collection, doc["col"] | "", sizeof(currentConfig.fb_collection));
         firebaseInvalidateToken(); // credentials changed — don't keep uploading under the old identity
         if (!state_save())
@@ -345,8 +375,19 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
         // "omit-to-leave-unchanged" pattern used by save_pins. Neither
         // flag requires a reboot: both demo_mode and firebase_enabled
         // are checked live, every cycle.
+        bool wasFbEnabled = currentConfig.firebase_enabled;
         currentConfig.demo_mode = doc["demo"] | currentConfig.demo_mode;
         currentConfig.firebase_enabled = doc["fb_en"] | currentConfig.firebase_enabled;
+
+        // Turning Firebase Upload back on (including right after an
+        // auto-disable at FIREBASE_MAX_CONSECUTIVE_FAILURES) is an explicit
+        // "try again" — start the failure streak over instead of
+        // auto-disabling again on the very next tick.
+        if (currentConfig.firebase_enabled && !wasFbEnabled)
+        {
+            firebaseResetFailureCount();
+        }
+
         if (!state_save())
         {
             webLog(0, LOG_ERR, "save_features: state_save() failed — settings may not be fully persisted.");
@@ -393,69 +434,6 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
 
         currentConfig.sensor_enabled[id] = enabled;
 
-        // If re-enabling and the pin(s) are still -1 (e.g. from an
-        // earlier auto-disable or manual pin reset), restore the
-        // compiled default(s) too — otherwise the user enables a
-        // sensor whose pins are still -1 and nothing happens. Reuses
-        // the same defaults reset_sensor_pin() already applies.
-        if (enabled)
-        {
-            switch (id)
-            {
-            case S_TDS:
-                if (currentConfig.pin_tds < 0)
-                    currentConfig.pin_tds = PIN_TDS;
-                break;
-            case S_DHT:
-                if (currentConfig.pin_dht < 0)
-                    currentConfig.pin_dht = PIN_DHT;
-                break;
-            case S_PH:
-                if (currentConfig.pin_ph < 0)
-                    currentConfig.pin_ph = PIN_PH;
-                break;
-            case S_WTEMP:
-                if (currentConfig.pin_ds18b20 < 0)
-                    currentConfig.pin_ds18b20 = PIN_DS18B20;
-                break;
-            case S_WL:
-                if (currentConfig.pin_wl < 0)
-                    currentConfig.pin_wl = PIN_WL;
-                if (currentConfig.pin_wl_power < 0)
-                    currentConfig.pin_wl_power = PIN_WL_PWR;
-                break;
-            case S_LIGHT:
-                if (currentConfig.pin_lux_sda < 0)
-                    currentConfig.pin_lux_sda = PIN_LUX_SDA;
-                if (currentConfig.pin_lux_scl < 0)
-                    currentConfig.pin_lux_scl = PIN_LUX_SCL;
-                break;
-            default:
-                break;
-            }
-
-            // Server-side forbidden-pin / duplicate check (Part 5.4/5.5)
-            // applies here too, in case a restored default somehow
-            // collides with another sensor's currently-assigned pin.
-            PinCheckEntry proposed[] = {
-                {currentConfig.pin_tds, "TDS"},
-                {currentConfig.pin_dht, "DHT22"},
-                {currentConfig.pin_ph, "pH"},
-                {currentConfig.pin_ds18b20, "DS18B20 (Water Temp)"},
-                {currentConfig.pin_wl, "Water Level Signal"},
-                {currentConfig.pin_lux_sda, "BH1750 SDA"},
-                {currentConfig.pin_lux_scl, "BH1750 SCL"},
-                {currentConfig.pin_wl_power, "Water Level Power"},
-            };
-            String problem = validatePinSet(proposed, 8);
-            if (problem.length() > 0)
-            {
-                webLog(0, LOG_ERR, "save_sensor_enabled rejected: " + problem);
-                sendCmdAck(client, cmd, false, problem);
-                return;
-            }
-        }
-
         if (!state_save())
         {
             webLog(0, LOG_ERR, "save_sensor_enabled: state_save() failed — settings may not be fully persisted.");
@@ -499,13 +477,12 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
         String sensor = doc["sensor"] | "";
         bool matched = true;
 
-        // Part 5.1 fix: restoring the pin(s) alone used to leave
-        // sensor_enabled[id] permanently false once a sensor had
-        // auto-disabled (see autoDisable() in task_sensor.cpp) — nothing
-        // else in the firmware ever set it back to true. Flip the flag
-        // back on here, in the same place the pin gets restored, so
-        // "Reset" from the Web UI actually undoes an auto-disable instead
-        // of just moving the pin back while the sensor stays off forever.
+        // Resets the sensor's pin(s) to their compiled default AND
+        // re-enables it — a one-click undo for both a bad manual pin edit
+        // and an auto-disable (see autoDisable() in task_sensor.cpp, which
+        // only ever flips sensor_enabled[] and never touches pins). Doing
+        // both together here is a UX convenience; they're otherwise two
+        // fully independent settings (save_pins vs save_sensor_enabled).
         if (sensor == "tds")
         {
             currentConfig.pin_tds = PIN_TDS;
@@ -569,6 +546,27 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
         webLog(0, LOG_WARN, "Manual reboot requested...");
         delay(1000);
         ESP.restart();
+    }
+    else if (cmd == "test_firebase")
+    {
+        // Real connectivity check against whatever is currently SAVED in
+        // currentConfig (see the contract note on firebaseTestConnection()
+        // in firebase.cpp) — the button is only meaningful after Save
+        // Credentials has run. Blocking call (~1-2 HTTPS round trips, each
+        // capped at 7s) is acceptable here: it only runs on an explicit user
+        // click, not on any periodic cadence.
+        String error;
+        bool ok = firebaseTestConnection(error);
+        if (ok)
+        {
+            webLog(0, LOG_INFO, "Firebase connection test succeeded.");
+            sendCmdAck(client, cmd, true);
+        }
+        else
+        {
+            webLog(0, LOG_ERR, "Firebase connection test failed: " + error);
+            sendCmdAck(client, cmd, false, error);
+        }
     }
     else if (cmd == "request_vitals")
     {

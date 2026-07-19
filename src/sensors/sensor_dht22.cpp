@@ -9,25 +9,18 @@ DHT *dhtSensor = nullptr;
 
 void initDHT22()
 {
-    if (currentConfig.pin_dht >= 0)
+    // The pin can be reassigned at runtime from the Web Doctor dashboard,
+    // so initDHT22() may run more than once per boot. Free any previously
+    // allocated sensor before replacing the pointer, otherwise every
+    // reassignment leaks the old DHT instance.
+    if (dhtSensor != nullptr)
     {
-        // The pin can be reassigned at runtime from the Web Doctor dashboard,
-        // so initDHT22() may run more than once per boot. Free any previously
-        // allocated sensor before replacing the pointer, otherwise every
-        // reassignment leaks the old DHT instance.
-        if (dhtSensor != nullptr)
-        {
-            delete dhtSensor;
-        }
+        delete dhtSensor;
+    }
 
-        dhtSensor = new DHT(currentConfig.pin_dht, DHT22);
-        dhtSensor->begin();
-        webLog(1, LOG_INFO, "DHT22 initialized on pin " + String(currentConfig.pin_dht));
-    }
-    else
-    {
-        webLog(1, LOG_WARN, "DHT22 sensor disabled (pin set to -1)");
-    }
+    dhtSensor = new DHT(currentConfig.pin_dht, DHT22);
+    dhtSensor->begin();
+    webLog(1, LOG_INFO, "DHT22 initialized on pin " + String(currentConfig.pin_dht));
 }
 
 void sensor_dht_init()
@@ -44,8 +37,11 @@ bool sensor_dht_read(float &temp_c, float &humidity_pct)
 
 void readDHT22(float &outTemp, float &outHum, float &outVpd)
 {
-    // 1. Guard check: Do nothing if the sensor is disabled in Web Doctor
-    if (currentConfig.pin_dht < 0 || dhtSensor == nullptr)
+    // 1. Guard check: nothing to read from if init() hasn't run yet (e.g.
+    // called before setup() finishes). sensor_enabled[S_DHT] is what
+    // actually decides whether this ever gets called in practice — see
+    // validateSensor()/readAll() in task_sensor.cpp.
+    if (dhtSensor == nullptr)
     {
         outTemp = NAN;
         outHum = NAN;

@@ -8,16 +8,8 @@ float readPH();
 
 void initPH()
 {
-    if (currentConfig.pin_ph >= 0)
-    {
-        // Only initialize if a valid pin is assigned in Web Doctor settings
-        pinMode(currentConfig.pin_ph, INPUT);
-        webLog(1, LOG_INFO, "pH sensor initialized on pin " + String(currentConfig.pin_ph));
-    }
-    else
-    {
-        webLog(1, LOG_WARN, "pH sensor disabled (pin set to -1)");
-    }
+    pinMode(currentConfig.pin_ph, INPUT);
+    webLog(1, LOG_INFO, "pH sensor initialized on pin " + String(currentConfig.pin_ph));
 }
 
 void sensor_ph_init()
@@ -41,21 +33,16 @@ bool sensor_ph_read(float ph_offset, float ph_slope, float &ph_value)
 
 float readPH()
 {
-    // 1. Guard check: return NaN immediately if the sensor pin is undefined/disabled,
-    // so sensor_ph_read() correctly reports failure instead of a false "ok" at 0.0.
-    if (currentConfig.pin_ph < 0)
-    {
-        return NAN;
-    }
-
-    // 2. Read the raw analog value in true Volts using hardware calibration
+    // 1. Read the raw analog value in true Volts using hardware calibration.
+    // sensor_enabled[S_PH] is what decides whether this ever gets called in
+    // practice — see validateSensor()/readAll() in task_sensor.cpp.
     float voltage = analogReadMilliVolts(currentConfig.pin_ph) / 1000.0;
 
-    // 3. Calculate pH value using live calibration variables from NVS
+    // 2. Calculate pH value using live calibration variables from NVS
     // Linear equation: pH = (slope * voltage) + offset
     float phValue = (currentConfig.ph_slope * voltage) + currentConfig.ph_offset;
 
-    // 4. Sanity bounds check (pH is strictly 0 to 14)
+    // 3. Sanity bounds check (pH is strictly 0 to 14)
     if (phValue < 0.0)
     {
         phValue = 0.0;

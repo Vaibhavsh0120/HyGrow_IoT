@@ -82,6 +82,13 @@
 // ---------- Pin assignments (ESP32-S3 N16R8) ----------
 // [NVS] pin_*  — changes take effect after reboot.
 //
+// Pin numbers are always a plain GPIO assignment — they are NOT the on/off
+// switch for a sensor. Whether a sensor is actually read is controlled by
+// exactly one flag: sensor_enabled[] (see DEFAULT_SENSOR_ENABLED below and
+// ConfigState::sensor_enabled in state.h). A pin's saved value is kept and
+// shown even while its sensor is disabled, so turning a sensor off never
+// erases which GPIO it's wired to.
+//
 // FORBIDDEN: GPIO19 (USB D-) and GPIO20 (USB D+) — with build_flags
 // -DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1 (see platformio.ini),
 // Serial *is* the native USB peripheral on these two pins. Calling
@@ -139,10 +146,13 @@ enum SensorID
 #define DEFAULT_DEMO_MODE false       // [NVS] demo
 #define DEFAULT_FIREBASE_ENABLED true // [NVS] fb_en
 
-// [NVS] s_en_<i> (per sensor) — one on/off default per SensorID, indexed
-// the same way as the enum above (S_WL, S_LIGHT, S_TDS, S_DHT, S_PH,
-// S_WTEMP). Only used on first boot / after a factory reset; once a value
-// is saved to NVS, that saved value always wins over this default.
+// [NVS] s_en_<i> (per sensor) — the SINGLE on/off switch for each sensor,
+// indexed the same way as the SensorID enum above (S_WL, S_LIGHT, S_TDS,
+// S_DHT, S_PH, S_WTEMP). This is the only thing that turns a sensor's
+// reading/upload on or off — pin numbers are a separate, purely physical
+// GPIO assignment and are never used to infer on/off state. Only used on
+// first boot / after a factory reset; once a value is saved to NVS, that
+// saved value always wins over this default.
 //
 // Every sensor ships ON except pH (S_PH), which ships OFF: pH needs a
 // probe calibrated in real liquid to read anything meaningful, so it stays

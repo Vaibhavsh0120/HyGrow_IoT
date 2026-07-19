@@ -16,6 +16,7 @@
 // platformio.ini (no separate async-HTTP dependency).
 // ----------------------------------------------------------------------------
 #include "task_network_internal.h"
+#include "task_network.h"
 #include "state.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -24,17 +25,185 @@
 static String s_fbIdToken;
 static uint32_t s_fbTokenExpiryMs = 0; // millis() timestamp after which the cached token is considered stale
 
+// ----------------------------------------------------------------------------
+// Auto-disable on repeated upload failure
+// ----------------------------------------------------------------------------
+// If Firestore uploads fail FIREBASE_MAX_CONSECUTIVE_FAILURES times in a row
+// (sign-in failures and PATCH failures both count), Firebase Upload is
+// switched off automatically and persisted — the same single on/off switch
+// (currentConfig.firebase_enabled) the "Firebase Upload" toggle in Settings
+// controls, so the UI reflects this the moment it happens instead of the
+// device silently retrying bad credentials/an unreachable project forever.
+// The counter resets to 0 on any successful upload, and separately whenever
+// save_firebase saves new credentials (command_handlers.cpp) or the user
+// re-enables the toggle (save_features) — both are a fresh reason to try
+// again from zero.
+#define FIREBASE_MAX_CONSECUTIVE_FAILURES 5
+static uint8_t s_fbConsecutiveFailures = 0;
+
 // Forces the next firebaseUploadCycle() to sign in again from scratch
 // instead of reusing a cached ID token. Must be called whenever
 // fb_email/fb_pass/fb_project/fb_api_key change (see save_firebase in
 // command_handlers.cpp) — without this, a credential change while a
 // still-valid cached token exists would keep uploading under the OLD
 // identity/project until that token's ~1hr lifetime naturally expired,
-// silently ignoring the just-saved credentials in the meantime.
+// silently ignoring the just-saved credentials in the meantime. Also resets
+// the consecutive-failure counter — new credentials deserve a fresh set of
+// attempts rather than immediately auto-disabling on the leftover count
+// from the old (bad) ones.
 void firebaseInvalidateToken()
 {
     s_fbIdToken = "";
     s_fbTokenExpiryMs = 0;
+    s_fbConsecutiveFailures = 0;
+}
+
+// Called from save_features (command_handlers.cpp) whenever the user
+// switches Firebase Upload back ON — including right after an auto-disable.
+// Manually re-enabling is an explicit "try again" signal, so the failure
+// count starts over instead of auto-disabling again on the very next tick
+// with 0 fresh attempts made.
+void firebaseResetFailureCount()
+{
+    s_fbConsecutiveFailures = 0;
+}
+
+// On-demand connectivity check for the Settings > Cloud Provisioning
+// "Test Connection" button (test_firebase command, command_handlers.cpp).
+// Performs a REAL sign-in against Identity Toolkit with whatever is
+// currently saved in currentConfig (not a hand-typed value from the form —
+// the button only makes sense after Save Credentials has run), and a real
+// Firestore GET against the configured project/collection/device document so
+// the reported result reflects genuine reachability, not just "the fields
+// are non-empty". Deliberately does NOT touch/reuse firebaseUploadCycle()'s
+// cached token (s_fbIdToken) — a stale cached token from *before* a
+// credential change could report "ok" for credentials that no longer work,
+// which would defeat the entire point of a manual test. errorOut is only
+// written when this returns false.
+bool firebaseTestConnection(String &errorOut)
+{
+    if (String(currentConfig.fb_api_key).length() == 0 ||
+        String(currentConfig.fb_email).length() == 0 ||
+        String(currentConfig.fb_pass).length() == 0)
+    {
+        errorOut = "Missing Web API Key, Email, or Password.";
+        return false;
+    }
+    if (String(currentConfig.fb_project).length() == 0)
+    {
+        errorOut = "Missing Project ID.";
+        return false;
+    }
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        errorOut = "Device is not connected to Wi-Fi.";
+        return false;
+    }
+
+    // 1. Sign in — proves the API key + email/password are valid together.
+    WiFiClientSecure signInClient;
+    signInClient.setInsecure();
+    HTTPClient signInHttps;
+    signInHttps.setTimeout(7000);
+
+    String signInUrl = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + String(currentConfig.fb_api_key);
+    if (!signInHttps.begin(signInClient, signInUrl))
+    {
+        errorOut = "Could not start sign-in request.";
+        return false;
+    }
+    signInHttps.addHeader("Content-Type", "application/json");
+
+    JsonDocument signInBody;
+    signInBody["email"] = currentConfig.fb_email;
+    signInBody["password"] = currentConfig.fb_pass;
+    signInBody["returnSecureToken"] = true;
+    String signInBodyStr;
+    serializeJson(signInBody, signInBodyStr);
+
+    int signInCode = signInHttps.POST(signInBodyStr);
+    String testToken;
+
+    if (signInCode == 200)
+    {
+        JsonDocument resp;
+        DeserializationError err = deserializeJson(resp, signInHttps.getString());
+        if (!err && resp["idToken"].is<const char *>())
+        {
+            testToken = String((const char *)resp["idToken"]);
+        }
+        else
+        {
+            signInHttps.end();
+            errorOut = "Sign-in succeeded but returned a malformed response.";
+            return false;
+        }
+    }
+    else
+    {
+        String body = signInHttps.getString();
+        signInHttps.end();
+        // Identity Toolkit's error payload has {"error":{"message":"..."}}
+        // with short, stable machine-readable codes — surface that directly
+        // instead of just the HTTP status, e.g. "INVALID_PASSWORD" /
+        // "EMAIL_NOT_FOUND" / "API key not valid" are far more actionable
+        // than "HTTP 400".
+        JsonDocument errDoc;
+        String reason = "HTTP " + String(signInCode);
+        if (!deserializeJson(errDoc, body) && errDoc["error"]["message"].is<const char *>())
+        {
+            reason = String((const char *)errDoc["error"]["message"]);
+        }
+        errorOut = "Sign-in failed: " + reason;
+        return false;
+    }
+    signInHttps.end();
+
+    // 2. A lightweight authenticated Firestore GET — proves the Project ID
+    // is real and this account can actually reach it, not just that the
+    // Identity Toolkit login worked in isolation (a valid login against the
+    // wrong project would otherwise report a false "ok").
+    String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "sensor_readings";
+    String docId = String(currentConfig.device_id).length() > 0 ? String(currentConfig.device_id) : "esp32_device";
+
+    WiFiClientSecure fsClient;
+    fsClient.setInsecure();
+    HTTPClient fsHttps;
+    fsHttps.setTimeout(7000);
+
+    String fsUrl = "https://firestore.googleapis.com/v1/projects/" + String(currentConfig.fb_project) +
+                   "/databases/(default)/documents/" + collection + "/" + docId +
+                   "?key=" + String(currentConfig.fb_api_key);
+    if (!fsHttps.begin(fsClient, fsUrl))
+    {
+        errorOut = "Signed in, but could not start the Firestore check.";
+        return false;
+    }
+    fsHttps.addHeader("Authorization", "Bearer " + testToken);
+
+    int fsCode = fsHttps.GET();
+    String fsBody = fsHttps.getString();
+    fsHttps.end();
+
+    // A GET on a document that doesn't exist YET (204/404-shaped 200 with no
+    // fields, or a genuine 404) is still a successful connection — it means
+    // the project/credentials/permissions are all correct and the very next
+    // upload cycle will simply create that document. Only treat this as a
+    // failure for errors that mean the connection itself didn't work
+    // (bad project id, permission denied, etc).
+    if (fsCode == 200 || fsCode == 404)
+    {
+        return true;
+    }
+
+    JsonDocument errDoc;
+    String reason = "HTTP " + String(fsCode);
+    if (!deserializeJson(errDoc, fsBody) && errDoc["error"]["message"].is<const char *>())
+    {
+        reason = String((const char *)errDoc["error"]["message"]);
+    }
+    errorOut = "Signed in, but Firestore check failed: " + reason;
+    return false;
 }
 
 // Exchange fb_email/fb_pass for a Firebase Identity Toolkit ID token.
@@ -105,6 +274,29 @@ static bool firebaseEnsureIdToken()
     return ok;
 }
 
+// Counts one failed upload attempt (sign-in failure OR PATCH failure both
+// call this). Once FIREBASE_MAX_CONSECUTIVE_FAILURES is hit in a row,
+// switches currentConfig.firebase_enabled off, persists it, and broadcasts
+// the new config so the Settings > Firebase Upload toggle flips to OFF in
+// every open browser tab immediately — the same live-reflects-device-state
+// path save_features already uses (command_handlers.cpp), just triggered
+// from here instead of a user click.
+static void firebaseRegisterFailure()
+{
+    if (s_fbConsecutiveFailures < 255)
+        s_fbConsecutiveFailures++;
+
+    if (s_fbConsecutiveFailures >= FIREBASE_MAX_CONSECUTIVE_FAILURES && currentConfig.firebase_enabled)
+    {
+        currentConfig.firebase_enabled = false;
+        state_save();
+        webLog(0, LOG_ERR, "Firebase upload failed " + String(FIREBASE_MAX_CONSECUTIVE_FAILURES) +
+                                " times in a row — Firebase Upload turned OFF automatically. "
+                                "Fix the credentials/connection in Settings, Test Connection, then re-enable.");
+        broadcastConfig();
+    }
+}
+
 // Fires one Firestore PATCH with the current sensor snapshot. Called at most
 // once per currentConfig.interval_fb_ms from networkTaskLoop() (task_network.cpp).
 void firebaseUploadCycle()
@@ -120,6 +312,7 @@ void firebaseUploadCycle()
     {
         currentVitals.firebase_ready = false;
         webLog(0, LOG_ERR, "Firebase upload skipped: " + String(currentVitals.firebase_last_error));
+        firebaseRegisterFailure();
         return;
     }
 
@@ -238,6 +431,7 @@ void firebaseUploadCycle()
         currentVitals.firebase_ready = true;
         currentVitals.firebase_last_ok_ms = millis();
         currentVitals.firebase_last_error[0] = '\0';
+        s_fbConsecutiveFailures = 0; // any successful upload clears the streak
     }
     else
     {
@@ -245,6 +439,7 @@ void firebaseUploadCycle()
         String err = "Firestore PATCH HTTP " + String(code);
         strncpy(currentVitals.firebase_last_error, err.c_str(), sizeof(currentVitals.firebase_last_error) - 1);
         webLog(0, LOG_ERR, "Firebase upload failed: " + err);
+        firebaseRegisterFailure();
     }
 
     https.end();

@@ -75,7 +75,7 @@ The firmware defends against this in three layers:
 
 1. **Client-side validation (Settings tab, `data/js/app.js`):** every pin field is checked the moment you type — 19/20 is flagged instantly with an inline warning naming the offending field, and duplicate pin assignments across two different sensors are flagged the same way. The Save button is disabled while any field is invalid. This is a UX nicety only — it runs in the browser and can be bypassed by a hand-crafted WebSocket message.
 2. **Server-side validation (`save_pins` / `save_sensor_enabled` handlers in `src/core/command_handlers.cpp`):** the real safety boundary. Before anything is written to `currentConfig`/NVS, the proposed full pin set is checked for GPIO 19/20 and for duplicate assignments between two enabled sensors; the whole command is rejected (with a `webLog(LOG_ERR, ...)` explaining why) if either check fails.
-3. **Boot guard (`enforceForbiddenPins()` in `HyGrow_IoT.ino`):** runs before any sensor is touched, on every boot. If any configured pin was somehow saved as 19 or 20 anyway (a bad manual edit, a migration, a factory-reset race, or an older NVS blob written before layer 2 existed), it is forced back to `-1` (disabled) and the change is persisted to NVS. This is the last-resort, authoritative safety net and is never weakened or removed by the two layers above.
+3. **Boot guard (`enforceForbiddenPins()` in `HyGrow_IoT.ino`):** runs before any sensor is touched, on every boot. If any configured pin was somehow saved as 19 or 20 anyway (a bad manual edit, a migration, a factory-reset race, or an older NVS blob written before layer 2 existed), the affected sensor is force-disabled via `sensor_enabled[]` and the change is persisted to NVS — the pin number itself is left as-is so it stays visible in Settings for you to correct. This is the last-resort, authoritative safety net and is never weakened or removed by the two layers above.
 
 ### 🧪 Calibration & Form Validation
 
@@ -97,9 +97,9 @@ Factory reset wipes **everything** — Wi-Fi, Firebase credentials, calibration,
 
 ### Startup Validation & Auto-Disable
 
-Every enabled sensor is validated at boot before the system settles into its normal read loop: `task_sensor.cpp` attempts up to **5 reads** (250ms apart) per sensor. If all 5 attempts fail, that sensor's pin(s) are set to `-1`, its feature flag is turned off, the change is saved to NVS, and a warning is pushed to the web terminal explaining why. This keeps a genuinely unwired or dead sensor from spamming "read failed" into the terminal forever.
+Every enabled sensor is validated at boot before the system settles into its normal read loop: `task_sensor.cpp` attempts up to **5 reads** (250ms apart) per sensor. If all 5 attempts fail, that sensor's `sensor_enabled[]` flag is turned off (its pin number is left untouched — pins always stay saved and visible regardless of enabled state), the change is saved to NVS, and a warning is pushed to the web terminal explaining why. This keeps a genuinely unwired or dead sensor from spamming "read failed" into the terminal forever.
 
-**Re-enabling it from the Web UI:** once the wiring is fixed, either click **Reset** on that sensor's pinout card in Settings (restores the compiled default pin(s) **and** clears the auto-disable flag, then reboots automatically), or flip its **Enabled** toggle back on (sends `save_sensor_enabled`, which also restores the pin(s) if they're still `-1`, then prompts you to reboot). Either path fully undoes the auto-disable — you do **not** need a factory reset just to bring one sensor back.
+**Re-enabling it from the Web UI:** once the wiring is fixed, either click **Reset** on that sensor's pinout card in Settings (restores the compiled default pin(s) **and** re-enables the sensor, then reboots automatically), or flip its **Enabled** toggle back on directly (sends `save_sensor_enabled`, then prompts you to reboot) if the existing pin is still correct. Either path fully undoes the auto-disable — you do **not** need a factory reset just to bring one sensor back.
 
 The BH1750 light sensor additionally gets a bus-level check ahead of the 5x retry: `sensor_light.cpp` performs a bounded I2C presence probe (ACK check, 1s timeout) before ever calling into the BH1750 library, so a floating/stuck I2C bus can't hang the sensor task and trip the Core 1 watchdog.
 
@@ -123,6 +123,17 @@ In other words: turning a sensor off in Settings stops it being read locally, an
 | `ph_val` | pH sensor enabled |
 | `wl_percent` | Water Level sensor enabled |
 | `uptime_s`, `server_timestamp` | always |
+
+### 🔥 Firebase Upload: Auto-Disable After Repeated Failures
+
+If five Firestore uploads in a row fail — bad/expired credentials, no network route to Firebase, a misconfigured Firestore security rule, etc. — the device automatically turns **Firebase Upload** off (`currentConfig.firebase_enabled = false`), persists that to NVS, and broadcasts the change so the Settings toggle reflects it live without needing a refresh. This exists so a broken cloud connection fails loudly and stops retrying forever in the background rather than silently spamming failed requests.
+
+The failure counter resets to zero on any of the following, so a transient outage doesn't permanently disable uploads and a fresh attempt always gets its own full five tries:
+- A successful upload
+- Saving new Firebase credentials (`save_firebase`)
+- Manually flipping Firebase Upload back on (`save_features` with `fb_en: true`)
+
+Use the **Test Connection** button next to Save Credentials to check whether the currently-saved credentials actually work (a real Identity Toolkit sign-in + Firestore read) before relying on the automatic upload cycle — see the `test_firebase` command below.
 
 ---
 
@@ -270,19 +281,20 @@ or, if rejected:
 {"type": "command_result", "command": "save_pins", "ok": false, "error": "GPIO 19 and 20 are reserved for USB..."}
 ```
 
-The frontend's save buttons wait for this ack before showing "Saved!" — the socket being open is not the same as the device having actually applied the change, so nothing shows success until this frame confirms it.
+The frontend's save buttons wait for this ack before showing "Saved!" — the socket being open is not the same as the device having actually applied the change, so nothing shows success until this frame confirms it. `test_firebase` is the one exception worth calling out: its ack is a real network round trip on the device (Identity Toolkit sign-in + a Firestore read), so it can take noticeably longer than every other command's near-instant NVS write — the frontend gives it its own longer client-side timeout for this reason.
 
 ### Commands (Client -> ESP32)
 
 - `{"command": "save_wifi", "ssid": "...", "pass": "..."}`
 - `{"command": "save_firebase", "proj": "...", "api": "...", "email": "...", "pass": "...", "col": "..."}`
-- `{"command": "save_pins", "pin_tds": 2, "pin_dht": 6, "pin_ph": 7, "pin_wt": 4, "pin_wl": 1, "pin_sda": 8, "pin_scl": 9, "pin_wlp": 5}` _(any field can be omitted to leave that pin unchanged; `-1` disables that sensor; requires reboot to apply; rejected server-side if any pin is 19/20 or duplicates another enabled sensor's pin — see [Forbidden Pins](#️-forbidden-pins-gpio-19--gpio-20))_
-- `{"command": "reset_sensor_pin", "sensor": "tds" | "dht" | "ph" | "wt" | "wl" | "light"}` _(resets that sensor's pin(s) to the compiled default, clears its auto-disable flag, and reboots automatically)_
-- `{"command": "save_sensor_enabled", "sensor": "tds" | "dht" | "ph" | "wt" | "wl" | "light", "enabled": true}` _(the per-sensor counterpart to `save_pins` — flips `sensor_enabled[i]`; enabling also restores that sensor's pin(s) from `-1` if needed; requires reboot to apply)_
-- `{"command": "save_features", "demo": false, "fb_en": true}` _(any field can be omitted to leave that flag unchanged; none of the two require a reboot)_
+- `{"command": "save_pins", "pin_tds": 2, "pin_dht": 6, "pin_ph": 7, "pin_wt": 4, "pin_wl": 1, "pin_sda": 8, "pin_scl": 9, "pin_wlp": 5}` _(any field can be omitted to leave that pin unchanged; these are always plain GPIO numbers — a pin has no "disabled" meaning of its own, use `save_sensor_enabled` to turn a sensor on/off instead; requires reboot to apply; rejected server-side if any pin is 19/20 or duplicates another enabled sensor's pin — see [Forbidden Pins](#️-forbidden-pins-gpio-19--gpio-20))_
+- `{"command": "reset_sensor_pin", "sensor": "tds" | "dht" | "ph" | "wt" | "wl" | "light"}` _(resets that sensor's pin(s) to the compiled default, re-enables it if it was auto-disabled, and reboots automatically)_
+- `{"command": "save_sensor_enabled", "sensor": "tds" | "dht" | "ph" | "wt" | "wl" | "light", "enabled": true}` _(the ONE on/off switch per sensor — flips `sensor_enabled[i]`; the sensor's pin(s) are never touched by this command, so they stay exactly as last saved whether the sensor is on or off; requires reboot to apply)_
+- `{"command": "save_features", "demo": false, "fb_en": true}` _(any field can be omitted to leave that flag unchanged; `fb_en` also resets Firebase's consecutive-failure counter when turned on — see [Firebase Auto-Disable](#-firebase-upload-auto-disable-after-repeated-failures); neither flag requires a reboot)_
 - `{"command": "save_intervals", "int_read": 2000, "int_ws": 1000, "int_vit": 1000, "int_fb": 10000}` _(all values in ms, clamped server-side to 2000–60000; any field can be omitted to leave that interval unchanged)_
 - `{"command": "calibrate_tds", "tds_k": 1.05, "target_ppm": 1000}` _(`target_ppm` is optional but sent by the pH/TDS calibration wizard so the server can reject an unrealistic calibration-fluid target directly, not just the derived `tds_k`; both `target_ppm` and the resulting `tds_k` are range-checked server-side — see [TDS Calibration bounds](#-tds-calibration-bounds))_
 - `{"command": "calibrate_ph", "offset": 0.1, "slope": 1.02}`
+- `{"command": "test_firebase"}` _(Settings' Test Connection button. Real connectivity check against whatever Firebase credentials are currently SAVED on the device — not whatever's currently typed in the form, so it's only meaningful after Save Credentials has run at least once. Signs in via Identity Toolkit and performs a live Firestore GET; up to two HTTPS round trips, each capped at 7s server-side, so this reply can take noticeably longer than other commands)_
 - `{"command": "reboot"}`
 - `{"command": "factory_reset"}` _(Wipes NVS namespace and reboots into SoftAP mode)_
 - `{"command": "request_vitals"}` _(asks the device to immediately push a vitals frame)_

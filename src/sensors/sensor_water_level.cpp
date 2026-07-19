@@ -25,16 +25,6 @@ static bool s_wlReady = false;
 
 void initWaterLevel()
 {
-    // Guard: both the signal pin and the power-gate pin must be assigned.
-    // A probe with power gating but no signal pin (or vice versa) can't be
-    // read safely, so treat it as fully disabled rather than guessing.
-    if (currentConfig.pin_wl < 0 || currentConfig.pin_wl_power < 0)
-    {
-        s_wlReady = false;
-        webLog(1, LOG_WARN, "Water level sensor disabled (signal or power pin set to -1)");
-        return;
-    }
-
     pinMode(currentConfig.pin_wl_power, OUTPUT);
     // Keep the probe unpowered until a read is actually requested — this is
     // the whole point of the power gate (minimize time under voltage).
@@ -54,9 +44,12 @@ void sensor_wl_init()
 
 float readWaterLevel()
 {
-    // 1. Guard check: return NaN immediately if disabled/uninitialized, so
-    // sensor_wl_read() correctly reports failure instead of a false "ok" at 0.0.
-    if (!s_wlReady || currentConfig.pin_wl < 0 || currentConfig.pin_wl_power < 0)
+    // 1. Guard check: return NaN immediately if uninitialized, so
+    // sensor_wl_read() correctly reports failure instead of a false "ok" at
+    // 0.0. sensor_enabled[S_WL] is what actually decides whether this ever
+    // gets called in practice — see validateSensor()/readAll() in
+    // task_sensor.cpp.
+    if (!s_wlReady)
     {
         return NAN;
     }

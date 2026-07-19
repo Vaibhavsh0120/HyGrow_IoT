@@ -22,7 +22,7 @@
 //                           isn't "auth"/"change_password": save_wifi,
 //                           save_firebase, save_pins, calibrate_ph,
 //                           calibrate_tds, save_features,
-//                           save_sensor_enabled, save_intervals,
+//                           save_sensor_enabled, save_intervals, test_firebase,
 //                           reset_sensor_pin, factory_reset, reboot,
 //                           request_vitals)
 //
@@ -63,6 +63,18 @@ void firebaseUploadCycle();
 // in fresh. Call this any time fb_email/fb_pass/fb_project/fb_api_key change
 // — see save_firebase in command_handlers.cpp.
 void firebaseInvalidateToken();
+// On-demand connectivity check for the Settings > Cloud Provisioning "Test
+// Connection" button (test_firebase command, command_handlers.cpp). Signs in
+// fresh (never reuses firebaseUploadCycle()'s cached token) and does a real
+// Firestore GET against the configured project. Returns true/false; on
+// false, errorOut is filled with a human-readable reason.
+bool firebaseTestConnection(String &errorOut);
+// Resets the consecutive-upload-failure counter that can auto-disable
+// currentConfig.firebase_enabled (see FIREBASE_MAX_CONSECUTIVE_FAILURES in
+// firebase.cpp). Call whenever the user explicitly re-enables Firebase
+// Upload (save_features, command_handlers.cpp) — an explicit "try again"
+// deserves a fresh set of attempts, not an immediate re-disable.
+void firebaseResetFailureCount();
 
 // ---------- command_handlers.cpp ----------
 // Sends a per-command acknowledgement directly to the requesting client only
@@ -72,7 +84,7 @@ void firebaseInvalidateToken();
 void sendCmdAck(AsyncWebSocketClient *client, const String &cmd, bool ok, const String &error = "");
 // Every command other than "auth"/"change_password" — save_wifi,
 // save_firebase, save_pins, calibrate_ph, calibrate_tds, save_features,
-// save_sensor_enabled, save_intervals, reset_sensor_pin, factory_reset,
+// save_sensor_enabled, save_intervals, reset_sensor_pin, test_firebase, factory_reset,
 // reboot, request_vitals. Only ever called once the client has passed auth
 // (see the gate in handleWebSocketMessage(), websocket.cpp).
 void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDocument &doc);

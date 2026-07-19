@@ -85,15 +85,16 @@ function initNavigation() {
     });
 }
 
-// Resolves whether a sensor tab should show as "on": prefers the real
-// sensor_enabled[] flag once synced from the device (tabsData.enabled[index]),
-// falling back to "does this tab have a pin assigned" only before the first
-// config frame arrives. Needed because a sensor can have a valid pin but
-// still be enabled:false (pH ships off by default; any sensor can
-// auto-disable after failed startup validation).
-function resolveSensorOn(index, pin) {
-    const enabled = tabsData.enabled[index];
-    return (enabled !== null && enabled !== undefined) ? enabled : (pin >= 0);
+// Resolves whether a sensor tab should show as "on": reads the real
+// sensor_enabled[] flag once synced from the device (tabsData.enabled[index]).
+// sensor_enabled[] is the ONLY on/off switch in this firmware — a pin value
+// is never consulted here, so a sensor with a valid pin but enabled:false
+// (pH ships off by default; any sensor can auto-disable after failed
+// startup validation) correctly shows as off. Before the first config frame
+// arrives there's nothing to resolve yet, so this defaults to "off" rather
+// than guessing from the pin.
+function resolveSensorOn(index) {
+    return !!tabsData.enabled[index];
 }
 
 // Keeps the small "ON"/"OFF" text next to a power toggle in sync with its
@@ -145,8 +146,8 @@ function switchTab(index, element) {
         dualSensorPage.classList.add('flex');
 
         let pin = tabsData.gpios[index];
-        document.getElementById('dual-sensor-pin').innerText = (pin === null || pin < 0) ? '-- (Disabled)' : pin;
-        document.getElementById('dual-sensor-toggle').checked = resolveSensorOn(index, pin);
+        document.getElementById('dual-sensor-pin').innerText = (pin === null || pin < 0) ? '--' : pin;
+        document.getElementById('dual-sensor-toggle').checked = resolveSensorOn(index);
         syncPowerToggleLabel('dual-sensor-toggle', 'dual-sensor-toggle-state');
 
         setTimeout(resizeCanvas, 50);
@@ -157,14 +158,16 @@ function switchTab(index, element) {
         document.getElementById('sensor-icon').innerText = tabsData.icons[index];
 
         let pin = tabsData.gpios[index];
-        // Special display case for I2C Light sensor
-        if (index === 4 && pin >= 0) {
+        // Special display case for I2C Light sensor. The pin is always shown
+        // as a plain GPIO number — it's never used to infer on/off state,
+        // see resolveSensorOn() above.
+        if (index === 4 && pin !== null && pin !== undefined) {
             document.getElementById('sensor-pin').innerText = `SDA: ${pin}`;
         } else {
-            document.getElementById('sensor-pin').innerText = (pin === null || pin < 0) ? '-- (Disabled)' : pin;
+            document.getElementById('sensor-pin').innerText = (pin === null || pin === undefined) ? '--' : pin;
         }
 
-        const sensorOn = resolveSensorOn(index, pin);
+        const sensorOn = resolveSensorOn(index);
         document.getElementById('sensor-toggle').checked = sensorOn;
         syncPowerToggleLabel('sensor-toggle', 'sensor-toggle-state');
 
@@ -425,6 +428,12 @@ function retryConnectionNow() {
 //      mid-flight) doesn't leave a button stuck showing "Saving..." forever.
 // ------------------------------------------------------------------
 const ACK_TIMEOUT_MS = 5000;
+// Commands that can legitimately take longer than the default ack timeout.
+// test_firebase does up to two HTTPS round trips server-side (Identity
+// Toolkit sign-in + a Firestore GET), each capped at 7s on the device — so
+// the client timeout has to comfortably exceed that worst case, or a
+// successful device-side check could still show up as "timed out" here.
+const COMMAND_TIMEOUT_OVERRIDES = { test_firebase: 16000 };
 let pendingCommands = []; // { id, command, resolve, reject, timer }
 let nextPendingId = 1;
 
@@ -477,10 +486,11 @@ function sendCommand(payload) {
             return;
         }
         const id = nextPendingId++;
+        const timeoutMs = COMMAND_TIMEOUT_OVERRIDES[payload.command] || ACK_TIMEOUT_MS;
         const timer = setTimeout(() => {
             pendingCommands = pendingCommands.filter((p) => p.id !== id);
             reject(new Error('No response from the device — it may be offline.'));
-        }, ACK_TIMEOUT_MS);
+        }, timeoutMs);
         pendingCommands.push({ id, command: payload.command, resolve, reject, timer });
     });
 }
@@ -690,6 +700,13 @@ function updateTelemetry(msg) {
 // distinct and intentional, same note as in task_network.cpp.
 const S_EN_INDEX = { wl: 0, light: 1, tds: 2, dht: 3, ph: 4, wt: 5 };
 
+// Tab index -> short sensor id used by save_sensor_enabled/reset_sensor_pin.
+// Module-scope (not just inside DOMContentLoaded) so both the per-sensor
+// detail page's power toggle (handleToggle()) and the "Reset" button
+// (btn-reset-current-sensor) share this one mapping instead of each
+// maintaining their own copy.
+const TAB_TO_SENSOR_ID = { 1: "tds", 2: "dht", 3: "wt", 4: "light", 5: "wl", 6: "ph" };
+
 // ------------------------------------------------------------------
 // Client-side pin validation (Part 4 / 5.5). Module-scope (not just inside
 // DOMContentLoaded) so it can also be re-run from updateConfigForm() after a
@@ -732,8 +749,10 @@ function validateAllPinFields() {
         }
     });
 
-    // Duplicate pin assignments across sensors (Part 5.5). -1 (disabled)
-    // never conflicts with anything.
+    // Duplicate pin assignments across sensors (Part 5.5). A negative value
+    // is never a real GPIO number (fields are always populated with a valid
+    // pin by the device, this is just a defensive skip) and never conflicts
+    // with anything.
     if (!problem) {
         for (let i = 0; i < fields.length; i++) {
             const vi = parseInt(fields[i].el.value, 10);
@@ -958,6 +977,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnSpinnerRetry) btnSpinnerRetry.addEventListener('click', retryConnectionNow);
 
     // ------------------------------------------------------------------
+    // hg-secret-field reveal toggles — one handler wires every eye-icon
+    // button in the app (Web API Key, Firebase password, admin current/
+    // new/confirm password). Each button's data-reveal-target points at
+    // the input id it controls; toggling swaps type password<->text and
+    // swaps the Material icon between "visibility" and "visibility_off".
+    // ------------------------------------------------------------------
+    document.querySelectorAll('.hg-secret-toggle').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const targetId = btn.getAttribute('data-reveal-target');
+            const input = targetId && document.getElementById(targetId);
+            if (!input) return;
+            const icon = btn.querySelector('.material-symbols-outlined');
+            const revealed = input.type === 'text';
+            input.type = revealed ? 'password' : 'text';
+            if (icon) icon.textContent = revealed ? 'visibility' : 'visibility_off';
+            btn.setAttribute('aria-label', (revealed ? 'Show ' : 'Hide ') + (btn.getAttribute('aria-label') || '').replace(/^(Show|Hide) /, ''));
+        });
+    });
+
+    // ------------------------------------------------------------------
     // Auth overlay button bindings. The "auth" command's response
     // (auth_result) is handled centrally in onMessage()/handleAuthResult()
     // above — these handlers only send the request and do basic client-side
@@ -1119,6 +1158,29 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Test Connection — real check (test_firebase command) against whatever
+    // is currently SAVED on the device, not whatever is currently typed in
+    // the form. Signs in via Identity Toolkit and does a live Firestore read
+    // (see firebaseTestConnection() in firebase.cpp). Uses its own longer
+    // ack timeout via COMMAND_TIMEOUT_OVERRIDES since it's a live network
+    // round trip on the device, not an instant NVS write.
+    const btnTestFb = document.getElementById('btn-test-firebase');
+    if (btnTestFb) {
+        btnTestFb.addEventListener('click', () => {
+            const original = 'Test Connection';
+            btnTestFb.disabled = true;
+            btnTestFb.innerText = 'Testing…';
+            sendCommand({ command: "test_firebase" }).then(() => {
+                btnTestFb.disabled = false;
+                btnTestFb.innerText = 'Connected ✓';
+                setTimeout(() => { btnTestFb.innerText = original; }, 3000);
+            }).catch((err) => {
+                btnTestFb.disabled = false;
+                btnTestFb.innerText = 'Failed — ' + (err && err.message ? err.message : 'error');
+                setTimeout(() => { btnTestFb.innerText = original; }, 4000);
+            });
+        });
+    }
 
     // ------------------------------------------------------------------
     // Client-side pin validation (Part 4 / 5.5) — validateAllPinFields()
@@ -1461,14 +1523,18 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Toggle logic includes SDA and SCL for I2C Light
+    // Power toggle on the per-sensor detail page (and the Air Temp/Humidity
+    // dual-sensor page). This is the SAME on/off switch as the "Enabled"
+    // toggle on each pinout card in Settings — both ultimately just send
+    // save_sensor_enabled. Pins are never touched here: a pin is a plain
+    // GPIO assignment, kept and shown regardless of on/off state (see
+    // config.h's comment on ConfigState::pin_* for the full reasoning).
     const handleToggle = (e, tabId) => {
         const isEnabled = e.target.checked;
-        let payload = { command: "save_pins" };
-        let sensorName = "";
-        let sensorId = ""; // short id used by save_sensor_enabled / TAB_TO_SENSOR_ID
+        const sensorId = TAB_TO_SENSOR_ID[tabId]; // short id used by save_sensor_enabled
+        if (!sensorId) return;
 
-        let pinDesc = ""; // human-readable pin(s) restored, for the terminal log below
+        const sensorName = tabsData.labels[tabId] || sensorId;
 
         // e.target is whichever of the two power toggles fired this handler
         // (single-sensor page or dual-sensor/Air-Temp-Hum page) — map it to
@@ -1477,59 +1543,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const toggleLabelId = e.target.id === 'dual-sensor-toggle' ? 'dual-sensor-toggle-state' : 'sensor-toggle-state';
         syncPowerToggleLabel(e.target.id, toggleLabelId); // immediate feedback on click, before the round-trip completes
 
-        if (tabId === 1) { payload.pin_tds = isEnabled ? DEFAULT_PINS.tds : -1; sensorName = "TDS"; sensorId = "tds"; pinDesc = `GPIO ${DEFAULT_PINS.tds}`; }
-        else if (tabId === 2) { payload.pin_dht = isEnabled ? DEFAULT_PINS.dht : -1; sensorName = "DHT"; sensorId = "dht"; pinDesc = `GPIO ${DEFAULT_PINS.dht}`; }
-        else if (tabId === 3) { payload.pin_wt = isEnabled ? DEFAULT_PINS.wt : -1; sensorName = "Water Temp"; sensorId = "wt"; pinDesc = `GPIO ${DEFAULT_PINS.wt}`; }
-        else if (tabId === 4) { payload.pin_sda = isEnabled ? DEFAULT_PINS.sda : -1; payload.pin_scl = isEnabled ? DEFAULT_PINS.scl : -1; sensorName = "I2C Light"; sensorId = "light"; pinDesc = `SDA ${DEFAULT_PINS.sda} / SCL ${DEFAULT_PINS.scl}`; }
-        else if (tabId === 5) { payload.pin_wl = isEnabled ? DEFAULT_PINS.wl : -1; payload.pin_wlp = isEnabled ? DEFAULT_PINS.wlp : -1; sensorName = "Water Level"; sensorId = "wl"; pinDesc = `GPIO ${DEFAULT_PINS.wl} (power ${DEFAULT_PINS.wlp})`; }
-        else if (tabId === 6) { payload.pin_ph = isEnabled ? DEFAULT_PINS.ph : -1; sensorName = "pH"; sensorId = "ph"; pinDesc = `GPIO ${DEFAULT_PINS.ph}`; }
-
-        if (sensorName !== "") {
-            e.target.disabled = true;
-            sendCommand(payload).then(() => {
-                // Part 5.1 fix: restoring the pin alone used to leave
-                // sensor_enabled[id] permanently false once a sensor had
-                // auto-disabled — nothing else ever set it back to true from this
-                // toggle. Send save_sensor_enabled on BOTH paths so this toggle's
-                // "enabled" flag always matches its pin state:
-                //  - power ON: also clears any lingering auto-disable flag, same
-                //    as before.
-                //  - power OFF: also flips sensor_enabled[id] to false. Without
-                //    this, sensor_enabled[] stayed true while the pin went to -1,
-                //    so every read after reboot would fail forever (pin -1 always
-                //    fails) and permanently trip the error LED for a sensor the
-                //    user deliberately turned off — the "solid green = healthy"
-                //    guarantee broke the moment anyone used this toggle to power
-                //    something down. (An earlier version of this comment argued
-                //    sending enabled:false here was unsafe because the pin-restore
-                //    branch in save_sensor_enabled's server handler would refire —
-                //    it doesn't: that branch only runs when enabled is true, so
-                //    enabled:false here never touches pins, only the flag.)
-                if (sensorId) {
-                    return sendCommand({ command: "save_sensor_enabled", sensor: sensorId, enabled: isEnabled });
-                }
-            }).then(() => {
-                e.target.disabled = false;
-                const status = isEnabled ? "POWERED ON" : "POWERED OFF";
-                // On power-on, this toggle also restores the sensor's compiled
-                // default pin(s) (see payload above and save_sensor_enabled's
-                // server-side pin-restore branch) — say so explicitly instead of
-                // just "POWERED ON", since that restore was previously silent.
-                const pinNote = isEnabled ? ` — pin restored to default (${pinDesc})` : "";
-                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} ${status}${escapeHtml(pinNote)}.</div>`;
-                if(confirm(`Sensor power state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
-                    sendCommand({command: "reboot"}).catch(() => {});
-                } else {
-                    e.target.checked = !isEnabled;
-                    syncPowerToggleLabel(e.target.id, toggleLabelId);
-                }
-            }).catch((err) => {
-                e.target.disabled = false;
-                e.target.checked = !isEnabled; // revert — the device never actually applied this
+        e.target.disabled = true;
+        sendCommand({ command: "save_sensor_enabled", sensor: sensorId, enabled: isEnabled }).then(() => {
+            e.target.disabled = false;
+            const status = isEnabled ? "ENABLED" : "DISABLED";
+            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} ${status}.</div>`;
+            if(confirm(`Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
+                sendCommand({command: "reboot"}).catch(() => {});
+            } else {
+                e.target.checked = !isEnabled;
                 syncPowerToggleLabel(e.target.id, toggleLabelId);
-                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} power change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
-            });
-        }
+            }
+        }).catch((err) => {
+            e.target.disabled = false;
+            e.target.checked = !isEnabled; // revert — the device never actually applied this
+            syncPowerToggleLabel(e.target.id, toggleLabelId);
+            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} enable change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
+        });
     };
 
     const singleSensorToggle = document.getElementById('sensor-toggle');
@@ -1550,7 +1580,6 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', () => sendResetSensorPin(btn.dataset.resetSensor));
     });
 
-    const TAB_TO_SENSOR_ID = { 1: "tds", 2: "dht", 3: "wt", 4: "light", 5: "wl", 6: "ph" };
     const btnResetCurrent = document.getElementById('btn-reset-current-sensor');
     if (btnResetCurrent) {
         btnResetCurrent.addEventListener('click', () => {
@@ -1560,27 +1589,49 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ------------------------------------------------------------------
-    // Feature Flags card (Part 2.3 / 1.3) — Demo Mode, Firebase Upload
-    // Updates. One "Save Feature Flags" button sends all three current
-    // checkbox states via save_features. None of these need a reboot.
+    // Feature Flags — Demo Mode (Settings > Feature Flags card) and
+    // Firebase Upload (Settings > Cloud Provisioning card) both persist via
+    // the same save_features command, but they live in two DIFFERENT cards
+    // and are wired independently so each one saves the moment it's
+    // toggled — a switch that visually flips but silently isn't saved
+    // until some other button (in another card) is clicked looks broken:
+    // the next "config" frame from the device (e.g. right after Save
+    // Credentials or Test Connection triggers a broadcast) reflects the
+    // real still-unsaved device state and snaps the checkbox back, which
+    // reads as "the toggle turns itself off". Sending on `change` for both
+    // switches removes that gap entirely. Always send BOTH current checkbox
+    // values together (not just the one that changed) since save_features
+    // treats an omitted field as "leave unchanged" but these two live
+    // fields are the actual source of truth for what's currently checked.
     // ------------------------------------------------------------------
-    const btnSaveFeatures = document.getElementById('btn-save-features');
-    if (btnSaveFeatures) {
-        btnSaveFeatures.addEventListener('click', () => {
-            const payload = {
-                command: "save_features",
-                demo: !!document.getElementById('cfg-demo-mode')?.checked,
-                fb_en: !!document.getElementById('cfg-fb-enabled')?.checked
-            };
-            runSaveButton(btnSaveFeatures, payload, "Saved!", "Save Feature Flags");
+    const sendFeatureFlags = (sourceEl) => {
+        const payload = {
+            command: "save_features",
+            demo: !!document.getElementById('cfg-demo-mode')?.checked,
+            fb_en: !!document.getElementById('cfg-fb-enabled')?.checked
+        };
+        sendCommand(payload).catch((err) => {
+            // Roll the checkbox back to the last known device state on
+            // failure (e.g. offline/timeout) instead of leaving the UI
+            // showing a state the device never actually accepted.
+            if (sourceEl) sourceEl.checked = !sourceEl.checked;
+            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Feature flag change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
         });
-    }
+    };
+
+    const cfgDemoMode = document.getElementById('cfg-demo-mode');
+    if (cfgDemoMode) cfgDemoMode.addEventListener('change', () => sendFeatureFlags(cfgDemoMode));
+
+    const cfgFbEnabled = document.getElementById('cfg-fb-enabled');
+    if (cfgFbEnabled) cfgFbEnabled.addEventListener('change', () => sendFeatureFlags(cfgFbEnabled));
 
     // ------------------------------------------------------------------
-    // Per-sensor enable toggle inside each pinout card (Part 2.4 / 1.4).
-    // Bound to save_sensor_enabled. Requires a reboot to apply (same as
-    // save_pins), since a restored pin only takes effect after the sensor
-    // task re-inits at boot — so this uses the same reboot-confirm UX.
+    // Per-sensor enable toggle inside each pinout card in Settings — the
+    // SINGLE on/off switch for a sensor, bound to save_sensor_enabled. This
+    // is the exact same switch as the "Enable Power" toggle on the
+    // per-sensor detail page (see handleToggle() above) — both just flip
+    // sensor_enabled[] and never touch pins. Requires a reboot to apply,
+    // since the change only takes effect after the sensor task re-inits.
     // ------------------------------------------------------------------
     document.querySelectorAll('[data-sensor-enable]').forEach((el) => {
         el.addEventListener('change', (e) => {
@@ -1589,12 +1640,7 @@ document.addEventListener('DOMContentLoaded', () => {
             e.target.disabled = true;
             sendCommand({ command: "save_sensor_enabled", sensor: sensorId, enabled }).then(() => {
                 e.target.disabled = false;
-                // On enable, the server also restores any pin(s) still at -1 to
-                // their compiled default (command_handlers.cpp: save_sensor_enabled
-                // only touches pins that are currently unset) — surface that here
-                // instead of leaving it silent, same as the pinout-card toggle above.
-                const pinNote = enabled ? " — any unset pin(s) restored to default" : "";
-                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${escapeHtml(sensorId)}' ${enabled ? "ENABLED" : "DISABLED"}${escapeHtml(pinNote)}.</div>`;
+                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${escapeHtml(sensorId)}' ${enabled ? "ENABLED" : "DISABLED"}.</div>`;
                 if (confirm(`Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
                     sendCommand({ command: "reboot" }).catch(() => {});
                 } else {

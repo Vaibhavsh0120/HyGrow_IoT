@@ -43,22 +43,27 @@ static const char *resetReasonToString(esp_reset_reason_t reason)
 // migration, or a factory-reset race — using it will fight the USB stack
 // and look like the board randomly disconnecting from the serial monitor.
 // Catch and neutralize that here, once, before any sensor touches a pin.
+//
+// This disables the affected sensor via sensor_enabled[] — the single on/off
+// switch in this firmware — rather than altering the pin number itself, so
+// the offending GPIO stays visible in the UI for the user to correct.
 static void enforceForbiddenPins()
 {
     struct PinRef
     {
         int *pin;
+        SensorID sensor;
         const char *name;
     };
     PinRef pins[] = {
-        {&currentConfig.pin_dht, "DHT22"},
-        {&currentConfig.pin_ds18b20, "DS18B20"},
-        {&currentConfig.pin_tds, "TDS"},
-        {&currentConfig.pin_ph, "pH"},
-        {&currentConfig.pin_lux_sda, "BH1750 SDA"},
-        {&currentConfig.pin_lux_scl, "BH1750 SCL"},
-        {&currentConfig.pin_wl, "Water Level Signal"},
-        {&currentConfig.pin_wl_power, "Water Level Power"},
+        {&currentConfig.pin_dht, S_DHT, "DHT22"},
+        {&currentConfig.pin_ds18b20, S_WTEMP, "DS18B20"},
+        {&currentConfig.pin_tds, S_TDS, "TDS"},
+        {&currentConfig.pin_ph, S_PH, "pH"},
+        {&currentConfig.pin_lux_sda, S_LIGHT, "BH1750 SDA"},
+        {&currentConfig.pin_lux_scl, S_LIGHT, "BH1750 SCL"},
+        {&currentConfig.pin_wl, S_WL, "Water Level Signal"},
+        {&currentConfig.pin_wl_power, S_WL, "Water Level Power"},
     };
 
     bool changed = false;
@@ -67,8 +72,9 @@ static void enforceForbiddenPins()
         if (*p.pin == 19 || *p.pin == 20)
         {
             webLog(0, LOG_WARN, "FORBIDDEN PIN: " + String(p.name) + " was configured on GPIO" +
-                            String(*p.pin) + " (native USB D-/D+). Disabling this sensor to protect the USB stack.");
-            *p.pin = -1;
+                            String(*p.pin) + " (native USB D-/D+). Disabling this sensor to protect the USB stack. "
+                            "Assign a different pin in Settings, then re-enable it.");
+            currentConfig.sensor_enabled[p.sensor] = false;
             changed = true;
         }
     }

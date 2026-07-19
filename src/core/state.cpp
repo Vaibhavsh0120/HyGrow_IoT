@@ -258,7 +258,8 @@ void state_init()
   currentConfig.ph_slope = prefs.getFloat("ph_slope", DEFAULT_PH_SLOPE);
   currentConfig.tds_k = prefs.getFloat("tds_k", DEFAULT_TDS_K);
 
-  // Pins (Changed to getInt to support -1 disabled flag)
+  // Pins — plain GPIO numbers, kept independent of on/off state (see the
+  // ConfigState::pin_* comment in state.h).
   currentConfig.pin_dht = prefs.getInt("pin_dht", PIN_DHT);
   currentConfig.pin_ds18b20 = prefs.getInt("pin_ds", PIN_DS18B20);
   currentConfig.pin_tds = prefs.getInt("pin_tds", PIN_TDS);
@@ -340,7 +341,7 @@ bool state_save()
   ok &= prefs.putFloat("ph_slope", currentConfig.ph_slope) > 0;
   ok &= prefs.putFloat("tds_k", currentConfig.tds_k) > 0;
 
-  // Pins (int, supports -1 disabled flag)
+  // Pins — plain GPIO numbers (see the ConfigState::pin_* comment in state.h)
   ok &= prefs.putInt("pin_dht", currentConfig.pin_dht) > 0;
   ok &= prefs.putInt("pin_ds", currentConfig.pin_ds18b20) > 0;
   ok &= prefs.putInt("pin_tds", currentConfig.pin_tds) > 0;

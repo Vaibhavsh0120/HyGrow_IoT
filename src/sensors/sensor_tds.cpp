@@ -31,17 +31,9 @@ int getMedianNum(int bArray[], int iFilterLen)
 
 void initTDS()
 {
-    if (currentConfig.pin_tds >= 0)
-    {
-        // Only initialize if a valid pin is assigned in Web Doctor settings
-        pinMode(currentConfig.pin_tds, INPUT);
-        analogReadResolution(12);
-        webLog(1, LOG_INFO, "TDS sensor initialized on pin " + String(currentConfig.pin_tds));
-    }
-    else
-    {
-        webLog(1, LOG_WARN, "TDS sensor disabled (pin set to -1)");
-    }
+    pinMode(currentConfig.pin_tds, INPUT);
+    analogReadResolution(12);
+    webLog(1, LOG_INFO, "TDS sensor initialized on pin " + String(currentConfig.pin_tds));
 }
 
 void sensor_tds_init()
@@ -61,15 +53,10 @@ bool sensor_tds_read(float water_temp_c, float tds_k, float &tds_ppm)
 
 float readTDS(float currentWaterTemp)
 {
-    // 1. Guard check: return NaN immediately if the sensor pin is disabled, so
-    // sensor_tds_read() correctly reports failure instead of a false "ok" at 0.0.
-    if (currentConfig.pin_tds < 0)
-    {
-        return NAN;
-    }
-
-    // 2. Rapidly sample 30 times into a local buffer
-    // Taking samples 2ms apart ensures we get a good average without blocking FreeRTOS too long
+    // 1. Rapidly sample 30 times into a local buffer. Taking samples 2ms
+    // apart ensures we get a good average without blocking FreeRTOS too
+    // long. sensor_enabled[S_TDS] is what decides whether this ever gets
+    // called in practice — see validateSensor()/readAll() in task_sensor.cpp.
     int analogBuffer[SCOUNT];
     for (int i = 0; i < SCOUNT; i++)
     {
@@ -77,11 +64,11 @@ float readTDS(float currentWaterTemp)
         delay(2);
     }
 
-    // 3. Apply Median Filter
+    // 2. Apply Median Filter
     int medianRaw = getMedianNum(analogBuffer, SCOUNT);
     float avgVoltage = medianRaw / 1000.0;
 
-    // 4. Temperature Compensation
+    // 3. Temperature Compensation
     if (currentWaterTemp <= 0.0)
     {
         currentWaterTemp = 25.0; // Fallback if water temp sensor fails
@@ -89,10 +76,10 @@ float readTDS(float currentWaterTemp)
     float compCoeff = 1.0 + 0.02 * (currentWaterTemp - 25.0);
     float compVoltage = avgVoltage / compCoeff;
 
-    // 5. Calculate final TDS using polynomial and NVS calibration K-Factor
+    // 4. Calculate final TDS using polynomial and NVS calibration K-Factor
     float tdsValue = (133.42 * pow(compVoltage, 3) - 255.86 * pow(compVoltage, 2) + 857.39 * compVoltage) * 0.5 * currentConfig.tds_k;
 
-    // 6. Sanity bounds check
+    // 5. Sanity bounds check
     if (tdsValue < 0.0)
     {
         tdsValue = 0.0;

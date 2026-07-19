@@ -5,6 +5,15 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
     <title>Web Doctor - Hydroponics IoT</title>
 
+    <!-- Self-hosted favicon (data/favicon.svg) — same reasoning as the
+         self-hosted fonts below: this device may only ever be reachable
+         over its own SoftAP with no internet uplink, so nothing in <head>
+         can depend on an external URL. SVG favicons are supported by every
+         modern browser; no separate .ico fallback is bundled since this
+         dashboard already assumes a reasonably current browser (it also
+         relies on CSS custom properties, backdrop-filter, etc.). -->
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+
     <!-- Apply the saved theme before first paint to avoid a flash of the
          wrong theme. Defaults to dark to match this project's original look. -->
     <script>
@@ -255,12 +264,14 @@
                     <button id="btn-export-sensor-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
                         <span class="material-symbols-outlined text-[20px]">download</span> Export CSV
                     </button>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                        <input checked="" class="sr-only peer" id="sensor-toggle" type="checkbox"/>
-                        <div class="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+                    <div class="flex items-center">
+                        <label class="hg-toggle">
+                            <input checked="" class="sr-only peer" id="sensor-toggle" type="checkbox"/>
+                            <span class="hg-toggle-track"></span>
+                        </label>
                         <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
                         <span id="sensor-toggle-state" class="ml-3 font-label-sm text-label-sm text-secondary">ON</span>
-                    </label>
+                    </div>
                 </div>
             </header>
             <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center justify-between gap-2 shadow-lg" id="sensor-error" role="alert">
@@ -288,12 +299,14 @@
                     </h2>
                     <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">GPIO PIN: <span class="text-primary" id="dual-sensor-pin">--</span></p>
                 </div>
-                <label class="relative inline-flex items-center cursor-pointer">
-                    <input checked="" class="sr-only peer" id="dual-sensor-toggle" type="checkbox"/>
-                    <div class="w-11 h-6 bg-white/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
+                <div class="flex items-center">
+                    <label class="hg-toggle">
+                        <input checked="" class="sr-only peer" id="dual-sensor-toggle" type="checkbox"/>
+                        <span class="hg-toggle-track"></span>
+                    </label>
                     <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
                     <span id="dual-sensor-toggle-state" class="ml-3 font-label-sm text-label-sm text-secondary">ON</span>
-                </label>
+                </div>
             </header>
             <div class="flex-1 liquid-glass rounded-3xl p-6 md:p-8 flex flex-col relative min-h-[400px]">
                 <div class="absolute top-6 md:top-8 right-6 md:right-8 flex gap-8 z-10 text-right">
@@ -425,7 +438,7 @@
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-wifi-pass">Password</label>
-                            <input id="cfg-wifi-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                            <input id="cfg-wifi-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-ap-pass">SoftAP Recovery Password</label>
@@ -451,15 +464,30 @@
                         <p class="text-on-surface-variant text-body-md mb-2">Update the admin password used to access this device's dashboard.</p>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-pass-current">Current Password</label>
-                            <input id="cfg-pass-current" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                            <div class="hg-secret-field">
+                                <input id="cfg-pass-current" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-current" aria-label="Show Current Password">
+                                    <span class="material-symbols-outlined">visibility</span>
+                                </button>
+                            </div>
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-pass-new">New Password</label>
-                            <input id="cfg-pass-new" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                            <div class="hg-secret-field">
+                                <input id="cfg-pass-new" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-new" aria-label="Show New Password">
+                                    <span class="material-symbols-outlined">visibility</span>
+                                </button>
+                            </div>
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-pass-confirm">Confirm New Password</label>
-                            <input id="cfg-pass-confirm" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                            <div class="hg-secret-field">
+                                <input id="cfg-pass-confirm" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-confirm" aria-label="Show Confirm New Password">
+                                    <span class="material-symbols-outlined">visibility</span>
+                                </button>
+                            </div>
                         </div>
                         <p id="cfg-pass-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
                         <button id="btn-change-password" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Update Password</button>
@@ -478,34 +506,28 @@
                         </div>
                     </div>
 
-                    <!-- NEW: Feature Flags card (Part 2.3) -->
+                    <!-- Feature Flags card. This project keeps exactly two
+                         placement rules for every whole-system on/off
+                         switch: anything about how SENSORS behave lives
+                         here; anything about FIREBASE lives in the Cloud
+                         Provisioning card instead (see Firebase Upload
+                         there, next to Test Connection). Demo Mode is a
+                         sensor concern (it swaps real hardware reads for
+                         simulated ones), so it's the only switch left here. -->
                     <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Feature Flags</h3>
-                        <p class="text-on-surface-variant text-body-md mb-2">Toggle whole-system behaviors. None of these require a reboot.</p>
+                        <p class="text-on-surface-variant text-body-md mb-2">Toggle whole-system behaviors. Applies immediately — none of these require a reboot.</p>
 
-                        <label class="relative flex items-center justify-between gap-4 cursor-pointer">
+                        <div class="flex items-center justify-between gap-4">
                             <span class="flex flex-col gap-0.5">
                                 <span class="font-label-md text-label-md text-white">Demo Mode</span>
                                 <span class="font-label-sm text-label-sm text-on-surface-variant">Simulate sensor data instead of reading real hardware. Useful for testing the dashboard before wiring anything up.</span>
                             </span>
-                            <span class="relative inline-flex items-center shrink-0">
+                            <label class="hg-toggle">
                                 <input class="sr-only peer" id="cfg-demo-mode" type="checkbox"/>
-                                <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
-                            </span>
-                        </label>
-
-                        <label class="relative flex items-center justify-between gap-4 cursor-pointer">
-                            <span class="flex flex-col gap-0.5">
-                                <span class="font-label-md text-label-md text-white">Firebase Upload</span>
-                                <span class="font-label-sm text-label-sm text-on-surface-variant">Push sensor readings to Firestore on the interval configured in Cloud Provisioning.</span>
-                            </span>
-                            <span class="relative inline-flex items-center shrink-0">
-                                <input class="sr-only peer" id="cfg-fb-enabled" type="checkbox"/>
-                                <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-container"></div>
-                            </span>
-                        </label>
-
-                        <button id="btn-save-features" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Feature Flags</button>
+                                <span class="hg-toggle-track"></span>
+                            </label>
+                        </div>
                     </div>
                 </div>
 
@@ -515,13 +537,34 @@
                     <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Cloud Provisioning</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Configure connection to Cloud Firestore.</p>
+
+                        <!-- Firebase Upload lives here — everything about
+                             whether/how this device talks to Firebase is in
+                             this one card: the toggle, the credentials, and
+                             Test Connection, together. -->
+                        <div class="flex items-center justify-between gap-4">
+                            <span class="flex flex-col gap-0.5">
+                                <span class="font-label-md text-label-md text-white">Firebase Upload</span>
+                                <span class="font-label-sm text-label-sm text-on-surface-variant">Push sensor readings to Firestore on the interval configured below. Applies immediately. Auto-disables after 5 consecutive failed uploads.</span>
+                            </span>
+                            <label class="hg-toggle">
+                                <input class="sr-only peer" id="cfg-fb-enabled" type="checkbox"/>
+                                <span class="hg-toggle-track"></span>
+                            </label>
+                        </div>
+
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-proj">Project ID</label>
                             <input id="cfg-fb-proj" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="e.g. my-iot-project" type="text"/>
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-api">Web API Key</label>
-                            <input id="cfg-fb-api" maxlength="127" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="AIzaSy..." type="password"/>
+                            <div class="hg-secret-field">
+                                <input id="cfg-fb-api" maxlength="127" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="AIzaSy..." type="password"/>
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-fb-api" aria-label="Show Web API Key">
+                                    <span class="material-symbols-outlined">visibility</span>
+                                </button>
+                            </div>
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-email">Email</label>
@@ -529,7 +572,18 @@
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-pass">Password</label>
-                            <input id="cfg-fb-pass" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                            <div class="hg-secret-field">
+                                <input id="cfg-fb-pass" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-fb-pass" aria-label="Show Firebase Password">
+                                    <span class="material-symbols-outlined">visibility</span>
+                                </button>
+                            </div>
+                            <!-- Unlike the Web API Key above, this field is
+                                 never repopulated with the saved value — the
+                                 device intentionally never sends the stored
+                                 Firebase password back down over the wire, so
+                                 there's nothing to reveal until you type a new
+                                 one here. -->
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-col">Firestore Collection</label>
@@ -541,14 +595,20 @@
                              Server-side check lives in save_firebase
                              (command_handlers.cpp) — this is a UX nicety. -->
                         <p id="cfg-fb-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
-                        <button id="btn-save-firebase" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Credentials</button>
-                        <!-- Fix (gap #3): the device already tracks real
-                             Firebase/Firestore upload health (firebase_ready,
-                             firebase_last_ok_ms, firebase_last_error) and sends
-                             it in every vitals frame, but none of it reached
-                             the UI — uploads could fail silently forever with
-                             zero visibility here. updateVitals() in app.js
-                             fills this in and colors it based on health. -->
+                        <div class="flex flex-col sm:flex-row gap-3">
+                            <button id="btn-save-firebase" class="flex-1 bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all">Save Credentials</button>
+                            <!-- Real connectivity check (test_firebase command)
+                                 against whatever is currently SAVED — signs in
+                                 via Identity Toolkit and does a live Firestore
+                                 read. Only meaningful after Save Credentials
+                                 has run at least once. -->
+                            <button id="btn-test-firebase" class="flex-1 bg-white/5 border border-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/10 transition-all">Test Connection</button>
+                        </div>
+                        <!-- The device already tracks real Firebase/Firestore
+                             upload health (firebase_ready, firebase_last_ok_ms,
+                             firebase_last_error) and sends it in every vitals
+                             frame; updateVitals() in app.js fills this in and
+                             colors it based on health. -->
                         <div class="flex items-center gap-2 font-label-sm text-label-sm text-on-surface-variant" id="dash-fb-status" aria-live="polite">
                             <span class="w-2 h-2 rounded-full bg-white/30 shrink-0" id="dash-fb-status-dot"></span>
                             <span id="dash-fb-status-text">Upload status unknown</span>
@@ -561,7 +621,7 @@
                      md:grid-cols-2) — still stacks single-column on tablet/mobile. -->
                 <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 lg:col-span-2">
                     <h3 class="font-headline-md text-headline-md text-white">Sensor Implementation Config</h3>
-                    <p class="text-on-surface-variant text-body-md mb-2">Manage physical hardware pinouts and status. (-1 disables sensor)</p>
+                    <p class="text-on-surface-variant text-body-md mb-2">Manage physical hardware pinouts and status. GPIO numbers always stay saved and visible; use each card's <strong class="text-white font-bold">Enabled</strong> switch to turn a sensor on or off.</p>
                     <!-- Client-side pin validation banner (Part 4.2) — hidden by
                          default, shown by app.js when any pin field is 19, 20, or
                          a forbidden/duplicate value. Styled consistently with the
@@ -582,13 +642,13 @@
                                 <span class="text-on-surface-variant font-label-sm">Pwr:</span>
                                 <input id="cfg-pin-wlp" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="5"/>
                             </div>
-                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                            <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
-                                <span class="relative inline-flex items-center shrink-0">
+                                <label class="hg-toggle hg-toggle-sm">
                                     <input class="sr-only peer" id="cfg-sensor-enabled-wl" data-sensor-enable="wl" type="checkbox"/>
-                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
-                                </span>
-                            </label>
+                                    <span class="hg-toggle-track"></span>
+                                </label>
+                            </div>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -601,13 +661,13 @@
                                 <span class="text-on-surface-variant font-label-sm">/</span>
                                 <input id="cfg-pin-scl" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="9"/>
                             </div>
-                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                            <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
-                                <span class="relative inline-flex items-center shrink-0">
+                                <label class="hg-toggle hg-toggle-sm">
                                     <input class="sr-only peer" id="cfg-sensor-enabled-light" data-sensor-enable="light" type="checkbox"/>
-                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
-                                </span>
-                            </label>
+                                    <span class="hg-toggle-track"></span>
+                                </label>
+                            </div>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -618,13 +678,13 @@
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
                                 <input id="cfg-pin-tds" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="2"/>
                             </div>
-                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                            <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
-                                <span class="relative inline-flex items-center shrink-0">
+                                <label class="hg-toggle hg-toggle-sm">
                                     <input class="sr-only peer" id="cfg-sensor-enabled-tds" data-sensor-enable="tds" type="checkbox"/>
-                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
-                                </span>
-                            </label>
+                                    <span class="hg-toggle-track"></span>
+                                </label>
+                            </div>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -635,13 +695,13 @@
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
                                 <input id="cfg-pin-dht" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="6"/>
                             </div>
-                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                            <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
-                                <span class="relative inline-flex items-center shrink-0">
+                                <label class="hg-toggle hg-toggle-sm">
                                     <input class="sr-only peer" id="cfg-sensor-enabled-dht" data-sensor-enable="dht" type="checkbox"/>
-                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
-                                </span>
-                            </label>
+                                    <span class="hg-toggle-track"></span>
+                                </label>
+                            </div>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -652,13 +712,13 @@
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
                                 <input id="cfg-pin-ph" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="7"/>
                             </div>
-                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                            <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
-                                <span class="relative inline-flex items-center shrink-0">
+                                <label class="hg-toggle hg-toggle-sm">
                                     <input class="sr-only peer" id="cfg-sensor-enabled-ph" data-sensor-enable="ph" type="checkbox"/>
-                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
-                                </span>
-                            </label>
+                                    <span class="hg-toggle-track"></span>
+                                </label>
+                            </div>
                         </div>
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -669,13 +729,13 @@
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
                                 <input id="cfg-pin-wt" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="4"/>
                             </div>
-                            <label class="relative flex items-center justify-between gap-2 cursor-pointer mt-1">
+                            <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
-                                <span class="relative inline-flex items-center shrink-0">
+                                <label class="hg-toggle hg-toggle-sm">
                                     <input class="sr-only peer" id="cfg-sensor-enabled-wt" data-sensor-enable="wt" type="checkbox"/>
-                                    <div class="w-9 h-5 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[rgba(0,0,0,0.1)] after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-container"></div>
-                                </span>
-                            </label>
+                                    <span class="hg-toggle-track"></span>
+                                </label>
+                            </div>
                         </div>
                     </div>
                     <button id="btn-save-pins" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Pinout Config (Requires Reboot)</button>

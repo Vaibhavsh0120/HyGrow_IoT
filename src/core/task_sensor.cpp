@@ -10,9 +10,10 @@
  *      live by the time sensor_lux_init() runs.
  *   2. Startup validation: each enabled sensor gets up to 5 read attempts
  *      before the task commits to it being "live". A sensor that fails all
- *      5 boot attempts is auto-disabled (pin -> -1) and persisted, so a
- *      genuinely unwired/dead sensor doesn't spam "read failed" into the
- *      web terminal forever.
+ *      5 boot attempts is auto-disabled (sensor_enabled[] -> false) and
+ *      persisted, so a genuinely unwired/dead sensor doesn't spam "read
+ *      failed" into the web terminal forever. Its pin assignment is left
+ *      untouched — auto-disable only ever flips the enabled flag.
  *   3. The steady-state read loop.
  *   4. The WS2812 status LED, updated every read cycle to reflect live
  *      sensor health: LED off when every enabled sensor is healthy, the
@@ -101,10 +102,19 @@ static float demoStep(DemoWalkState &state, float lo, float hi, float maxStep, f
   return state.value;
 }
 
-// Populates currentSensors with one simulated reading for every sensor and
-// marks each sensor OK, regardless of currentConfig.sensor_enabled[] — demo
-// mode is meant to show a fully "live" dashboard even if real sensors were
-// never wired/enabled.
+// Forward declaration — readAllDemo() (below) now calls this directly
+// (previously it set currentSensors.last_ok_ms/last_err inline for every
+// sensor unconditionally; the per-sensor-gated version needs the same
+// helper the real-mode readAll() already uses), but markOk() itself is
+// defined further down this file.
+static void markOk(SensorID id);
+
+// Populates currentSensors with one simulated reading for every ENABLED
+// sensor and marks each of those OK. A sensor whose sensor_enabled[] flag is
+// off is skipped entirely here, exactly like real-mode readAll() skips it —
+// demo mode simulates hardware, it does not simulate having sensors that
+// were explicitly turned off. A disabled sensor's last_ok_ms/last_err are
+// left untouched so it shows as "no data", not fabricated data.
 static void readAllDemo()
 {
   if (!s_demoSeeded)
@@ -113,29 +123,44 @@ static void readAllDemo()
     s_demoSeeded = true;
   }
 
-  float ph = demoStep(s_demoPh, 6.0f, 6.5f, 0.05f, 2.0f);
-  float tds = demoStep(s_demoTds, 800.0f, 1200.0f, 15.0f, 2.0f);
-  float airTemp = demoStep(s_demoAirTemp, 22.0f, 26.0f, 0.3f, 1.5f);
-  float humidity = demoStep(s_demoHumidity, 55.0f, 70.0f, 0.6f, 1.5f);
-  float waterTemp = demoStep(s_demoWaterTemp, 20.0f, 24.0f, 0.2f, 1.5f);
-  float lux = demoStep(s_demoLux, 200.0f, 800.0f, 8.0f, 3.0f);
-  float wl = demoStep(s_demoWl, 40.0f, 90.0f, 0.5f, 1.0f);
-
-  currentSensors.ph_val = ph;
-  currentSensors.tds_ppm = tds;
-  currentSensors.temp_c = airTemp;
-  currentSensors.humidity = humidity;
-  currentSensors.water_temp_c = waterTemp;
-  currentSensors.lux = lux;
-  currentSensors.wl_percent = wl;
-  currentSensors.vpd_kpa = computeVPD(airTemp, humidity);
-
-  // Mark every sensor OK every cycle so the LED stays solid green and the
-  // dashboard shows "live" data, exactly as if real hardware were healthy.
-  for (int i = 0; i < S_COUNT; i++)
+  if (currentConfig.sensor_enabled[S_DHT])
   {
-    currentSensors.last_ok_ms[i] = millis();
-    currentSensors.last_err[i][0] = '\0';
+    float airTemp = demoStep(s_demoAirTemp, 22.0f, 26.0f, 0.3f, 1.5f);
+    float humidity = demoStep(s_demoHumidity, 55.0f, 70.0f, 0.6f, 1.5f);
+    currentSensors.temp_c = airTemp;
+    currentSensors.humidity = humidity;
+    currentSensors.vpd_kpa = computeVPD(airTemp, humidity);
+    markOk(S_DHT);
+  }
+
+  if (currentConfig.sensor_enabled[S_WTEMP])
+  {
+    currentSensors.water_temp_c = demoStep(s_demoWaterTemp, 20.0f, 24.0f, 0.2f, 1.5f);
+    markOk(S_WTEMP);
+  }
+
+  if (currentConfig.sensor_enabled[S_TDS])
+  {
+    currentSensors.tds_ppm = demoStep(s_demoTds, 800.0f, 1200.0f, 15.0f, 2.0f);
+    markOk(S_TDS);
+  }
+
+  if (currentConfig.sensor_enabled[S_PH])
+  {
+    currentSensors.ph_val = demoStep(s_demoPh, 6.0f, 6.5f, 0.05f, 2.0f);
+    markOk(S_PH);
+  }
+
+  if (currentConfig.sensor_enabled[S_LIGHT])
+  {
+    currentSensors.lux = demoStep(s_demoLux, 200.0f, 800.0f, 8.0f, 3.0f);
+    markOk(S_LIGHT);
+  }
+
+  if (currentConfig.sensor_enabled[S_WL])
+  {
+    currentSensors.wl_percent = demoStep(s_demoWl, 40.0f, 90.0f, 0.5f, 1.0f);
+    markOk(S_WL);
   }
 }
 
@@ -151,36 +176,13 @@ static void markErr(SensorID id, const char *msg)
   currentSensors.last_err[id][sizeof(currentSensors.last_err[id]) - 1] = '\0';
 }
 
-// Disables a sensor in currentConfig (pin(s) -> -1), persists it, and logs
-// why. Called only when a sensor fails every startup validation attempt.
+// Disables a sensor in currentConfig (sensor_enabled[id] -> false), persists
+// it, and logs why. Called only when a sensor fails every startup validation
+// attempt. Deliberately leaves the sensor's pin assignment(s) untouched —
+// sensor_enabled[] is the only on/off switch in this firmware, so the pin
+// stays visible/correct in the UI for whenever the wiring gets fixed.
 static void autoDisable(SensorID id, const char *name)
 {
-  switch (id)
-  {
-  case S_DHT:
-    currentConfig.pin_dht = -1;
-    break;
-  case S_WTEMP:
-    currentConfig.pin_ds18b20 = -1;
-    break;
-  case S_TDS:
-    currentConfig.pin_tds = -1;
-    break;
-  case S_PH:
-    currentConfig.pin_ph = -1;
-    break;
-  case S_LIGHT:
-    currentConfig.pin_lux_sda = -1;
-    currentConfig.pin_lux_scl = -1;
-    break;
-  case S_WL:
-    currentConfig.pin_wl = -1;
-    currentConfig.pin_wl_power = -1;
-    break;
-  default:
-    break;
-  }
-
   currentConfig.sensor_enabled[id] = false;
   webLog(1, LOG_WARN, String(name) + " failed " + String(STARTUP_RETRY_COUNT) +
                            " startup read attempts — automatically disabled for this session. " +
@@ -198,11 +200,11 @@ static void autoDisable(SensorID id, const char *name)
 // lightMeter.begin().
 static bool bringUpI2CAndProbeLight()
 {
-  // Guard check: if either SDA or SCL is < 0 (e.g., -1), completely disable
-  // the sensor and never touch Wire.
-  if (currentConfig.pin_lux_sda < 0 || currentConfig.pin_lux_scl < 0)
+  // Guard check: only bring up I2C and probe if the Light sensor is
+  // actually enabled. sensor_enabled[] is the single on/off switch in this
+  // firmware — pin values are never consulted to decide this.
+  if (!currentConfig.sensor_enabled[S_LIGHT])
   {
-    webLog(1, LOG_WARN, "BH1750 Light sensor disabled (SDA/SCL set to -1)");
     return false;
   }
 
@@ -238,11 +240,11 @@ static bool bringUpI2CAndProbeLight()
 // ----------------------------------------------------------------------------
 // Startup validation
 // ----------------------------------------------------------------------------
-// For every sensor whose pin(s) are currently assigned (>= 0) AND whose
-// feature flag is enabled, attempt up to STARTUP_RETRY_COUNT reads. The
-// first successful read commits the sensor as "live" and moves on; if all
-// attempts fail, the sensor is auto-disabled so the steady-state loop never
-// has to deal with a sensor that was never actually there.
+// For every sensor whose feature flag (sensor_enabled[]) is on, attempt up
+// to STARTUP_RETRY_COUNT reads. The first successful read commits the
+// sensor as "live" and moves on; if all attempts fail, the sensor is
+// auto-disabled so the steady-state loop never has to deal with a sensor
+// that was never actually there.
 static void validateSensor(SensorID id, const char *name, bool (*readFn)())
 {
   if (!currentConfig.sensor_enabled[id])
@@ -284,10 +286,11 @@ static void initAllSensors()
   sensor_wl_init();
 
   // BH1750 is the one sensor with a reliable "is it actually wired up" probe
-  // at init time (I2C ACK on the bus) — see bringUpI2CAndProbeLight() above.
-  // Run that probe first; if nothing ACKed, disable it immediately rather
-  // than letting the 5x startup-validation loop below burn through retries
-  // on a device that was never there.
+  // at init time (I2C ACK on the bus) — see bringUpI2CAndProbeLight() above,
+  // which itself no-ops if the Light sensor is disabled. Run that probe
+  // first; if nothing ACKed (and the sensor was enabled), disable it
+  // immediately rather than letting the 5x startup-validation loop below
+  // burn through retries on a device that was never there.
   bool lightDetected = bringUpI2CAndProbeLight() && sensor_lux_init();
   if (!lightDetected && currentConfig.sensor_enabled[S_LIGHT])
   {

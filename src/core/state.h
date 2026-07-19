@@ -38,7 +38,10 @@ struct ConfigState
   float ph_slope;
   float tds_k;
 
-  // Pins (reboot required to apply) - changed to int to allow -1 (disabled)
+  // Pins (reboot required to apply). Plain GPIO numbers only — a pin is
+  // never used as an on/off switch. The single on/off switch for a sensor
+  // is sensor_enabled[] below; a pin keeps its saved value even while its
+  // sensor is disabled.
   int pin_dht;
   int pin_ds18b20;
   int pin_tds;
@@ -52,7 +55,9 @@ struct ConfigState
   bool demo_mode;         // [NVS] demo    — simulate sensor data instead of reading hardware
   bool firebase_enabled;  // [NVS] fb_en   — gate the Firestore POST logic
 
-  // Feature flags — user toggles per sensor
+  // Feature flags — the SINGLE on/off switch per sensor. This is checked
+  // everywhere a sensor's init/read/upload decision is made; pin_* above is
+  // never consulted for that decision.
   bool sensor_enabled[S_COUNT];
 };
 
