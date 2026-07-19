@@ -25,6 +25,41 @@
 // unbounded and never confuses one browser tab's session with another's.
 static std::set<uint32_t> s_authedClients;
 
+// ----------------------------------------------------------------------------
+// Failed-password lockout
+// ----------------------------------------------------------------------------
+// handleAuthCommand() below used to have no limit on failed password
+// attempts at all -- an attacker with WebSocket access (e.g. connected to
+// the SoftAP) could brute-force guess indefinitely, and auth_check_password()
+// only recently became constant-time (see state.cpp), which on its own does
+// nothing to stop a guessing loop. This is a single global counter rather
+// than one per client id: AsyncWebSocket hands out a fresh client id per
+// TCP connection, so a per-client counter would reset to zero on every
+// reconnect and provide no real protection. There's exactly one admin
+// account on this device, so a single device-wide counter is the right
+// scope -- it also means one attacker can't dodge the lockout by opening
+// multiple connections in parallel.
+//
+// Backoff grows with each consecutive failure (1s, 2s, 4s, ... capped at
+// 30s) rather than a hard lockout window, so a legitimate user who
+// mistypes their password a couple of times barely notices, while a
+// scripted guessing loop gets slowed to a crawl. The counter resets to
+// zero on any successful auth.
+static uint16_t s_failedAuthAttempts = 0;
+static unsigned long s_authLockoutUntilMs = 0;
+
+static const uint16_t AUTH_LOCKOUT_MAX_BACKOFF_MS = 30000;
+
+// Doubles the backoff per consecutive failure: 1s, 2s, 4s, 8s, 16s, 30s
+// (capped), 30s, 30s... Called only after a failed attempt is recorded.
+static unsigned long authBackoffForAttempt(uint16_t attempts)
+{
+    if (attempts == 0)
+        return 0;
+    unsigned long ms = 1000UL << (attempts - 1 > 15 ? 15 : attempts - 1); // guard against shift overflow
+    return ms > AUTH_LOCKOUT_MAX_BACKOFF_MS ? AUTH_LOCKOUT_MAX_BACKOFF_MS : ms;
+}
+
 bool wsClientIsAuthed(uint32_t clientId)
 {
     return s_authedClients.find(clientId) != s_authedClients.end();
@@ -71,6 +106,28 @@ void handleAuthCommand(AsyncWebSocketClient *client, JsonDocument &doc)
     bool ok = false;
     String issuedToken;
 
+    // Lockout only applies to password guesses, not token reauth. A stale
+    // or invalid token is a normal, frequent occurrence (e.g. every
+    // browser tab that was open across a password change) and isn't
+    // evidence of anyone guessing anything -- gating it the same way
+    // would let a few routine reconnects lock a legitimate user out of
+    // their own device.
+    bool isPasswordAttempt = password.length() > 0 && !(token.length() > 0 && auth_check_token(token));
+    unsigned long now = millis();
+
+    if (isPasswordAttempt && s_authLockoutUntilMs != 0 && (long)(s_authLockoutUntilMs - now) > 0)
+    {
+        JsonDocument resp;
+        resp["type"] = "auth_result";
+        resp["ok"] = false;
+        resp["error"] = "Too many failed attempts. Please wait before trying again.";
+        String payload;
+        serializeJson(resp, payload);
+        client->text(payload);
+        webLog(0, LOG_WARN, "WS Client " + String(client->id()) + " auth attempt rejected: locked out.");
+        return;
+    }
+
     if (token.length() > 0 && auth_check_token(token))
     {
         ok = true; // token is still the currently-valid session token — no need to reissue
@@ -91,7 +148,21 @@ void handleAuthCommand(AsyncWebSocketClient *client, JsonDocument &doc)
     }
 
     if (ok)
+    {
         wsMarkClientAuthed(client->id());
+        // Any successful auth clears the failure streak -- a legitimate
+        // login shouldn't stay throttled because of earlier mistyped
+        // attempts, and this is also what lets the counter reset for the
+        // one real admin instead of accumulating forever.
+        s_failedAuthAttempts = 0;
+        s_authLockoutUntilMs = 0;
+    }
+    else if (isPasswordAttempt)
+    {
+        if (s_failedAuthAttempts < 60000) // guard against wraparound over an extremely long uptime
+            s_failedAuthAttempts++;
+        s_authLockoutUntilMs = now + authBackoffForAttempt(s_failedAuthAttempts);
+    }
 
     JsonDocument resp;
     resp["type"] = "auth_result";

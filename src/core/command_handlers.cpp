@@ -149,6 +149,31 @@ static bool isRealisticTdsPpm(float ppm)
     return !isnan(ppm) && ppm >= 0.0f && ppm <= 10000.0f;
 }
 
+// calibrate_ph's server-side sanity check, mirroring isRealisticTdsPpm()
+// above. readPH() (sensor_ph.cpp) computes
+// `phValue = (ph_slope * voltage) + ph_offset`, so an unchecked slope near
+// zero doesn't crash anything there -- phValue just goes flat and gets
+// clamped into the 0-14 sanity range like any other out-of-bounds reading.
+// The real risk is downstream: the frontend's calibration review step and
+// exported calibration CSV both treat offset/slope as real linear-fit
+// coefficients, and a hand-crafted WS message (or a future client bug)
+// could otherwise persist a slope of exactly 0 or something wildly
+// unphysical with zero pushback from the device. A two-point pH 4/pH 7
+// fit has a slope magnitude usually well under ~1 V/pH-unit in practice;
+// +/-20 is a generous outer bound that only rejects clear typos/garbage
+// while leaving every real probe/ADC combination untouched. Offset is
+// bounded to +/-14 (a full pH-scale swing) for the same reason.
+static bool isRealisticPhCalibration(float offset, float slope)
+{
+    if (isnan(offset) || isnan(slope))
+        return false;
+    if (slope == 0.0f || slope < -20.0f || slope > 20.0f)
+        return false;
+    if (offset < -14.0f || offset > 14.0f)
+        return false;
+    return true;
+}
+
 // Every command name other than "auth"/"change_password" (those live in
 // auth.cpp) — save_wifi, save_firebase, save_pins, calibrate_ph,
 // calibrate_tds, save_features, save_sensor_enabled, save_intervals, test_firebase,
@@ -315,8 +340,26 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
     }
     else if (cmd == "calibrate_ph")
     {
-        currentConfig.ph_offset = doc["offset"] | currentConfig.ph_offset;
-        currentConfig.ph_slope = doc["slope"] | currentConfig.ph_slope;
+        float proposedOffset = doc["offset"] | currentConfig.ph_offset;
+        float proposedSlope = doc["slope"] | currentConfig.ph_slope;
+
+        // Unlike calibrate_tds, this used to accept any offset/slope float
+        // with zero server-side check -- the frontend wizard guards against
+        // the one case it can produce (ph7Volt === ph4Volt, which would
+        // divide by zero client-side), but a hand-crafted WS message (or a
+        // future client bug) could still persist a slope of 0 or something
+        // physically unreasonable with no pushback from the device. Guard
+        // it the same way calibrate_tds guards tds_k, before it ever
+        // reaches currentConfig/NVS.
+        if (!isRealisticPhCalibration(proposedOffset, proposedSlope))
+        {
+            webLog(0, LOG_ERR, "calibrate_ph rejected: unrealistic offset/slope (" + String(proposedOffset) + " / " + String(proposedSlope) + ").");
+            sendCmdAck(client, cmd, false, "Calibration produced an unrealistic offset or scale factor. Check the live reading and buffer solutions.");
+            return;
+        }
+
+        currentConfig.ph_offset = proposedOffset;
+        currentConfig.ph_slope = proposedSlope;
         if (!state_save())
         {
             webLog(0, LOG_ERR, "calibrate_ph: state_save() failed — calibration may not be fully persisted.");

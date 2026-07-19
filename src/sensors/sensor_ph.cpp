@@ -4,7 +4,6 @@
 float readPH();
 
 // Assuming a standard 12-bit ADC for ESP32 and 3.3V reference
-#include <Arduino.h>
 
 void initPH()
 {

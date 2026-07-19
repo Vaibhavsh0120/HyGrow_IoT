@@ -1,9 +1,8 @@
 #include "../core/state.h"
 #include <Arduino.h>
 
-float readTDS(float currentWaterTemp);
+float readTDS(float currentWaterTemp, float tds_k);
 
-#include <Arduino.h>
 #define SCOUNT 30
 
 // Median filter (DFRobot's algorithm)
@@ -43,15 +42,21 @@ void sensor_tds_init()
 
 bool sensor_tds_read(float water_temp_c, float tds_k, float &tds_ppm)
 {
-    float prev_k = currentConfig.tds_k;
-    currentConfig.tds_k = tds_k;
-    float value = readTDS(water_temp_c);
-    currentConfig.tds_k = prev_k;
+    // NOTE: tds_k is accepted as a parameter and passed straight into
+    // readTDS() below to match the other sensor_*_read() signatures'
+    // style. This used to mutate the global currentConfig.tds_k to this
+    // same value, call readTDS(), then restore it -- but the call site
+    // (task_sensor.cpp) always passes currentConfig.tds_k itself, so that
+    // was a pure no-op round-trip (the missed twin of the identical
+    // self-assignment pattern already removed from sensor_ph.cpp -- see
+    // the NOTE in sensor_ph_read()). Removed; readTDS() now takes tds_k
+    // directly instead of reading the global.
+    float value = readTDS(water_temp_c, tds_k);
     tds_ppm = value;
     return !isnan(value);
 }
 
-float readTDS(float currentWaterTemp)
+float readTDS(float currentWaterTemp, float tds_k)
 {
     // 1. Rapidly sample 30 times into a local buffer. Taking samples 2ms
     // apart ensures we get a good average without blocking FreeRTOS too
@@ -77,7 +82,7 @@ float readTDS(float currentWaterTemp)
     float compVoltage = avgVoltage / compCoeff;
 
     // 4. Calculate final TDS using polynomial and NVS calibration K-Factor
-    float tdsValue = (133.42 * pow(compVoltage, 3) - 255.86 * pow(compVoltage, 2) + 857.39 * compVoltage) * 0.5 * currentConfig.tds_k;
+    float tdsValue = (133.42 * pow(compVoltage, 3) - 255.86 * pow(compVoltage, 2) + 857.39 * compVoltage) * 0.5 * tds_k;
 
     // 5. Sanity bounds check
     if (tdsValue < 0.0)

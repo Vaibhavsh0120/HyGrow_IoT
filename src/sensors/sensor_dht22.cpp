@@ -2,7 +2,7 @@
 #include <DHT.h>
 #include <math.h>
 
-void readDHT22(float &outTemp, float &outHum, float &outVpd);
+void readDHT22(float &outTemp, float &outHum);
 
 // Dynamically allocate the DHT object so we can use the Web Doctor pin
 DHT *dhtSensor = nullptr;
@@ -30,12 +30,11 @@ void sensor_dht_init()
 
 bool sensor_dht_read(float &temp_c, float &humidity_pct)
 {
-    float vpd = 0.0f;
-    readDHT22(temp_c, humidity_pct, vpd);
+    readDHT22(temp_c, humidity_pct);
     return !isnan(temp_c) && !isnan(humidity_pct);
 }
 
-void readDHT22(float &outTemp, float &outHum, float &outVpd)
+void readDHT22(float &outTemp, float &outHum)
 {
     // 1. Guard check: nothing to read from if init() hasn't run yet (e.g.
     // called before setup() finishes). sensor_enabled[S_DHT] is what
@@ -45,7 +44,6 @@ void readDHT22(float &outTemp, float &outHum, float &outVpd)
     {
         outTemp = NAN;
         outHum = NAN;
-        outVpd = NAN;
         return;
     }
 
@@ -74,7 +72,6 @@ void readDHT22(float &outTemp, float &outHum, float &outVpd)
         // the caller passed in.
         outTemp = NAN;
         outHum = NAN;
-        outVpd = NAN;
         return;
     }
 
@@ -82,15 +79,13 @@ void readDHT22(float &outTemp, float &outHum, float &outVpd)
     outTemp = temp;
     outHum = hum;
 
-    // 5. Calculate Vapor Pressure Deficit (VPD) in kPa
-    // Equation: SVP = 0.61078 * exp((17.27 * T) / (T + 237.3))
-    //           VPD = SVP * (1 - (RH / 100))
-    float svp = 0.61078 * exp((17.27 * temp) / (temp + 237.3));
-    outVpd = svp * (1.0 - (hum / 100.0));
-
-    // Sanity check to prevent negative VPD values
-    if (outVpd < 0.0)
-    {
-        outVpd = 0.0;
-    }
+    // NOTE: this used to also compute Vapor Pressure Deficit (VPD) here
+    // into a third out-param, but the only caller (sensor_dht_read()) never
+    // returned it to anyone -- task_sensor.cpp's readAll() independently
+    // recomputes VPD itself via its own computeVPD(), using this same
+    // temp/hum pair, and that's the value actually stored in
+    // currentSensors.vpd_kpa and broadcast. Keeping two separate
+    // implementations of the same physics risked them silently drifting
+    // apart if one were ever tweaked without the other. Removed; VPD is
+    // now computed in exactly one place (computeVPD(), task_sensor.cpp).
 }

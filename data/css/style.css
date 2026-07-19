@@ -1771,3 +1771,41 @@ body {
 .hg-secret-toggle .material-symbols-outlined {
   font-size: 20px;
 }
+
+/* Keyboard focus outline for the dynamically-generated nav tabs
+   (role="tab" tabindex="0", added in app.js's initNavigation() — see the
+   "Fix (gap #8)" comment there for the keyboard/screen-reader support
+   itself). Keyboard support without a visible focus indicator only gets a
+   sighted keyboard user halfway there: without this, tabbing through nav
+   falls back to the browser's unstyled default outline, which is
+   low-contrast against the dark "liquid-glass" backdrop used throughout
+   this UI. Matches the outline treatment .hg-toggle's power switches
+   already get above (outline: 2px solid var(--hg-primary)) so focus looks
+   consistent everywhere in the app, not just on toggles. :focus-visible
+   (not :focus) so this only shows for keyboard/assistive-tech navigation,
+   not every mouse click. */
+#nav-tabs [role="tab"]:focus-visible {
+  outline: 2px solid var(--hg-primary);
+  outline-offset: -2px; /* inset — the sidebar is only 96-320px wide, an outward outline would get clipped */
+  border-radius: 1rem;
+}
+
+/* Respect the OS/browser-level "reduce motion" preference. Without this,
+   every "Live" status dot on the main dashboard (.animate-pulse — TDS, pH,
+   Air Temp, Humidity, Water Temp, Light, Water Level, VPD, and the
+   Firebase link indicator, 9 elements total) and the auth-overlay loading
+   spinner (.animate-spin) run their infinite animations unconditionally,
+   with no way to turn them off short of a browser/OS-level "disable all
+   animations" setting that also affects every other site. Real issue for
+   motion-sensitive users given how many looping animations are visible on
+   the main dashboard at once. Layout-affecting transitions elsewhere in
+   this file (tab switches, modal open/close, etc.) are short, one-shot,
+   and triggered by a discrete user action rather than looping forever, so
+   they're intentionally left alone here -- this only targets the two
+   `infinite` animations, not motion in general. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse,
+  .animate-spin {
+    animation: none !important;
+  }
+}

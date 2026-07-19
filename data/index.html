@@ -334,6 +334,17 @@
                 <!-- TDS Calibration -->
                 <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                     <h3 class="font-headline-md text-headline-md text-white flex items-center gap-2"><span class="material-symbols-outlined">water_drop</span> TDS Sensor</h3>
+                    <!-- Shown instead of the calibration controls when the TDS
+                         sensor is disabled -- it never gets its currentSensors
+                         value touched by the firmware while off, so cal-tds-raw
+                         would otherwise sit at a misleadingly valid-looking 0
+                         with nothing on this page to say why. Toggled in
+                         app.js's updateCalibrationGating(). -->
+                    <div id="cal-tds-disabled-banner" class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" role="alert">
+                        <span class="material-symbols-outlined" aria-hidden="true">power_off</span>
+                        <span>TDS sensor is disabled. Enable it in Settings before calibrating.</span>
+                    </div>
+                    <div id="cal-tds-controls" class="flex flex-col gap-6">
                     <div class="bg-white/5 p-4 rounded-2xl border border-white/10">
                         <div class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-1">Live Reading</div>
                         <div class="font-display-lg-mobile text-white"><span id="cal-tds-raw">--</span> ppm</div>
@@ -351,6 +362,7 @@
                         <p id="cfg-tds-target-error" role="alert" class="hidden font-label-sm text-label-sm text-error">Enter a realistic value between 0 and 10000 ppm.</p>
                     </div>
                     <button id="btn-cal-tds" class="w-full bg-secondary-container text-on-secondary-container font-label-md py-3 rounded-xl hover:brightness-110 transition-all mt-auto shadow-lg">Calibrate & Save</button>
+                    </div>
                 </div>
                 <!-- pH Calibration Wizard (Part 2.1) — a proper 3-step flow
                      instead of two independent buttons a user could click in
@@ -363,6 +375,20 @@
                 <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6" id="ph-wizard-card">
                     <h3 class="font-headline-md text-headline-md text-white flex items-center gap-2"><span class="material-symbols-outlined">science</span> pH Sensor Calibration Wizard</h3>
 
+                    <!-- Shown instead of the wizard when the pH sensor is
+                         disabled (it ships OFF by default). Without this,
+                         cal-ph-raw shows a never-updated 0.00 -- a valid,
+                         non-NaN number -- and the wizard's only guard
+                         (isNaN(livePh)) lets a user "capture" two
+                         meaningless 0.00 points and save a corrupted
+                         calibration with no warning anywhere on this page.
+                         Toggled in app.js's updateCalibrationGating(). -->
+                    <div id="cal-ph-disabled-banner" class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" role="alert">
+                        <span class="material-symbols-outlined" aria-hidden="true">power_off</span>
+                        <span>pH sensor is disabled. Enable it in Settings before calibrating.</span>
+                    </div>
+
+                    <div id="ph-wizard-controls" class="flex flex-col gap-6">
                     <!-- Step progress indicator -->
                     <div class="flex items-center gap-2" role="list" aria-label="Calibration steps">
                         <div class="flex-1 flex items-center gap-2" role="listitem">
@@ -409,6 +435,7 @@
                          referenced elsewhere always exist in the DOM even
                          before Step 2/3 render their own copies. -->
                     <span id="cal-ph-4-val" class="hidden"></span>
+                    </div>
                 </div>
             </div>
         </section>

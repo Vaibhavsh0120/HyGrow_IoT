@@ -436,6 +436,12 @@ const ACK_TIMEOUT_MS = 5000;
 const COMMAND_TIMEOUT_OVERRIDES = { test_firebase: 16000 };
 let pendingCommands = []; // { id, command, resolve, reject, timer }
 let nextPendingId = 1;
+// Separate from pendingCommands above: reset_sensor_pin only acks on
+// failure (see sendResetSensorPin() for the full reasoning), so it can't
+// use the same "every command eventually gets an ack" assumption that
+// sendCommand()/pendingCommands relies on. Small array of one-shot
+// listener functions instead.
+let resetSensorPinListeners = [];
 
 function rejectAllPendingCommands(reason) {
     pendingCommands.forEach((p) => { clearTimeout(p.timer); p.reject(new Error(reason)); });
@@ -453,6 +459,14 @@ function rejectAllPendingCommands(reason) {
 // the same command while one is already pending, rather than leaving two
 // ambiguous entries in the queue at once.
 function handleCommandResult(msg) {
+    // reset_sensor_pin listeners (see sendResetSensorPin()) are separate
+    // from pendingCommands below — dispatch to them first. Copy the array
+    // before iterating since a listener removes itself from the live array
+    // as its first action, which would otherwise skip entries mid-forEach.
+    if (msg.command === "reset_sensor_pin" && resetSensorPinListeners.length > 0) {
+        resetSensorPinListeners.slice().forEach((fn) => fn(msg));
+    }
+
     const idx = pendingCommands.findIndex((p) => p.command === msg.command);
     if (idx === -1) return; // no button waiting on this ack (or it already timed out)
     const pending = pendingCommands[idx];
@@ -908,6 +922,12 @@ function updateConfigForm(msg) {
         tabsData.enabled[4] = !!msg.s_en[S_EN_INDEX.light]; // Light
         tabsData.enabled[5] = !!msg.s_en[S_EN_INDEX.wl];    // Water Level
         tabsData.enabled[6] = !!msg.s_en[S_EN_INDEX.ph];    // pH
+
+        // Re-gate the Live Calibration page (TDS card / pH wizard) any time
+        // enabled state changes -- including right after a save_sensor_enabled
+        // reboot, so this page never has to be manually revisited to notice
+        // a sensor came back on/off. See updateCalibrationGating() below.
+        updateCalibrationGating();
     }
 
     if(msg.pins && msg.pins.length >= 7) {
@@ -972,6 +992,12 @@ document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
     initWebSocket();
     setTimeout(resizeCanvas, 100);
+
+    // Default to "disabled" banners showing until the first config frame's
+    // tabsData.enabled[] confirms otherwise -- matches resolveSensorOn()'s
+    // same fail-closed default for the per-sensor toggle before any config
+    // has arrived.
+    updateCalibrationGating();
 
     const btnSpinnerRetry = document.getElementById('auth-spinner-retry');
     if (btnSpinnerRetry) btnSpinnerRetry.addEventListener('click', retryConnectionNow);
@@ -1268,6 +1294,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCalTds = document.getElementById('btn-cal-tds');
     if(btnCalTds) {
         btnCalTds.addEventListener('click', () => {
+            if (!tabsData.enabled[1]) { updateCalibrationGating(); return; }
             if (!validateTdsTarget()) return;
 
             const targetPpm = parseFloat(document.getElementById('cfg-tds-target').value);
@@ -1343,9 +1370,41 @@ document.addEventListener('DOMContentLoaded', () => {
         setPhStepUI(1);
     }
 
+    // Shows the "sensor is disabled" banner and hides the interactive
+    // controls on the Live Calibration page for whichever of TDS/pH is
+    // currently off, instead of letting the wizard/button run against a
+    // sensor whose currentSensors value the firmware never touches (see
+    // the banner comments in index.html). Called on init and any time a
+    // config frame updates tabsData.enabled[].
+    function updateCalibrationGating() {
+        const tdsEnabled = !!tabsData.enabled[1];
+        const phEnabled = !!tabsData.enabled[6];
+
+        const tdsBanner = document.getElementById('cal-tds-disabled-banner');
+        const tdsControls = document.getElementById('cal-tds-controls');
+        if (tdsBanner) tdsBanner.classList.toggle('hidden', tdsEnabled);
+        if (tdsControls) tdsControls.classList.toggle('hidden', !tdsEnabled);
+
+        const phBanner = document.getElementById('cal-ph-disabled-banner');
+        const phControls = document.getElementById('ph-wizard-controls');
+        if (phBanner) phBanner.classList.toggle('hidden', phEnabled);
+        if (phControls) phControls.classList.toggle('hidden', !phEnabled);
+
+        // A sensor going from enabled to disabled mid-wizard (another tab
+        // toggled it, or a reboot from an unrelated save) invalidates
+        // whatever's in progress -- reset back to Step 1 so a later
+        // re-enable never lets Step 3 "Save" fire off stale captured volts.
+        if (!phEnabled && typeof resetPhWizard === 'function') resetPhWizard();
+    }
+
     const btnCalPh7 = document.getElementById('btn-cal-ph-7');
     if(btnCalPh7) {
         btnCalPh7.addEventListener('click', () => {
+            // Belt-and-suspenders: the wizard controls are hidden behind
+            // cal-ph-disabled-banner while pH is off (updateCalibrationGating()),
+            // but guard the handler itself too in case this fires from a
+            // stale click queued just before the sensor was disabled.
+            if (!tabsData.enabled[6]) { updateCalibrationGating(); return; }
             const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
             if (isNaN(livePh)) { alert("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected."); return; }
             const off = globalConfigCache.ph_off || 0.0;
@@ -1360,6 +1419,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCalPh4 = document.getElementById('btn-cal-ph-4');
     if(btnCalPh4) {
         btnCalPh4.addEventListener('click', () => {
+            if (!tabsData.enabled[6]) { updateCalibrationGating(); return; }
             const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
             if (isNaN(livePh)) { alert("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected."); return; }
             if (ph7Volt === null) { setPhStepUI(1); return; } // shouldn't happen, but don't let Step 2 run without Step 1
@@ -1426,6 +1486,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnReboot = document.getElementById('btn-reboot');
     if(btnReboot) btnReboot.addEventListener('click', () => {
         if(!confirm("Reboot the device?")) return;
+        // Deliberately NOT routed through sendCommand(): reboot's handler
+        // (command_handlers.cpp) calls ESP.restart() directly with no
+        // sendCmdAck() on the success path — the device is gone before it
+        // could send one. Waiting on an ack here would time out on every
+        // single successful reboot and show a false "failed" error.
         if (!websocket || websocket.readyState !== WebSocket.OPEN) { alert("Not connected to the device right now."); return; }
         websocket.send(JSON.stringify({command: "reboot"}));
     });
@@ -1445,6 +1510,9 @@ document.addEventListener('DOMContentLoaded', () => {
             alert("Factory reset cancelled — you must type RESET exactly.");
             return;
         }
+        // Same reasoning as btn-reboot above: state_factory_reset() also
+        // restarts the device with no ack on the way out, so this stays a
+        // raw send rather than going through sendCommand().
         if (!websocket || websocket.readyState !== WebSocket.OPEN) { alert("Not connected to the device right now."); return; }
         websocket.send(JSON.stringify({command: "factory_reset"}));
     });
@@ -1543,11 +1611,31 @@ document.addEventListener('DOMContentLoaded', () => {
         const toggleLabelId = e.target.id === 'dual-sensor-toggle' ? 'dual-sensor-toggle-state' : 'sensor-toggle-state';
         syncPowerToggleLabel(e.target.id, toggleLabelId); // immediate feedback on click, before the round-trip completes
 
+        // #sensor-toggle/#dual-sensor-toggle are single shared DOM elements
+        // reused across every sensor tab — e.target is a live reference to
+        // whichever one fired, not a copy scoped to this tab. If the user
+        // switches tabs before the save_sensor_enabled ack arrives, the
+        // .then()/.catch() below used to write disabled/checked to
+        // whatever tab happened to be showing when the promise settled,
+        // not the tab that actually triggered it. Snapshot the tab id that
+        // was active at click time and no-op the UI writes below if
+        // currentTabId has since moved on — switchTab() already re-syncs
+        // the toggle correctly from tabsData.enabled[] when a tab opens,
+        // so there's nothing stale left to fix once the user has navigated
+        // away.
+        const startedOnTabId = tabId;
+
         e.target.disabled = true;
         sendCommand({ command: "save_sensor_enabled", sensor: sensorId, enabled: isEnabled }).then(() => {
+            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} ${isEnabled ? "ENABLED" : "DISABLED"}.</div>`;
+            if (currentTabId !== startedOnTabId) {
+                // Still re-enable the toggle even though we're skipping the
+                // rest of the UI update — leaving it permanently disabled
+                // would strand it if the user navigates back to this tab.
+                e.target.disabled = false;
+                return;
+            }
             e.target.disabled = false;
-            const status = isEnabled ? "ENABLED" : "DISABLED";
-            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} ${status}.</div>`;
             if(confirm(`Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
                 sendCommand({command: "reboot"}).catch(() => {});
             } else {
@@ -1555,10 +1643,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 syncPowerToggleLabel(e.target.id, toggleLabelId);
             }
         }).catch((err) => {
+            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} enable change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
             e.target.disabled = false;
+            if (currentTabId !== startedOnTabId) return; // stale — switchTab() already shows the real state for whatever tab is open now
             e.target.checked = !isEnabled; // revert — the device never actually applied this
             syncPowerToggleLabel(e.target.id, toggleLabelId);
-            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} enable change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
         });
     };
 
@@ -1570,10 +1659,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Reset-to-default-pin buttons — one per pinout card, plus a generic one
     // on the per-sensor offline banner that resets whichever sensor tab is open.
+    //
+    // Deliberately NOT routed through sendCommand(): reset_sensor_pin's
+    // server handler (command_handlers.cpp) only ever sends an ack on the
+    // FAILURE path (sendCmdAck(..., false, "Failed to save...") when
+    // state_save() fails) — on success it calls ESP.restart() directly with
+    // no ack at all, same as reboot/factory_reset above. Routing through
+    // sendCommand() would therefore time out and show a false "failed"
+    // error on every successful reset. Instead, this listens for exactly
+    // one command_result matching this command within a short window and
+    // only acts on an explicit failure; silence (the expected case, since
+    // the device reboots) is treated as success and simply times out the
+    // listener with no user-visible effect.
     const sendResetSensorPin = (sensorId) => {
         if (!confirm(`Reset the '${sensorId}' pin(s) to the factory default and reboot?`)) return;
         if (!websocket || websocket.readyState !== WebSocket.OPEN) { alert("Not connected to the device right now."); return; }
-        websocket.send(JSON.stringify({ command: "reset_sensor_pin", sensor: sensorId }));
+
+        const onResult = (msg) => {
+            if (msg.type !== "command_result" || msg.command !== "reset_sensor_pin") return;
+            resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
+            if (!msg.ok) {
+                alert(`Pin reset failed: ${msg.error || 'the device rejected the request.'}`);
+            }
+            // ok:true is never actually sent (see comment above) — this
+            // branch exists only so a future firmware change that DOES ack
+            // success doesn't silently do nothing here.
+        };
+        resetSensorPinListeners.push(onResult);
+        setTimeout(() => {
+            resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
+        }, ACK_TIMEOUT_MS);
+
+        try {
+            websocket.send(JSON.stringify({ command: "reset_sensor_pin", sensor: sensorId }));
+        } catch (e) {
+            resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
+            alert("Failed to send reset request: " + e.message);
+        }
     };
 
     document.querySelectorAll('[data-reset-sensor]').forEach((btn) => {

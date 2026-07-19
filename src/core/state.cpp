@@ -449,7 +449,30 @@ bool auth_check_password(const String &candidate)
 {
   if (!auth_is_configured())
     return false; // nothing to check against — caller should be using set_password instead
-  return candidate.length() > 0 && candidate.equals(s_adminPass);
+  if (candidate.length() == 0)
+    return false;
+
+  // Constant-time comparison. String::equals() short-circuits on the first
+  // mismatched byte (and on a length mismatch), which leaks how many
+  // leading characters of a guess were correct via response timing over
+  // repeated attempts -- a real signal for an attacker with WebSocket
+  // access and no rate limiting to slow them down otherwise (see the
+  // failed-attempt lockout in handleAuthCommand(), auth.cpp). This walks
+  // every byte of both strings regardless of where they first differ, and
+  // folds a length mismatch into the same "some bytes differ" result
+  // rather than returning early.
+  size_t candLen = candidate.length();
+  size_t passLen = strlen(s_adminPass);
+  size_t maxLen = candLen > passLen ? candLen : passLen;
+
+  uint8_t diff = (candLen != passLen) ? 1 : 0;
+  for (size_t i = 0; i < maxLen; i++)
+  {
+    uint8_t c = (i < candLen) ? (uint8_t)candidate[i] : 0;
+    uint8_t p = (i < passLen) ? (uint8_t)s_adminPass[i] : 0;
+    diff |= (c ^ p);
+  }
+  return diff == 0;
 }
 
 void auth_set_password(const String &newPass)

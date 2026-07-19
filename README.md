@@ -112,7 +112,7 @@ Two independent things are controlled per sensor, and it's worth being explicit 
 
 In other words: turning a sensor off in Settings stops it being read locally, and — as of the same toggle — also stops its field from being pushed to Firestore on the next upload cycle. You don't need a separate "send to cloud" switch per sensor; the one **Enabled** toggle covers both.
 
-**Derived fields follow their source sensor(s).** `vpd_kpa` (Vapor Pressure Deficit) isn't its own sensor — it's calculated in `computeVPD()` from DHT22's temperature and humidity readings. It's gated on the DHT22 **Enabled** flag specifically: turn DHT22 off and `temp_c`, `humidity`, and `vpd_kpa` are all dropped from the upload together, since VPD can't be meaningfully computed without the temperature/humidity it depends on. `uptime_s` and `server_timestamp` are always sent — they're firmware bookkeeping, not sensor readings.
+**Derived fields follow their source sensor(s).** `vpd_kpa` (Vapor Pressure Deficit) isn't its own sensor — it's calculated in `computeVPD()` from DHT22's temperature and humidity readings. It's gated on the DHT22 **Enabled** flag specifically: turn DHT22 off and `temp_c`, `humidity`, and `vpd_kpa` are all dropped from the upload together, since VPD can't be meaningfully computed without the temperature/humidity it depends on. `uptime_s` is always sent — it's firmware bookkeeping, not a sensor reading. (An earlier version of this firmware also sent a `server_timestamp` field on every upload, intended as Firestore's server-side timestamp sentinel — but that sentinel is only honored via a field *transform* in the REST API, not as a plain field value in a PATCH body, so it was either rejected as an invalid timestamp or stored as a useless literal string on every single upload. It's been removed rather than fixed properly with a transform, since `uptime_s` here plus the device's own last-successful-upload tracking already cover freshness without a second, server-side timestamp field. See the `NOTE` above the PATCH body construction in `firebaseUploadCycle()`, `src/core/firebase.cpp`, for the full reasoning.)
 
 | Firestore field | Uploaded when... |
 | --- | --- |
@@ -122,7 +122,7 @@ In other words: turning a sensor off in Settings stops it being read locally, an
 | `lux` | BH1750 (Light) sensor enabled |
 | `ph_val` | pH sensor enabled |
 | `wl_percent` | Water Level sensor enabled |
-| `uptime_s`, `server_timestamp` | always |
+| `uptime_s` | always |
 
 ### 🔥 Firebase Upload: Auto-Disable After Repeated Failures
 
