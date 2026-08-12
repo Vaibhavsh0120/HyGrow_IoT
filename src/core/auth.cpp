@@ -90,6 +90,24 @@ void sendAuthStatus(AsyncWebSocketClient *client)
     client->text(payload);
 }
 
+void broadcastAuthStatus()
+{
+    JsonDocument doc;
+    doc["type"] = "auth_status";
+    doc["setup_required"] = !auth_is_configured();
+    String payload;
+    serializeJson(doc, payload);
+    ws.textAll(payload);
+}
+
+void auth_reset_session_and_lockout()
+{
+    s_failedAuthAttempts = 0;
+    s_authLockoutUntilMs = 0;
+    s_authedClients.clear();
+    broadcastAuthStatus();
+}
+
 // Handles { command: "auth", password/token: "..." } — the very first frame
 // a client is allowed to send. Two ways to authenticate:
 //  1. password — the Login/Set Password modal. If the device is
@@ -181,6 +199,21 @@ void handleAuthCommand(AsyncWebSocketClient *client, JsonDocument &doc)
     JsonDocument resp;
     resp["type"] = "auth_result";
     resp["ok"] = ok;
+    if (!ok)
+    {
+        if (password.length() == 0 && token.length() == 0)
+        {
+            resp["error"] = "Password cannot be empty.";
+        }
+        else if (!auth_is_configured())
+        {
+            resp["error"] = "Please enter a valid password.";
+        }
+        else
+        {
+            resp["error"] = "Incorrect password. Please try again.";
+        }
+    }
     if (issuedToken.length() > 0)
         resp["token"] = issuedToken;
     String payload;

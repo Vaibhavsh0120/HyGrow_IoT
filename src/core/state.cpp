@@ -1,5 +1,6 @@
 #include "state.h"
 #include "task_network.h" // wsBroadcastLog() — see the comment on webLog() below for why
+#include "task_network_internal.h"
 #include <Preferences.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
@@ -120,6 +121,62 @@ void webLog(uint8_t core, uint8_t level, const String &msg)
 
 void webLog(const String &msg) { webLog(0, LOG_INFO, msg); }
 
+// ----------------------------------------------------------------------------
+// webLogProgress() — Serial-only, in-place-updating status line
+// ----------------------------------------------------------------------------
+// Used by startup validation retry loops (task_sensor.cpp) so a sensor that
+// needs 3 of its 5 allowed attempts to come online doesn't scroll the Serial
+// monitor with "attempt 1/5... attempt 2/5... attempt 3/5" as three
+// separate lines — it rewrites the SAME line in place ("\r" + clear-to-end-
+// of-line, no trailing newline) until the retry loop is done, then the
+// caller's normal webLog() call prints the real, permanent result
+// ("<name> passed startup validation (attempt N/5).") as a fresh line.
+//
+// Deliberately Serial-only, unlike webLog():
+//   - It does NOT go into the ring buffer — a transient "trying attempt
+//     2/5..." is meaningless to a browser that (re)connects later; only the
+//     final pass/fail result (already logged separately via webLog()) is
+//     worth replaying.
+//   - It does NOT broadcast over WebSocket — the web Terminal is a scrolling
+//     log view, not a live cursor-addressable terminal, so an in-place
+//     rewrite has no equivalent there anyway.
+// "\x1b[2K" (ANSI erase-in-line) clears anything left over from a longer
+// previous line before the "\r" cursor return; a plain "\r" alone would
+// leave trailing characters from a longer prior write visible.
+void webLogProgress(const String &msg)
+{
+  Serial.print("\r\x1b[2K" + msg);
+}
+
+// Called once after a progress loop finishes (pass or exhaust all retries),
+// before the caller's real webLog() line prints — moves the cursor off the
+// in-place progress line onto its own fresh line so that permanent result
+// doesn't get appended to the end of it.
+void webLogProgressDone()
+{
+  Serial.println();
+}
+
+// ----------------------------------------------------------------------------
+// printBootSection() — Serial-only boxed section header
+// ----------------------------------------------------------------------------
+// Splits the boot log into clearly-scannable phases (System / Storage /
+// Auth / Network / Sensors) instead of one long unbroken scroll of lines.
+// Serial-only and deliberately NOT routed through webLog(): it's a purely
+// cosmetic divider with no informational content of its own, so it has no
+// business in the ring buffer or the web Terminal — a browser reconnecting
+// mid-boot doesn't need "here comes a new section" replayed at it, only the
+// real log lines that follow it (which already go through webLog() as
+// normal). Fixed 42-char inner width comfortably fits every section title
+// this firmware uses without needing to compute padding per call site.
+void printBootSection(const char *title)
+{
+  Serial.println();
+  Serial.println(F("+------------------------------------------+"));
+  Serial.printf("|  %-40s|\n", title);
+  Serial.println(F("+------------------------------------------+"));
+}
+
 // Replays the ring buffer to one newly-authenticated client, oldest first,
 // so its Terminal reads top-to-bottom the same way the Serial monitor's
 // scrollback would if you'd been connected since boot. Called from
@@ -148,9 +205,21 @@ void webLogSendBacklog(AsyncWebSocketClient *client)
 }
 
 // ---------- Helpers ----------
+// NOTE on the isKey() guard below: Preferences::getString(key, def) still
+// works correctly without it — it returns `def` when the key is missing.
+// But internally it calls the IDF's nvs_get_str() first to size the buffer,
+// and IDF logs an "E (...) nvs: ... NOT_FOUND" line at CORE_DEBUG_LEVEL>=1
+// (see platformio.ini) the moment that lookup misses, before the Arduino
+// wrapper ever gets to apply the fallback. That's harmless (the fallback is
+// still correct) but it reads exactly like a real error on every boot where
+// the key legitimately doesn't exist yet — e.g. "token" before any session
+// has ever been issued. Checking isKey() first means the missing-key case
+// (expected, common) skips the NVS lookup entirely and never logs; a
+// present-but-corrupt key still falls through to getString()'s own error
+// path as before.
 static void loadStr(Preferences &store, const char *key, char *dst, size_t dstSize, const char *def)
 {
-  String v = store.getString(key, def);
+  String v = store.isKey(key) ? store.getString(key, def) : String(def);
   strncpy(dst, v.c_str(), dstSize - 1);
   dst[dstSize - 1] = '\0';
 }
@@ -445,6 +514,18 @@ bool auth_is_configured()
   return strlen(s_adminPass) > 0;
 }
 
+// Boot-time-only convenience for the .ino's Serial banner (see setup()) —
+// deliberately NOT exposed over the network in any form (no WS command
+// returns this; the web UI never learns the current password, only whether
+// one is set — see sendAuthStatus()). Reading the plaintext password back
+// out over a physical USB serial connection is a different trust boundary
+// than the WiFi/WebSocket surface the rest of auth.cpp defends: anyone who
+// can already read this device's Serial output has physical access to it.
+String auth_get_password_for_boot_display()
+{
+  return auth_is_configured() ? String(s_adminPass) : String("(not set — open the web UI to create one)");
+}
+
 bool auth_check_password(const String &candidate)
 {
   if (!auth_is_configured())
@@ -502,6 +583,7 @@ void auth_reset()
   authPrefs.remove("token");
   s_adminPass[0] = '\0';
   s_sessionToken[0] = '\0';
+  auth_reset_session_and_lockout();
 }
 
 // ============================================================================

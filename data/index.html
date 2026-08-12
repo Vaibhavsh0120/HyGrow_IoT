@@ -73,11 +73,21 @@
             </div>
             <div class="flex flex-col gap-2">
                 <label class="font-label-md text-on-surface-variant" for="auth-setup-pass">New Password</label>
-                <input id="auth-setup-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                <div class="hg-secret-field">
+                    <input id="auth-setup-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                    <button type="button" class="hg-secret-toggle" data-reveal-target="auth-setup-pass" aria-label="Show Password">
+                        <span class="material-symbols-outlined">visibility</span>
+                    </button>
+                </div>
             </div>
             <div class="flex flex-col gap-2">
                 <label class="font-label-md text-on-surface-variant" for="auth-setup-pass-confirm">Confirm Password</label>
-                <input id="auth-setup-pass-confirm" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                <div class="hg-secret-field">
+                    <input id="auth-setup-pass-confirm" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                    <button type="button" class="hg-secret-toggle" data-reveal-target="auth-setup-pass-confirm" aria-label="Show Password">
+                        <span class="material-symbols-outlined">visibility</span>
+                    </button>
+                </div>
             </div>
             <p id="auth-setup-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
             <button id="btn-auth-setup" class="w-full bg-primary-container text-on-primary-container font-label-md py-3 rounded-xl hover:opacity-90 transition-all">Set Password &amp; Continue</button>
@@ -92,7 +102,12 @@
             </div>
             <div class="flex flex-col gap-2">
                 <label class="font-label-md text-on-surface-variant" for="auth-login-pass">Password</label>
-                <input id="auth-login-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                <div class="hg-secret-field">
+                    <input id="auth-login-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                    <button type="button" class="hg-secret-toggle" data-reveal-target="auth-login-pass" aria-label="Show Password">
+                        <span class="material-symbols-outlined">visibility</span>
+                    </button>
+                </div>
             </div>
             <p id="auth-login-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
             <button id="btn-auth-login" class="w-full bg-primary-container text-on-primary-container font-label-md py-3 rounded-xl hover:opacity-90 transition-all">Login</button>

@@ -247,6 +247,19 @@ function setStoredAuthToken(token) {
     } catch (e) { /* ignore — worst case, the user logs in again next reload */ }
 }
 
+function setAuthButtonsSubmitting(submitting, type) {
+    const btnLogin = document.getElementById('btn-auth-login');
+    const btnSetup = document.getElementById('btn-auth-setup');
+    if (btnLogin) {
+        btnLogin.disabled = submitting;
+        btnLogin.innerText = submitting && type === 'login' ? 'Logging in…' : 'Login';
+    }
+    if (btnSetup) {
+        btnSetup.disabled = submitting;
+        btnSetup.innerText = submitting && type === 'setup' ? 'Setting Password…' : 'Set Password & Continue';
+    }
+}
+
 // Shows exactly one of the three overlay panels (spinner / setup / login) and
 // hides the other two. Passing 'none' hides the whole overlay, revealing the
 // dashboard underneath — only done once authentication actually succeeds.
@@ -256,6 +269,8 @@ function showAuthPanel(panel) {
     const setup = document.getElementById('auth-setup');
     const login = document.getElementById('auth-login');
     if (!overlay) return;
+
+    setAuthButtonsSubmitting(false);
 
     if (panel === 'none') {
         overlay.classList.add('hidden');
@@ -272,7 +287,10 @@ function showAuthPanel(panel) {
 // session token is already stored from a previous login, try it silently
 // before ever showing the Login modal; otherwise branch straight to
 // Setup/Login based on setup_required.
+let lastAuthStatusSetupRequired = false;
+
 function handleAuthStatus(msg) {
+    lastAuthStatusSetupRequired = !!msg.setup_required;
     const storedToken = getStoredAuthToken();
     if (storedToken) {
         websocket.send(JSON.stringify({ command: "auth", token: storedToken }));
@@ -285,6 +303,7 @@ function handleAuthStatus(msg) {
 // { command: "auth", ... } this client sends (see handleAuthCommand() in
 // task_network.cpp).
 function handleAuthResult(msg) {
+    setAuthButtonsSubmitting(false);
     if (msg.ok) {
         if (msg.token) setStoredAuthToken(msg.token);
         showAuthPanel('none');
@@ -303,6 +322,13 @@ function handleAuthResult(msg) {
         const err = document.getElementById('auth-setup-error');
         err.innerText = msg.error || 'Could not set password. Please try again.';
         err.classList.remove('hidden');
+    } else if (lastAuthStatusSetupRequired) {
+        showAuthPanel('setup');
+        const err = document.getElementById('auth-setup-error');
+        if (err && msg.error) {
+            err.innerText = msg.error;
+            err.classList.remove('hidden');
+        }
     } else {
         showAuthPanel('login');
         if (loginError) {
@@ -1057,6 +1083,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnAuthSetup = document.getElementById('btn-auth-setup');
     if (btnAuthSetup) {
         btnAuthSetup.addEventListener('click', () => {
+            if (btnAuthSetup.disabled) return;
             const pass = document.getElementById('auth-setup-pass').value;
             const confirmPass = document.getElementById('auth-setup-pass-confirm').value;
             const err = document.getElementById('auth-setup-error');
@@ -1077,12 +1104,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             err.classList.add('hidden');
+            setAuthButtonsSubmitting(true, 'setup');
             websocket.send(JSON.stringify({ command: "auth", password: pass }));
         });
     }
 
     const btnAuthLogin = document.getElementById('btn-auth-login');
     const submitLogin = () => {
+        if (btnAuthLogin && btnAuthLogin.disabled) return;
         const pass = document.getElementById('auth-login-pass').value;
         const err = document.getElementById('auth-login-error');
         if (!pass) {
@@ -1096,6 +1125,7 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
         err.classList.add('hidden');
+        setAuthButtonsSubmitting(true, 'login');
         websocket.send(JSON.stringify({ command: "auth", password: pass }));
     };
     if (btnAuthLogin) btnAuthLogin.addEventListener('click', submitLogin);
@@ -1103,6 +1133,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // require reaching for the mouse.
     const authLoginPassField = document.getElementById('auth-login-pass');
     if (authLoginPassField) authLoginPassField.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitLogin(); });
+    const authSetupPassField = document.getElementById('auth-setup-pass');
+    if (authSetupPassField) authSetupPassField.addEventListener('keydown', (e) => { if (e.key === 'Enter' && btnAuthSetup) btnAuthSetup.click(); });
     const authSetupConfirmField = document.getElementById('auth-setup-pass-confirm');
     if (authSetupConfirmField) authSetupConfirmField.addEventListener('keydown', (e) => { if (e.key === 'Enter' && btnAuthSetup) btnAuthSetup.click(); });
 

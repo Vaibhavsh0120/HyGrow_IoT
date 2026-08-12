@@ -37,7 +37,7 @@ void wsBroadcastLog(const String &payload)
 
 void initNetworkTask()
 {
-    webLog(0, LOG_INFO, "Initializing Network Task...");
+    printBootSection("NETWORK");
 
     // 1. Wi-Fi Setup with SoftAP Fallback
     WiFi.mode(WIFI_STA);
@@ -54,16 +54,24 @@ void initNetworkTask()
         }
     }
 
+    // Resolved once the connect attempt above is done, so every later log
+    // line (and the final "reachable at" summary) always describes the
+    // network the device actually ended up on, whether that's the home
+    // Wi-Fi or the SoftAP fallback.
+    String reachableAt;
+
     if (WiFi.status() != WL_CONNECTED)
     {
         webLog(0, LOG_WARN, "STA connection failed. Starting SoftAP fallback.");
         WiFi.mode(WIFI_AP_STA); // Keep STA active in background to allow dynamic reconnects if possible
         WiFi.softAP("HyGrow-Setup", currentConfig.ap_pass);
         webLog(0, LOG_INFO, "SoftAP IP: " + WiFi.softAPIP().toString());
+        reachableAt = WiFi.softAPIP().toString();
     }
     else
     {
         webLog(0, LOG_INFO, "Wi-Fi Connected. IP: " + WiFi.localIP().toString());
+        reachableAt = WiFi.localIP().toString();
     }
 
     // 2. Web Server & File System
@@ -89,7 +97,12 @@ void initNetworkTask()
 
     // 5. Start Server
     server.begin();
-    webLog(0, LOG_INFO, "Web Server started on port 80");
+    // Explicit host:port, not just a bare IP — this is the exact string to
+    // type into a browser's address bar, and it matches what a person
+    // troubleshooting a "can't reach the login page" issue actually needs
+    // to double check first (right IP, but did they include the port /
+    // is it really 80, is there a stale bookmark pointing at an old IP).
+    webLog(0, LOG_INFO, "Web Server ready at: http://" + reachableAt + ":80/");
 }
 
 void networkTaskLoop()

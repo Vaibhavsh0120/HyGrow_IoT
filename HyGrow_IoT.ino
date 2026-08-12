@@ -224,7 +224,9 @@ void setup()
 {
     Serial.begin(115200);
     delay(1000); // Give serial monitor time to connect
-    Serial.println("\n--- HyGrow IoT Booting ---");
+
+    printBootSection("SYSTEM");
+    Serial.println(F("HyGrow IoT — booting..."));
 
     // PSRAM check — printed unconditionally, every boot. This is the ONLY
     // reliable way to confirm PSRAM is actually enabled: the "PLATFORM:"
@@ -238,18 +240,20 @@ void setup()
     // at runtime, after boot — this is ground truth.
     if (psramFound())
     {
-        Serial.printf("PSRAM: OK — %u bytes detected\n", ESP.getPsramSize());
+        Serial.printf("PSRAM:        OK (%u bytes detected)\n", ESP.getPsramSize());
     }
     else
     {
-        Serial.println("PSRAM: NOT DETECTED — check board_build.arduino.memory_type in platformio.ini");
+        Serial.println(F("PSRAM:        NOT DETECTED — check board_build.arduino.memory_type in platformio.ini"));
     }
 
     // Log WHY we rebooted. If this ever prints TASK_WDT or PANIC, the
     // previous boot crashed/hung — it did not just lose its USB connection.
     esp_reset_reason_t reason = esp_reset_reason();
-    Serial.print("Reset reason: ");
+    Serial.print(F("Reset reason: "));
     Serial.println(resetReasonToString(reason));
+
+    printBootSection("STORAGE & CONFIG");
 
     // 1. Initialize NVS and load all variables into currentConfig
     state_init();
@@ -272,6 +276,8 @@ void setup()
         state_log_reset_reason(resetReasonToString(reason));
     }
 
+    printBootSection("AUTH");
+
     // 1a'. Mount the single-owner auth namespace and load the admin
     // password/session token into RAM. Deliberately separate from
     // state_init() above — see the long comment on the auth_*() decls in
@@ -280,6 +286,17 @@ void setup()
     // (handleAuthCommand() in auth.cpp) depends on it from the very
     // first client connection.
     auth_init();
+
+    // Boot-time-only admin password display. This is a deliberate,
+    // physical-access-only trust boundary: whoever can read this device's
+    // USB Serial output already has physical access to it, which is a
+    // fundamentally different threat model than the WiFi/WebSocket surface
+    // the rest of auth.cpp defends (see auth_get_password_for_boot_display()
+    // in state.cpp — this value is never sent over the network in any
+    // form). Useful for exactly the situation that prompted this: confirming
+    // what the device currently thinks its password is, right after a BOOT-
+    // button auth reset, without guessing.
+    webLog(0, LOG_INFO, "Admin password (current): " + auth_get_password_for_boot_display());
 
     // 1a. LittleFS is mounted inside state_init(). A failed mount here means
     // the web UI (and everything served from it) is unavailable — continuing

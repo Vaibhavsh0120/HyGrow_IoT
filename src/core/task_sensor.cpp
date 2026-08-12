@@ -250,11 +250,28 @@ static void validateSensor(SensorID id, const char *name, bool (*readFn)())
   if (!currentConfig.sensor_enabled[id])
     return;
 
+  bool progressLineShown = false;
+
   for (int attempt = 1; attempt <= STARTUP_RETRY_COUNT; attempt++)
   {
+    // In-place Serial progress line — rewrites the same line for every
+    // retry instead of scrolling one line per attempt (see webLogProgress()
+    // in state.cpp). A sensor that passes on attempt 1 (the common case)
+    // never shows this at all — it goes straight to the permanent result
+    // line below, unchanged from before. progressLineShown (rather than
+    // inferring "was it shown" from attempt > 1) keeps this correct even if
+    // STARTUP_RETRY_COUNT is ever changed from its current value of 5.
+    if (attempt > 1)
+    {
+      webLogProgress("  [CORE 1] " + String(name) + ": retrying (attempt " + String(attempt) + "/" + String(STARTUP_RETRY_COUNT) + ")...");
+      progressLineShown = true;
+    }
+
     if (readFn())
     {
       markOk(id);
+      if (progressLineShown)
+        webLogProgressDone();
       webLog(1, LOG_INFO, String(name) + " passed startup validation (attempt " + String(attempt) + "/" + String(STARTUP_RETRY_COUNT) + ").");
       return;
     }
@@ -262,6 +279,8 @@ static void validateSensor(SensorID id, const char *name, bool (*readFn)())
       delay(STARTUP_RETRY_DELAY_MS);
   }
 
+  if (progressLineShown)
+    webLogProgressDone();
   markErr(id, "startup validation failed");
   autoDisable(id, name);
 }
@@ -430,6 +449,7 @@ void initSensorTask()
   if (s_initialized)
     return;
   s_initialized = true;
+  printBootSection("SENSORS");
   webLog(1, LOG_INFO, "Sensor task started on core " + String(xPortGetCoreID()));
 
   // NOTE (Part 5.9): ledStatusInit() used to also be called here, duplicating

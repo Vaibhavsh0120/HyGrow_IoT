@@ -168,6 +168,9 @@ void auth_set_password(const String &newPass); // first-time setup OR admin-init
 String auth_issue_token();                 // generates + persists a new random session token, returns it
 bool auth_check_token(const String &candidate);
 void auth_reset();                         // wipe ONLY the password + token (BOOT button 10s hold)
+// Boot-time Serial banner only (HyGrow_IoT.ino setup()) — never sent over
+// the network. See the comment on the definition in state.cpp.
+String auth_get_password_for_boot_display();
 
 // Log helper — core is 0 (network) or 1 (sensor); level is LOG_INFO/WARN/ERR.
 // Every call does three things, always in this order, so the Serial monitor
@@ -187,6 +190,19 @@ void auth_reset();                         // wipe ONLY the password + token (BO
 void webLog(uint8_t core, uint8_t level, const String &msg);
 // Back-compat single-arg form (defaults core=0, level=LOG_INFO)
 void webLog(const String &msg);
+
+// Serial-only, in-place-updating progress line for retry loops (e.g. sensor
+// startup validation) — see the long comment on the definition in state.cpp
+// for exactly why this is Serial-only and doesn't touch the ring buffer or
+// WebSocket. Call webLogProgress() once per attempt, then webLogProgressDone()
+// once before logging the final permanent result via the normal webLog().
+void webLogProgress(const String &msg);
+void webLogProgressDone();
+
+// Serial-only boxed section header (e.g. "SYSTEM", "NETWORK") — see the long
+// comment on the definition in state.cpp for why this bypasses webLog()
+// entirely (ring buffer + WebSocket) and is Serial-only.
+void printBootSection(const char *title);
 
 // Replays the ring buffer of recent log lines to one client, in the order
 // they were originally logged. Called once, right after a client passes
