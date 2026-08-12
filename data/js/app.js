@@ -1045,12 +1045,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initWebSocket();
     setTimeout(resizeCanvas, 100);
 
-    // Default to "disabled" banners showing until the first config frame's
-    // tabsData.enabled[] confirms otherwise -- matches resolveSensorOn()'s
-    // same fail-closed default for the per-sensor toggle before any config
-    // has arrived.
-    updateCalibrationGating();
-
     const btnSpinnerRetry = document.getElementById('auth-spinner-retry');
     if (btnSpinnerRetry) btnSpinnerRetry.addEventListener('click', retryConnectionNow);
 
@@ -1889,4 +1883,17 @@ document.addEventListener('DOMContentLoaded', () => {
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
         if ((localStorage.getItem('hygrow_theme') || 'dark') === 'auto') applyTheme('auto');
     });
+
+    // Default to "disabled" banners showing until the first config frame's
+    // tabsData.enabled[] confirms otherwise -- matches resolveSensorOn()'s
+    // same fail-closed default for the per-sensor toggle before any config
+    // has arrived. Moved to the end of DOMContentLoaded (was originally
+    // called near the top) because it indirectly calls resetPhWizard(),
+    // which touches the ph7Volt/ph4Volt/phWizardDirty `let` bindings
+    // declared further down in this same handler -- calling it before
+    // those declarations execute throws "Cannot access 'ph7Volt' before
+    // initialization" (a TDZ error), which aborts the rest of this handler
+    // and silently kills every event listener registered after it,
+    // including the login/setup buttons and the eye-icon reveal toggles.
+    updateCalibrationGating();
 });
