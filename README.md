@@ -221,11 +221,18 @@ If PlatformIO resolves a different platform/toolchain version and you hit a buil
 
 </details>
 
-### 3. Configure fallback credentials
+### 3. Create `secrets.h` — REQUIRED, the build will not compile without it
+
+`secrets.h` is no longer optional. `config.h` `#include`s it unconditionally
+and fails the build with a clear `#error` if the file is missing, or if any
+required macro isn't defined in it — there is no compiled-in fallback
+underneath it any more, so every credential the firmware ever boots with
+comes from exactly one place.
 
 1. Locate `example.secrets.h` in the root directory.
-2. Copy and rename it to `secrets.h`.
-3. Populate it with baseline defaults. These are only used on the first boot, because saved Web UI settings override them in NVS.
+2. Copy and rename it to `secrets.h` (same folder as `HyGrow_IoT.ino`). It's already listed in `.gitignore`, so your real copy is never committed.
+3. Fill in your own WiFi SSID/password, a SoftAP recovery password (empty `""` for an open network, or 8+ characters — anything shorter fails a `static_assert` in `config.h`), an admin password (or explicitly `""` to ship "Unconfigured"), and your Firebase credentials if you're using cloud upload.
+4. These values are only ever used on the very first boot (blank NVS) or after a Factory Reset — once you save settings via the Web UI, they live in NVS from then on and `secrets.h`'s compiled-in values are ignored. But the firmware still needs this file to exist and be complete before it will build at all, the same way it needs the LittleFS image to exist before it will serve the web UI at runtime.
 
 ### 4. Build and flash
 

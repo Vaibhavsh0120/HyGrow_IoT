@@ -10,48 +10,66 @@
 
 #include <Arduino.h>
 
-// ---------- Optional secrets.h ----------
-// secrets.h is gitignored and only used as a first-boot / factory-reset
-// fallback (see example.secrets.h). __has_include lets this compile fine
-// even if the file has never been created — in that case every FALLBACK_*
-// macro below is given a safe empty/default value instead.
+// ---------- Required secrets.h ----------
+// secrets.h is NOT optional. This mirrors the LittleFS filesystem image:
+// both are external inputs the firmware cannot safely invent a default for,
+// so both fail loudly rather than silently substituting something that
+// looks like it works. LittleFS's check happens at RUNTIME (state_init(),
+// state.cpp) because a missing/corrupt filesystem image can only be
+// detected once the device is actually running. secrets.h's check happens
+// here, at COMPILE TIME, because whether the file exists is already known
+// before a single line of firmware runs — failing the build outright is
+// strictly better than a runtime halt: no board ever gets flashed with
+// credentials it doesn't have, and the missing file is caught in seconds on
+// a dev machine instead of after a trip out to the hardware.
+//
+// This used to be __has_include-guarded with a full set of safe empty-string
+// FALLBACK_* defaults defined right below when the file was absent — meaning
+// a clone with no secrets.h at all would compile and boot completely
+// normally into "Unconfigured" (blank WiFi/Firebase, no admin password).
+// That's exactly the inconsistency being removed: every credential now has
+// exactly one source (secrets.h), never two (secrets.h with a config.h
+// fallback underneath it), so there is never a question of which one a
+// given boot actually got its value from.
 #if __has_include("secrets.h")
 #include "secrets.h"
+#else
+#error "secrets.h is missing. Copy example.secrets.h to secrets.h in the project root and fill in your own WiFi/AP/admin/Firebase credentials before building — see example.secrets.h for what's required. There is no fallback: this firmware will not compile without it."
 #endif
 
+// Every FALLBACK_* macro below MUST already be defined by secrets.h — none
+// of them get a silent default here. A single #ifndef will name exactly
+// which one is missing (and fail the build) instead of every one of them
+// quietly resolving to "" the way a config.h-side fallback used to.
 #ifndef FALLBACK_WIFI_SSID
-#define FALLBACK_WIFI_SSID ""
+#error "secrets.h is missing FALLBACK_WIFI_SSID — see example.secrets.h."
 #endif
 #ifndef FALLBACK_WIFI_PASS
-#define FALLBACK_WIFI_PASS ""
+#error "secrets.h is missing FALLBACK_WIFI_PASS — see example.secrets.h."
 #endif
 #ifndef FALLBACK_AP_PASS
-#define FALLBACK_AP_PASS "hygrow1234"
-#endif
-#ifndef FALLBACK_FIREBASE_API_KEY
-#define FALLBACK_FIREBASE_API_KEY ""
-#endif
-#ifndef FALLBACK_FIREBASE_PROJECT_ID
-#define FALLBACK_FIREBASE_PROJECT_ID ""
-#endif
-#ifndef FALLBACK_FIREBASE_USER_EMAIL
-#define FALLBACK_FIREBASE_USER_EMAIL ""
-#endif
-#ifndef FALLBACK_FIREBASE_USER_PASSWORD
-#define FALLBACK_FIREBASE_USER_PASSWORD ""
-#endif
-#ifndef FALLBACK_FIRESTORE_COLLECTION
-#define FALLBACK_FIRESTORE_COLLECTION "sensor_readings"
-#endif
-#ifndef FALLBACK_DEVICE_ID
-#define FALLBACK_DEVICE_ID "ESP32S3_001"
+#error "secrets.h is missing FALLBACK_AP_PASS — see example.secrets.h."
 #endif
 #ifndef FALLBACK_ADMIN_PASS
-// Empty on purpose: an empty FALLBACK_ADMIN_PASS means the device boots
-// "Unconfigured" and the Web Doctor UI shows the Set Password modal instead
-// of Login. Set this in secrets.h to ship a pre-configured default password
-// instead — see auth_init() in state.cpp for exactly how this is used.
-#define FALLBACK_ADMIN_PASS ""
+#error "secrets.h is missing FALLBACK_ADMIN_PASS — see example.secrets.h. Set it to \"\" explicitly if you want the device to boot Unconfigured (Set Password modal) rather than omitting it."
+#endif
+#ifndef FALLBACK_FIREBASE_API_KEY
+#error "secrets.h is missing FALLBACK_FIREBASE_API_KEY — see example.secrets.h."
+#endif
+#ifndef FALLBACK_FIREBASE_PROJECT_ID
+#error "secrets.h is missing FALLBACK_FIREBASE_PROJECT_ID — see example.secrets.h."
+#endif
+#ifndef FALLBACK_FIREBASE_USER_EMAIL
+#error "secrets.h is missing FALLBACK_FIREBASE_USER_EMAIL — see example.secrets.h."
+#endif
+#ifndef FALLBACK_FIREBASE_USER_PASSWORD
+#error "secrets.h is missing FALLBACK_FIREBASE_USER_PASSWORD — see example.secrets.h."
+#endif
+#ifndef FALLBACK_FIRESTORE_COLLECTION
+#error "secrets.h is missing FALLBACK_FIRESTORE_COLLECTION — see example.secrets.h."
+#endif
+#ifndef FALLBACK_DEVICE_ID
+#error "secrets.h is missing FALLBACK_DEVICE_ID — see example.secrets.h."
 #endif
 
 // ---------- Identity & cloud ----------
@@ -175,5 +193,15 @@ static constexpr bool DEFAULT_SENSOR_ENABLED[S_COUNT] = {
 static_assert(S_COUNT == 6, "S_COUNT must stay in sync with SensorID enum");
 static_assert(sizeof(DEFAULT_SENSOR_ENABLED) / sizeof(DEFAULT_SENSOR_ENABLED[0]) == S_COUNT,
               "DEFAULT_SENSOR_ENABLED must have exactly S_COUNT entries");
+
+// FALLBACK_AP_PASS now comes ONLY from secrets.h (no config.h fallback
+// underneath it any more — see the "Required secrets.h" block above), so a
+// value that's too short is no longer caught by anything else. WiFi.softAP()
+// (task_network.cpp) silently fails to start a WPA2 AP for any non-empty
+// password under 8 characters, which would only surface on hardware as "the
+// SoftAP recovery network never appears" — exactly the kind of failure this
+// whole secrets.h change is meant to catch at compile time instead.
+static_assert(sizeof(FALLBACK_AP_PASS) - 1 == 0 || sizeof(FALLBACK_AP_PASS) - 1 >= 8,
+              "FALLBACK_AP_PASS in secrets.h must be empty (\"\", open network) or at least 8 characters (WPA2 minimum) — a shorter non-empty password makes WiFi.softAP() fail silently at runtime.");
 
 #endif // HYGROW_CONFIG_H
