@@ -301,12 +301,12 @@ function handleAuthResult(msg) {
     const setupPanelVisible = !document.getElementById('auth-setup').classList.contains('hidden');
     if (setupPanelVisible) {
         const err = document.getElementById('auth-setup-error');
-        err.innerText = 'Could not set password. Please try again.';
+        err.innerText = msg.error || 'Could not set password. Please try again.';
         err.classList.remove('hidden');
     } else {
         showAuthPanel('login');
         if (loginError) {
-            loginError.innerText = 'Incorrect password. Please try again.';
+            loginError.innerText = msg.error || 'Incorrect password. Please try again.';
             loginError.classList.remove('hidden');
         }
     }
@@ -956,6 +956,32 @@ function updateConfigForm(msg) {
         // keeps the Save Pins button's disabled state in sync with reality
         // instead of whatever it was before this config frame arrived.
         if (typeof validateAllPinFields === 'function') validateAllPinFields();
+    }
+}
+
+// Shows the "sensor is disabled" banner and hides the interactive controls
+// on the Live Calibration page for whichever of TDS/pH is currently off.
+// This must live at module scope because updateConfigForm() calls it whenever
+// a fresh device config frame arrives.
+function updateCalibrationGating() {
+    const tdsEnabled = !!tabsData.enabled[1];
+    const phEnabled = !!tabsData.enabled[6];
+
+    const tdsBanner = document.getElementById('cal-tds-disabled-banner');
+    const tdsControls = document.getElementById('cal-tds-controls');
+    if (tdsBanner) tdsBanner.classList.toggle('hidden', tdsEnabled);
+    if (tdsControls) tdsControls.classList.toggle('hidden', !tdsEnabled);
+
+    const phBanner = document.getElementById('cal-ph-disabled-banner');
+    const phControls = document.getElementById('ph-wizard-controls');
+    if (phBanner) phBanner.classList.toggle('hidden', phEnabled);
+    if (phControls) phControls.classList.toggle('hidden', !phEnabled);
+
+    // A sensor going from enabled to disabled mid-wizard invalidates whatever
+    // is in progress. The wizard state itself lives inside DOMContentLoaded,
+    // so it exposes this tiny reset callback after it is initialized.
+    if (!phEnabled && typeof window.resetPhWizardForGating === 'function') {
+        window.resetPhWizardForGating();
     }
 }
 

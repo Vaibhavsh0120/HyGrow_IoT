@@ -49,6 +49,7 @@ static uint16_t s_failedAuthAttempts = 0;
 static unsigned long s_authLockoutUntilMs = 0;
 
 static const uint16_t AUTH_LOCKOUT_MAX_BACKOFF_MS = 30000;
+static const size_t AUTH_PASSWORD_MAX_LEN = 64;
 
 // Doubles the backoff per consecutive failure: 1s, 2s, 4s, 8s, 16s, 30s
 // (capped), 30s, 30s... Called only after a failed attempt is recorded.
@@ -125,6 +126,19 @@ void handleAuthCommand(AsyncWebSocketClient *client, JsonDocument &doc)
         serializeJson(resp, payload);
         client->text(payload);
         webLog(0, LOG_WARN, "WS Client " + String(client->id()) + " auth attempt rejected: locked out.");
+        return;
+    }
+
+    if (password.length() > AUTH_PASSWORD_MAX_LEN)
+    {
+        JsonDocument resp;
+        resp["type"] = "auth_result";
+        resp["ok"] = false;
+        resp["error"] = "Password must be 64 characters or fewer.";
+        String payload;
+        serializeJson(resp, payload);
+        client->text(payload);
+        webLog(0, LOG_WARN, "WS Client " + String(client->id()) + " sent an over-length auth password. Rejected.");
         return;
     }
 
@@ -211,6 +225,11 @@ void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc
     {
         resp["ok"] = false;
         resp["error"] = "New password cannot be empty.";
+    }
+    else if (newPass.length() > AUTH_PASSWORD_MAX_LEN)
+    {
+        resp["ok"] = false;
+        resp["error"] = "New password must be 64 characters or fewer.";
     }
     else if (!auth_check_password(currentPass))
     {

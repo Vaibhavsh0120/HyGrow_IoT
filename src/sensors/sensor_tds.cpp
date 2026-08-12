@@ -6,14 +6,17 @@ float readTDS(float currentWaterTemp, float tds_k);
 #define SCOUNT 30
 
 // Median filter (DFRobot's algorithm)
-int getMedianNum(int bArray[], int iFilterLen)
+int getMedianNum(const int bArray[], int iFilterLen)
 {
-    int bTab[iFilterLen];
-    for (int i = 0; i < iFilterLen; i++)
+    int bTab[SCOUNT] = {};
+    int len = min(iFilterLen, SCOUNT);
+    if (len <= 0)
+        return 0;
+    for (int i = 0; i < len; i++)
         bTab[i] = bArray[i];
-    for (int j = 0; j < iFilterLen - 1; j++)
+    for (int j = 0; j < len - 1; j++)
     {
-        for (int i = 0; i < iFilterLen - j - 1; i++)
+        for (int i = 0; i < len - j - 1; i++)
         {
             if (bTab[i] > bTab[i + 1])
             {
@@ -23,9 +26,9 @@ int getMedianNum(int bArray[], int iFilterLen)
             }
         }
     }
-    return (iFilterLen & 1)
-               ? bTab[(iFilterLen - 1) / 2]
-               : (bTab[iFilterLen / 2] + bTab[iFilterLen / 2 - 1]) / 2;
+    return (len & 1)
+               ? bTab[(len - 1) / 2]
+               : (bTab[len / 2] + bTab[len / 2 - 1]) / 2;
 }
 
 void initTDS()

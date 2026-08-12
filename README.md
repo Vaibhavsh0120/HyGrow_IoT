@@ -190,10 +190,10 @@ If you are using the Arduino IDE or Arduino CLI, install these libraries. Versio
 | Adafruit Unified Sensor   | Adafruit           | 1.1.15              | Dependency of DHT sensor library     |
 | DHT sensor library        | Adafruit           | 1.4.7                |                                      |
 | DallasTemperature         | Miles Burton       | 3.11.0               |                                      |
-| OneWire                   | Paul Stoffregen    | 2.3.8                | Dependency of DallasTemperature      |
+| OneWire                   | Paul Stoffregen    | 2.3.7                | Explicitly pinned to avoid ESP32 warning in 2.3.8 |
 | BH1750                    | Christopher Laws   | 1.3.0                 |                                      |
 
-PlatformIO installs the async stack from `platformio.ini`, and the repository includes a local OneWire copy for PlatformIO/CLI builds.
+PlatformIO installs the libraries from `platformio.ini`, including an explicit OneWire 2.3.7 pin for PlatformIO/CLI builds. `platformio pkg list` may still show DallasTemperature's broad transitive OneWire dependency resolving separately, but the PlatformIO build graph compiles the direct OneWire 2.3.7 dependency.
 
 <details>
 <summary><strong>Verified PlatformIO toolchain (esp32-s3-n16r8)</strong> — click to expand</summary>
@@ -208,6 +208,9 @@ Resolved via `platformio pkg list --environment esp32-s3-n16r8`:
 - `tool-esptoolpy @ 2.41100.0`
 - `tool-idf @ 1.0.1`
 - `tool-mconf @ 1.4060000.20190628`
+- `tool-mkfatfs @ 2.0.1`
+- `tool-mklittlefs @ 1.203.210628`
+- `tool-mkspiffs @ 2.230.0`
 - `tool-ninja @ 1.9.0`
 - `toolchain-esp32ulp @ 1.23800.240113`
 - `toolchain-riscv32-esp @ 8.4.0+2021r2-patch5`
@@ -238,10 +241,10 @@ The C++ code alone will not serve the web interface. Upload the `data/` folder, 
 
 ### Arduino CLI example
 
-If you prefer command-line builds, use the same ESP32-S3 board options shown above. Add the repo's `lib/` folder to the library search path so the checked-in OneWire copy is found during the build.
+If you prefer command-line builds, use the same ESP32-S3 board options shown above. Install the pinned library versions from the table first, including OneWire 2.3.7.
 
 ```powershell
-arduino-cli compile --fqbn esp32:esp32:esp32s3:UploadSpeed=115200,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,CPUFreq=240,UploadMode=default --libraries .\lib .\HyGrow_IoT.ino
+arduino-cli compile --fqbn esp32:esp32:esp32s3:UploadSpeed=115200,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,CPUFreq=240,UploadMode=default .\HyGrow_IoT.ino
 ```
 
 ---
