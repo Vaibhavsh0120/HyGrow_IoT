@@ -173,35 +173,30 @@
         </div>
     </div>
 
-    <!-- MOBILE MENU BUTTON — iPhone/small-screen only (hidden at md and up,
-         where the icon-only or full sidebar is already visible on-screen).
-         Fixed and independent of any page's own header markup, since every
-         page-section has a different header layout — a single global button
-         here is more robust than duplicating a trigger into each one.
-         Positioned inside the safe-area inset so it clears the iPhone
-         notch/Dynamic Island rather than sitting under it. -->
+    <!-- MOBILE MENU BUTTON — dead below md AND at md/lg (chunk 4d). This
+         used to open #sideNav as a full-screen overlay below the 768px
+         `md` breakpoint (iPhone width); that overlay is gone, replaced by
+         #bottomNav further down. At md and up, #sideNav has always been a
+         fixed icon-rail/full sidebar (never an overlay there), so this
+         button never had a job at those widths either. Nothing currently
+         triggers it at any breakpoint — left in the DOM (unconditionally
+         `hidden`) rather than deleted, since #btn-mobile-menu-icon and the
+         aria-expanded wiring in initMobileNav() still reference it and
+         removing it isn't part of this chunk's requested scope. -->
     <button id="btn-mobile-menu" aria-label="Open menu" aria-expanded="false" aria-controls="sideNav"
-        class="liquid-glass md:hidden fixed z-40 w-12 h-12 rounded-2xl flex items-center justify-center text-white"
+        class="liquid-glass hidden fixed z-40 w-12 h-12 rounded-2xl items-center justify-center text-white"
         style="top: calc(env(safe-area-inset-top, 0px) + 1rem); left: calc(env(safe-area-inset-left, 0px) + 1rem);">
         <span class="material-symbols-outlined" aria-hidden="true" id="btn-mobile-menu-icon">menu</span>
     </button>
 
-    <!-- Backdrop scrim shown behind the sidebar only while it's open as a
-         mobile overlay. Sits above <main> (z-10) but below the auth overlay
-         (z-[100]) so a still-unauthenticated session can never reveal the
-         dashboard sidebar behind it. Tapping it closes the sidebar, same as
-         tapping outside any other overlay in this app. -->
-    <div id="mobile-nav-scrim" class="hidden md:!hidden fixed inset-0 z-40 bg-black/60"></div>
-
-    <!-- SIDE NAVIGATION SHELL -->
-    <nav class="liquid-glass rounded-3xl h-[calc(100vh-2rem)] w-20 lg:w-72 flex flex-col fixed left-4 top-4 z-40 py-6 px-2 lg:px-4 transition-all duration-300 hg-sidenav-mobile-hidden" id="sideNav">
-        <!-- Close button — only ever visible in the full-screen mobile
-             overlay state (hg-sidenav-mobile-open), never in the icon-only
-             (iPad) or full desktop sidebar, where there's nothing to
-             "close" since the layout isn't an overlay there. -->
-        <button id="btn-mobile-nav-close" aria-label="Close menu" class="hidden self-end -mt-2 -mr-1 mb-2 w-10 h-10 rounded-xl items-center justify-center text-on-surface-variant hover:text-white hover:bg-white/10">
-            <span class="material-symbols-outlined" aria-hidden="true">close</span>
-        </button>
+    <!-- SIDE NAVIGATION SHELL — md and up only now (chunk 4d). Below md
+         (iPhone/small-screen), this is replaced entirely by #bottomNav
+         further down; the old hg-sidenav-mobile-hidden/-open overlay
+         states, #btn-mobile-menu, and #mobile-nav-scrim are now dead
+         below md (see md:hidden below and the removed scrim). This nav
+         still renders normally at md (iPad icon rail) and lg (full
+         desktop sidebar) exactly as before — nothing about that changed. -->
+    <nav class="liquid-glass rounded-3xl h-[calc(100vh-2rem)] w-20 lg:w-72 hidden md:flex flex-col fixed left-4 top-4 z-40 py-6 px-2 lg:px-4 transition-all duration-300" id="sideNav">
         <div class="mb-8 flex flex-col gap-2 items-center lg:items-start overflow-hidden">
             <h1 class="text-headline-md font-headline-md font-bold text-primary dark:text-primary tracking-tight hidden lg:block whitespace-nowrap">Web Doctor 🩺</h1>
             <span class="material-symbols-outlined text-[32px] text-primary lg:hidden block">health_and_safety</span>
@@ -209,6 +204,45 @@
         <!-- Main Tabs injected by app.js -->
         <ul class="flex-1 flex flex-col gap-2 overflow-y-auto hide-scrollbar items-center lg:items-stretch" id="nav-tabs">
         </ul>
+    </nav>
+
+    <!-- BOTTOM NAVIGATION — iPhone/small-screen only (chunk 4d), below the
+         768px `md` breakpoint, replacing the old full-screen overlay
+         sidebar entirely on this size class. iPad (md) and desktop (lg)
+         are completely unaffected — #sideNav renders normally for them,
+         exactly as before this chunk.
+
+         Only 3 destinations: Dashboard (tab 0), Settings (tab 8), Terminal
+         (tab 9) — the individual per-sensor detail pages (tabs 1,3,4,5,6
+         TDS/Water Temp/Light/Water Level/pH and the dual-sensor page for
+         Air Temp+Humidity, tab 2) are intentionally NOT here. Per the
+         user's own spec for this chunk: those are reached by tapping a
+         sensor's own card on the Dashboard instead (see the new
+         data-goto-tab hookup on each vitals-grid card in page-0, and
+         initSensorCardLinks() in app.js) — a bottom nav with 3 fixed slots
+         stays readable and thumb-reachable; cramming 6 more sensor
+         shortcuts in here would defeat that. "Live Calibration" (tab 7)
+         also isn't reachable from the iPhone layout at all currently —
+         it was never in #sideNav's icon-rail-only iPad view either in a
+         way distinct from the mobile overlay, and has no obvious card of
+         its own on the dashboard; flagging this as a known gap rather
+         than guessing at a placement not specified in the request.
+
+         Same 3-item role="tablist" pattern as #nav-tabs above (button,
+         not li — no need for a <ul> here, and a native <button> gets
+         keyboard/tap semantics for free instead of needing the manual
+         role="tab"/tabindex="0" treatment #nav-tabs's plain <li>s need).
+         z-40, same stacking context as the old sidebar/scrim it replaces,
+         still below the auth overlay's z-[100] so an unauthenticated
+         session never shows real navigation underneath it.
+
+         Uses safe-area-inset-bottom padding so it clears the iPhone home
+         indicator instead of sitting flush under it, same pattern as
+         #sideNav's existing safe-area padding (style.css, fix #1) and
+         #auth-overlay's (fix #1 block, same file). -->
+    <nav id="bottomNav" role="tablist" aria-label="Primary"
+        class="liquid-glass md:hidden fixed left-0 right-0 bottom-0 z-40 flex items-stretch justify-around rounded-t-3xl rounded-b-none border-t border-white/10"
+        style="padding-bottom: env(safe-area-inset-bottom, 0px);">
     </nav>
 
     <!-- MAIN CANVAS -->
@@ -270,7 +304,7 @@
 
             <!-- Telemetry Grid (All 8 Data Points) -->
             <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 md:gap-8">
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
+                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="1">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">water_drop</span> TDS</span>
                         <span id="dash-dot-tds" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -279,7 +313,7 @@
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-tds">--</span> <span class="text-headline-md text-white/50 ml-1">ppm</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
+                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="6">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">science</span> pH Level</span>
                         <span id="dash-dot-ph" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -288,7 +322,7 @@
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-ph">--</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
+                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="2">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">thermostat</span> Air Temp</span>
                         <span id="dash-dot-atemp" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -297,7 +331,7 @@
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-atemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
+                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="2">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">cloud</span> Humidity</span>
                         <span id="dash-dot-hum" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -306,7 +340,7 @@
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-hum">--</span> <span class="text-headline-md text-white/50 ml-1">%</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
+                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="3">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">device_thermostat</span> Water Temp</span>
                         <span id="dash-dot-wtemp" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -315,7 +349,7 @@
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-wtemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
+                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="4">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">light_mode</span> Light</span>
                         <span id="dash-dot-lux" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -324,7 +358,7 @@
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-lux">--</span> <span class="text-headline-md text-white/50 ml-1">lx</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
+                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="5">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">waves</span> Tank Level</span>
                         <span id="dash-dot-wl" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>

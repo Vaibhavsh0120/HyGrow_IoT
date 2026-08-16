@@ -570,11 +570,20 @@ video {
 .inset-0 {
   inset: 0;
 }
+.left-0 {
+  left: 0;
+}
 .left-4 {
   left: 1rem;
 }
+.right-0 {
+  right: 0;
+}
 .right-6 {
   right: 1.5rem;
+}
+.bottom-0 {
+  bottom: 0;
 }
 .top-4 {
   top: 1rem;
@@ -786,11 +795,17 @@ video {
 .items-center {
   align-items: center;
 }
+.items-stretch {
+  align-items: stretch;
+}
 .justify-center {
   justify-content: center;
 }
 .justify-between {
   justify-content: space-between;
+}
+.justify-around {
+  justify-content: space-around;
 }
 .gap-0\.5 {
   gap: 0.125rem;
@@ -831,6 +846,14 @@ video {
 .rounded-3xl {
   border-radius: 32px;
 }
+.rounded-t-3xl {
+  border-top-left-radius: 32px;
+  border-top-right-radius: 32px;
+}
+.rounded-b-none {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
 .rounded-full {
   border-radius: 9999px;
 }
@@ -849,6 +872,9 @@ video {
 }
 .border-b {
   border-bottom-width: 1px;
+}
+.border-t {
+  border-top-width: 1px;
 }
 .border-l-4 {
   border-left-width: 4px;
@@ -1422,6 +1448,12 @@ canvas {
   }
 }
 @media (min-width: 768px) {
+  .md\:hidden {
+    display: none;
+  }
+  .md\:flex {
+    display: flex;
+  }
   .md\:ml-\[96px\] {
     margin-left: 96px;
   }
@@ -2216,4 +2248,35 @@ main {
   margin-left: auto;
   margin-right: auto;
   width: 100%;
+}
+
+/* 7. iPhone bottom navbar clearance (chunk 4d) — #bottomNav is `fixed
+   bottom-0`, so without this <main> would let its last row of content sit
+   underneath the bar rather than scrolling clear of it. Sized generously
+   (5.5rem) to cover the bar's own content (icon + label, py-2 padding)
+   plus its safe-area-inset-bottom padding, which varies by device and
+   can't be known at CSS-write time — better to over-reserve a bit of
+   clearance below md than clip content on the tallest home-indicator
+   devices. No effect at md and up, where #bottomNav doesn't render (see
+   .md\:hidden) and #sideNav's own left-margin layout applies instead.
+
+   NOTE: this is written as `main.p-4` / `main.md\:p-8` (compound element+
+   class selectors, specificity 0,1,1) rather than a bare `main { }` rule,
+   because .p-4's/.md\:p-8's shorthand `padding` property (specificity
+   0,1,0, a plain class) beats a bare `main` element selector (0,0,1) on
+   specificity regardless of source order and would silently zero this
+   out otherwise. Flagging for whoever picks this up next: the existing
+   `main { padding-right: ... }` safe-area-inset-right rule earlier in
+   this file (fix #1 above) has this exact same bug — it's a bare element
+   selector losing to the same .p-4/.md\:p-8 shorthand, so that padding
+   is very likely a no-op today as shipped. Not fixed here since it
+   wasn't part of what was asked this chunk — mentioning so it isn't
+   mistaken for "already working" if picked up later. */
+main.p-4 {
+  padding-bottom: 5.5rem;
+}
+@media (min-width: 768px) {
+  main.md\:p-8 {
+    padding-bottom: 2rem;
+  }
 }

@@ -200,9 +200,102 @@ function syncDemoToggleLabel(toggleId, labelId) {
     label.classList.toggle('text-on-surface-variant', !toggle.checked);
 }
 
+// iPhone bottom navbar (chunk 4d). Only 4 fixed destinations, unlike the
+// full 10-entry #nav-tabs sidebar: Dashboard (0), Live Calibration (7),
+// Terminal (9), Settings (8) — in that display order. Per-sensor detail
+// pages (tabs 1,2,3,4,5,6) are intentionally NOT here; those are reached
+// by tapping a sensor's own card on the Dashboard (see initSensorCardLinks
+// below). This list is deliberately hardcoded rather than derived from
+// tabsData, since it's a curated subset with its own order, not "all tabs
+// that fit" — a future tab added to tabsData should NOT automatically
+// appear here without a deliberate decision about whether it belongs.
+const bottomNavItems = [
+    { index: 0, icon: 'monitoring', label: 'Dashboard' },
+    { index: 7, icon: 'settings_input_component', label: 'Calibration' },
+    { index: 9, icon: 'terminal', label: 'Terminal' },
+    { index: 8, icon: 'settings', label: 'Settings' },
+];
+
+function initBottomNav() {
+    const bottomNavContainer = document.getElementById('bottomNav');
+    if (!bottomNavContainer) return;
+
+    bottomNavItems.forEach(({ index, icon, label }) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.dataset.id = index;
+        btn.setAttribute('role', 'tab');
+        btn.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
+        btn.setAttribute('aria-label', label);
+        // flex-1 so all 4 buttons share the bar evenly; py-2 gives a real
+        // tap target without the label wrapping on narrow iPhone widths.
+        btn.className = `flex-1 flex flex-col items-center justify-center gap-1 py-2 transition-colors duration-300 ${index === 0 ? 'text-white' : 'text-on-surface-variant'}`;
+        btn.innerHTML = `
+            <span class="material-symbols-outlined" aria-hidden="true">${icon}</span>
+            <span class="font-label-sm text-label-sm">${label}</span>
+        `;
+        // switchTab's own element lookup falls back to #nav-tabs's children
+        // when called with just an index (see the comment inside switchTab
+        // below) — that's exactly what's wanted here, so no second arg.
+        btn.addEventListener('click', () => switchTab(index));
+        bottomNavContainer.appendChild(btn);
+    });
+}
+
+// Keeps #bottomNav's own active-item highlight in sync with switchTab().
+// Separate DOM tree from #nav-tabs, and only 4 of the 10 tabsData indices
+// ever appear here — an index with no matching button (any per-sensor tab)
+// simply leaves every bottom-nav button inactive, which is correct since
+// none of them represent that page.
+function syncBottomNavActive(index) {
+    const bottomNavContainer = document.getElementById('bottomNav');
+    if (!bottomNavContainer) return;
+    Array.from(bottomNavContainer.children).forEach(btn => {
+        const isActive = Number(btn.dataset.id) === index;
+        btn.classList.toggle('text-white', isActive);
+        btn.classList.toggle('text-on-surface-variant', !isActive);
+        btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+}
+
+// Makes each Dashboard vitals-grid sensor card its own tap target to that
+// sensor's detail page (chunk 4d) — previously plain, non-interactive divs.
+// The index.html->tab-index mapping lives as a data-goto-tab="N" attribute
+// directly on each card in the markup (single source of truth, visible in
+// the HTML itself) rather than duplicated here — this just reads it.
+//
+// VPD's card has no data-goto-tab attribute at all: it has no detail page
+// of its own (tabsData.labels[7] is "Live Calibration", a different page —
+// VPD is a derived dashboard-only reading with no tabsData index to route
+// to), so it's correctly skipped by the querySelectorAll below rather than
+// being routed nowhere.
+function initSensorCardLinks() {
+    document.querySelectorAll('#page-0 [data-goto-tab]').forEach(card => {
+        const tabIndex = Number(card.dataset.gotoTab);
+        card.classList.add('cursor-pointer');
+        card.setAttribute('role', 'button');
+        card.setAttribute('tabindex', '0');
+        card.addEventListener('click', () => switchTab(tabIndex));
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab(tabIndex); }
+        });
+    });
+}
+
 function switchTab(index, element) {
     currentTabId = index;
     const navTabsContainer = document.getElementById('nav-tabs');
+
+    // element is optional (chunk 4d) — callers outside the sidebar itself
+    // (dashboard sensor cards, the iPhone bottom navbar) only know the tab
+    // INDEX they want, not which <li> in #nav-tabs corresponds to it. Fall
+    // back to looking it up here rather than making every new caller
+    // duplicate that lookup (or worse, reach into #nav-tabs's DOM order
+    // itself, which would silently break if initNavigation()'s creation
+    // order ever changed). The two original call sites in initNavigation()
+    // still pass `li` directly since they already have it in hand — this
+    // is purely additive, not a behavior change for them.
+    if (!element) element = navTabsContainer.children[index];
 
     // On the mobile overlay, selecting a page means "go there" — leaving the
     // menu open over the freshly-switched page would just be in the way.
@@ -214,9 +307,25 @@ function switchTab(index, element) {
         child.className = `${tabsData.baseStyle} ${tabsData.inactiveStyle}`;
         child.setAttribute('aria-selected', 'false');
     });
-    element.className = `${tabsData.baseStyle} ${tabsData.activeStyle} scale-95 transition-transform duration-150`;
-    element.setAttribute('aria-selected', 'true');
-    setTimeout(() => { element.classList.remove('scale-95'); }, 150);
+    // element can still be undefined here if index doesn't correspond to
+    // any sidebar tab at all — every current caller only ever passes a
+    // valid tabsData index (0-9), so this is defensive rather than
+    // expected, but guards against a future caller passing something out
+    // of range and crashing the whole page-switch instead of just skipping
+    // the (nonexistent) active-highlight step.
+    if (element) {
+        element.className = `${tabsData.baseStyle} ${tabsData.activeStyle} scale-95 transition-transform duration-150`;
+        element.setAttribute('aria-selected', 'true');
+        setTimeout(() => { element.classList.remove('scale-95'); }, 150);
+    }
+
+    // Sync the iPhone bottom navbar's own active-item highlight (chunk 4d).
+    // This is a completely separate set of DOM nodes from #nav-tabs (see
+    // initBottomNav() below) — the sidebar's active-class logic above has
+    // no way to reach it, and the bottom navbar only ever has 3 items
+    // (Dashboard/Settings/Terminal, indices 0/8/9), not one per tabsData
+    // entry, so it can't just mirror the same forEach over the same list.
+    syncBottomNavActive(index);
 
     // Hide all pages
     const pages = document.querySelectorAll('.page-section');
@@ -1382,6 +1491,8 @@ function updateTerminal(msg) {
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
+    initBottomNav();
+    initSensorCardLinks();
     initMobileNav();
     initWebSocket();
     setTimeout(resizeCanvas, 100);
