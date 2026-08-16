@@ -61,4 +61,15 @@
 // Used to separate data if you have multiple ESP32s running this firmware
 #define FALLBACK_DEVICE_ID "hygrow-node-alpha"
 
+// --- Demo Mode (first-boot default) ---
+// true  = every sensor ships ON and generates simulated data immediately,
+//         with no hardware wired up — useful for trying the dashboard, or
+//         for a device that's still waiting on its sensors to arrive.
+// false = normal behavior; sensors read real hardware on their configured
+//         pins. This only matters on first boot / after a factory reset —
+//         once Demo Mode is toggled via the Web UI, that saved value lives
+//         in NVS and this compiled default is ignored, same as every other
+//         FALLBACK_* value in this file.
+#define FALLBACK_DEMO_MODE true
+
 #endif // SECRETS_H

@@ -338,6 +338,21 @@ void state_init()
   currentConfig.pin_wl = prefs.getInt("pin_wl", PIN_WL);
   currentConfig.pin_wl_power = prefs.getInt("pin_wlp", PIN_WL_PWR);
 
+  // Real (non-demo) pin mirror — see the ConfigState::real_pin_* comment in
+  // state.h. Defaults to whatever pin_* just loaded above (covers first boot
+  // and every pre-Demo-Mode NVS blob, where these keys simply don't exist
+  // yet) so a device upgrading straight into this firmware version starts
+  // with a sane "real pins == current pins" baseline instead of falling back
+  // to compiled defaults the first time Demo Mode is toggled off.
+  currentConfig.real_pin_dht = prefs.getInt("rpin_dht", currentConfig.pin_dht);
+  currentConfig.real_pin_ds18b20 = prefs.getInt("rpin_ds", currentConfig.pin_ds18b20);
+  currentConfig.real_pin_tds = prefs.getInt("rpin_tds", currentConfig.pin_tds);
+  currentConfig.real_pin_ph = prefs.getInt("rpin_ph", currentConfig.pin_ph);
+  currentConfig.real_pin_lux_sda = prefs.getInt("rpin_sda", currentConfig.pin_lux_sda);
+  currentConfig.real_pin_lux_scl = prefs.getInt("rpin_scl", currentConfig.pin_lux_scl);
+  currentConfig.real_pin_wl = prefs.getInt("rpin_wl", currentConfig.pin_wl);
+  currentConfig.real_pin_wl_power = prefs.getInt("rpin_wlp", currentConfig.pin_wl_power);
+
   // Feature flags — demo mode / Firebase upload gate.
   // We keep the keys extremely short to save NVS bytes, but map them to the full names from
   // config.h (demo, fb_en), so the code stays self-documenting.
@@ -353,6 +368,35 @@ void state_init()
     char k[8];
     snprintf(k, sizeof(k), "en_%d", i);
     currentConfig.sensor_enabled[i] = prefs.getBool(k, DEFAULT_SENSOR_ENABLED[i]);
+  }
+
+  // Demo Mode pin enforcement — covers two cases in one pass:
+  //   1. First boot with FALLBACK_DEMO_MODE true (secrets.h) — pin_* just
+  //      loaded above from compiled defaults (no NVS keys exist yet) still
+  //      point at real GPIOs; real_pin_* was seeded from those same values
+  //      a few lines up, which is exactly right (there is no other "real"
+  //      pinout yet). Force pin_* to the sentinel now so the very first
+  //      boot's readAll() and sensorPinIsDemo() (task_sensor.cpp) see a
+  //      consistent demo state from t=0, without waiting for a save_features
+  //      round-trip through the Web UI.
+  //   2. Demo Mode was already on when this device last saved (normal
+  //      reboot with demo_mode: true already in NVS) — pin_* was already
+  //      persisted as DEMO_MODE_PIN by the save_features handler that
+  //      turned it on, so this is a no-op restatement, not a change.
+  // Sensor enabled state is untouched here — save_features (the ONLY place
+  // that flips demo_mode) already forces sensor_enabled[] on for every
+  // sensor at the moment demo mode is turned on, and that choice is
+  // persisted like any other saved setting.
+  if (currentConfig.demo_mode)
+  {
+    currentConfig.pin_dht = DEMO_MODE_PIN;
+    currentConfig.pin_ds18b20 = DEMO_MODE_PIN;
+    currentConfig.pin_tds = DEMO_MODE_PIN;
+    currentConfig.pin_ph = DEMO_MODE_PIN;
+    currentConfig.pin_lux_sda = DEMO_MODE_PIN;
+    currentConfig.pin_lux_scl = DEMO_MODE_PIN;
+    currentConfig.pin_wl = DEMO_MODE_PIN;
+    currentConfig.pin_wl_power = DEMO_MODE_PIN;
   }
 
   // Crash/reboot diagnostics — mount the namespace and pull in whatever
@@ -419,6 +463,17 @@ bool state_save()
   ok &= prefs.putInt("pin_scl", currentConfig.pin_lux_scl) > 0;
   ok &= prefs.putInt("pin_wl", currentConfig.pin_wl) > 0;
   ok &= prefs.putInt("pin_wlp", currentConfig.pin_wl_power) > 0;
+
+  // Real (non-demo) pin mirror — see the ConfigState::real_pin_* comment in
+  // state.h.
+  ok &= prefs.putInt("rpin_dht", currentConfig.real_pin_dht) > 0;
+  ok &= prefs.putInt("rpin_ds", currentConfig.real_pin_ds18b20) > 0;
+  ok &= prefs.putInt("rpin_tds", currentConfig.real_pin_tds) > 0;
+  ok &= prefs.putInt("rpin_ph", currentConfig.real_pin_ph) > 0;
+  ok &= prefs.putInt("rpin_sda", currentConfig.real_pin_lux_sda) > 0;
+  ok &= prefs.putInt("rpin_scl", currentConfig.real_pin_lux_scl) > 0;
+  ok &= prefs.putInt("rpin_wl", currentConfig.real_pin_wl) > 0;
+  ok &= prefs.putInt("rpin_wlp", currentConfig.real_pin_wl_power) > 0;
 
   for (int i = 0; i < S_COUNT; ++i)
   {

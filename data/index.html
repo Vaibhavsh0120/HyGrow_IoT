@@ -2,8 +2,29 @@
 <html lang="en">
 <head>
     <meta charset="utf-8"/>
-    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <!-- viewport-fit=cover lets the layout extend under the iPhone notch/
+         home-indicator area instead of leaving a hard white/black bar there;
+         the safe-area-inset-* rules below (see #sideNav, main, .hg-modal-surface
+         panels) then pad content back in from those edges instead of letting
+         it sit underneath system UI. Also caps zoom slightly below what
+         iOS/Android already do to avoid a double-zoom feel on pinch. -->
+    <meta content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" name="viewport"/>
     <title>Web Doctor - Hydroponics IoT</title>
+
+    <!-- Home-screen "Add to Home Screen" behavior on iOS/iPadOS — without
+         these, a saved HyGrow shortcut opens inside Safari's chrome (address
+         bar, tab strip) instead of full-screen, and uses a generic screenshot
+         icon instead of the app's own. status-bar-style "black-translucent"
+         lets the fixed sidebar's own background show through the status bar
+         area rather than Safari painting a plain black/white bar over it. -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Web Doctor">
+    <!-- iOS ignores SVG for apple-touch-icon (falls back to a screenshot of
+         the page instead) — this PNG is rendered directly from favicon.svg
+         at Apple's recommended 180x180 size, not a separate hand-made asset,
+         so it stays in sync with the real icon if favicon.svg ever changes. -->
+    <link rel="apple-touch-icon" href="apple-touch-icon.png">
 
     <!-- Self-hosted favicon (data/favicon.svg) — same reasoning as the
          self-hosted fonts below: this device may only ever be reachable
@@ -54,7 +75,14 @@
         <!-- 1. Loading spinner -->
         <div id="auth-spinner" class="flex flex-col items-center gap-4">
             <div class="w-12 h-12 border-4 border-white/10 border-t-primary rounded-full animate-spin"></div>
-            <p class="font-label-md text-label-md text-on-surface-variant tracking-widest">CONNECTING...</p>
+            <!-- id'd so confirmReboot() (app.js) can swap this to "REBOOTING
+                 DEVICE..." right when a user-confirmed reboot is sent — an
+                 expected, explained disconnect reads very differently from an
+                 unexplained one. resetSpinnerLabel() (app.js) restores the
+                 default text the next time a connection attempt starts fresh
+                 (not tied to a pending reboot), so it never gets stuck showing
+                 "Rebooting..." after an ordinary drop/reconnect. -->
+            <p id="auth-spinner-label" class="font-label-md text-label-md text-on-surface-variant tracking-widest">CONNECTING...</p>
             <!-- Fix (gap #4): the spinner used to give zero feedback if the
                  connection never came up — no attempt count, no manual retry.
                  updateSpinnerStatus() in app.js only fills this in once the
@@ -65,7 +93,7 @@
         </div>
 
         <!-- 2. First-time "Set Password" modal -->
-        <div id="auth-setup" class="hidden liquid-glass rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+        <div id="auth-setup" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
                 <span class="material-symbols-outlined text-primary text-[40px]">health_and_safety</span>
                 <h2 class="font-headline-md text-headline-md text-white">Welcome to Web Doctor</h2>
@@ -94,7 +122,7 @@
         </div>
 
         <!-- 3. Returning "Login" modal -->
-        <div id="auth-login" class="hidden liquid-glass rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+        <div id="auth-login" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
                 <span class="material-symbols-outlined text-primary text-[40px]">lock</span>
                 <h2 class="font-headline-md text-headline-md text-white">Admin Login</h2>
@@ -117,6 +145,25 @@
                  s_sessionToken in task_network.cpp). Not disruptive, but a
                  real surprise nobody explained until now. -->
             <p class="font-label-sm text-label-sm text-on-surface-variant/70 text-center">Logging in here will sign out any other device that was previously logged in.</p>
+        </div>
+
+        <!-- 4. Reboot confirmation modal — replaces the plain browser confirm()
+             every "this change needs a reboot" flow used to call directly
+             (Wi-Fi save, Pinout save, per-sensor Enabled toggle, Demo Mode
+             toggle). Rendered inside #auth-overlay so it shares the same
+             z-index/backdrop as the other three panels and the same
+             hg-modal-surface fix for light-mode contrast, but is opened/closed
+             independently of showAuthPanel() — see confirmReboot() in app.js. -->
+        <div id="reboot-confirm" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+            <div class="flex flex-col gap-1 items-center text-center">
+                <span class="material-symbols-outlined text-primary text-[40px]">restart_alt</span>
+                <h2 class="font-headline-md text-headline-md text-white">Reboot Required</h2>
+                <p id="reboot-confirm-text" class="font-body-md text-body-md text-on-surface-variant">The ESP32 must reboot to safely apply this change. Reboot now?</p>
+            </div>
+            <div class="flex flex-col gap-3">
+                <button id="btn-reboot-confirm-yes" class="w-full bg-primary-container text-on-primary-container font-label-md py-3 rounded-xl hover:opacity-90 transition-all">Reboot Now</button>
+                <button id="btn-reboot-confirm-later" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all">Not Now</button>
+            </div>
         </div>
     </div>
 
@@ -671,6 +718,17 @@
                     <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" id="pin-validation-error" role="alert">
                         <span class="material-symbols-outlined">warning</span>
                         <span id="pin-validation-error-text">GPIO 19 and 20 are reserved for USB on this board and can't be used for a sensor. Change that pin and try again.</span>
+                    </div>
+                    <!-- Shown only while Demo Mode is on — every pin field below is
+                         locked at the DEMO_MODE_PIN sentinel on the device, so editing
+                         them here would be immediately overwritten (or rejected) and
+                         is only ever confusing. See cfg-demo-mode's change handler and
+                         updateConfigForm() in app.js, which toggle #pinout-demo-lock
+                         and each field's [disabled] together from the same "demo"
+                         value in every config frame. -->
+                    <div class="hidden liquid-glass border-l-4 border-secondary/60 p-4 rounded-2xl text-on-surface-variant font-body-md flex items-center gap-2 shadow-lg" id="pinout-demo-lock" role="status">
+                        <span class="material-symbols-outlined text-secondary">science</span>
+                        <span>Demo Mode is on — every sensor pin below is simulated and locked. Turn off Demo Mode in Feature Flags to edit real pin assignments.</span>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">

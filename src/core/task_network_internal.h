@@ -83,7 +83,7 @@ void firebaseResetFailureCount();
 // (never broadcast) — see the definition in command_handlers.cpp for the
 // full contract the frontend's sendCommand()/handleCommandResult() (app.js)
 // depends on.
-void sendCmdAck(AsyncWebSocketClient *client, const String &cmd, bool ok, const String &error = "");
+void sendCmdAck(AsyncWebSocketClient *client, const String &cmd, bool ok, const String &error = "", bool rebootRequired = false);
 // Every command other than "auth"/"change_password" — save_wifi,
 // save_firebase, save_pins, calibrate_ph, calibrate_tds, save_features,
 // save_sensor_enabled, save_intervals, reset_sensor_pin, test_firebase, factory_reset,

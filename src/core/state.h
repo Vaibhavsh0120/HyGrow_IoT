@@ -42,6 +42,12 @@ struct ConfigState
   // never used as an on/off switch. The single on/off switch for a sensor
   // is sensor_enabled[] below; a pin keeps its saved value even while its
   // sensor is disabled.
+  //
+  // While demo_mode is true, every one of these fields reads DEMO_MODE_PIN
+  // (config.h) instead of a real GPIO — see sensorPinIsDemo() in
+  // task_sensor.cpp. The user's real assignments are preserved separately in
+  // real_pin_* below so turning Demo Mode back off restores exactly what was
+  // there before, not just the compiled defaults.
   int pin_dht;
   int pin_ds18b20;
   int pin_tds;
@@ -51,8 +57,23 @@ struct ConfigState
   int pin_wl;
   int pin_wl_power;
 
+  // Real (non-demo) pin assignments, preserved while demo_mode is true so
+  // save_features (command_handlers.cpp) can restore them verbatim when demo
+  // mode is turned back off, instead of falling back to compiled defaults
+  // and silently discarding a custom pinout the user saved before enabling
+  // Demo Mode. Meaningless/unused while demo_mode is false — pin_* above is
+  // the live value in that case and these just mirror it on every save_pins.
+  int real_pin_dht;
+  int real_pin_ds18b20;
+  int real_pin_tds;
+  int real_pin_ph;
+  int real_pin_lux_sda;
+  int real_pin_lux_scl;
+  int real_pin_wl;
+  int real_pin_wl_power;
+
   // Feature flags — user-editable from Web Doctor > Settings > Feature Flags
-  bool demo_mode;         // [NVS] demo    — simulate sensor data instead of reading hardware
+  bool demo_mode;         // [NVS] demo    — simulate sensor data; also swaps every sensor pin to DEMO_MODE_PIN (reboot required, see save_features)
   bool firebase_enabled;  // [NVS] fb_en   — gate the Firestore POST logic
 
   // Feature flags — the SINGLE on/off switch per sensor. This is checked

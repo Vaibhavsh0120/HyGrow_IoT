@@ -40,7 +40,12 @@
 // name so the client can match the ack to the button that sent it even if
 // several saves are in flight at once; `error` is optional context for a
 // rejected command (e.g. pin validation failure) and is omitted when ok.
-void sendCmdAck(AsyncWebSocketClient *client, const String &cmd, bool ok, const String &error /* = "" */)
+// `rebootRequired` is likewise optional context for a SUCCESSFUL command that
+// changed something the device can only safely apply after a restart (today,
+// only save_features when demo_mode itself flips — see that handler) — the
+// field is omitted (not sent as false) whenever it doesn't apply, so a client
+// that doesn't know to look for it is unaffected either way.
+void sendCmdAck(AsyncWebSocketClient *client, const String &cmd, bool ok, const String &error /* = "" */, bool rebootRequired /* = false */)
 {
     JsonDocument resp;
     resp["type"] = "command_result";
@@ -48,6 +53,8 @@ void sendCmdAck(AsyncWebSocketClient *client, const String &cmd, bool ok, const 
     resp["ok"] = ok;
     if (!ok && error.length() > 0)
         resp["error"] = error;
+    if (ok && rebootRequired)
+        resp["reboot_required"] = true;
     String payload;
     serializeJson(resp, payload);
     client->text(payload);
@@ -287,6 +294,26 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
     }
     else if (cmd == "save_pins")
     {
+        // Demo Mode owns every sensor pin field while it's on (see
+        // save_features below) — every pin_* currently reads DEMO_MODE_PIN,
+        // and real_pin_* is the only place the user's actual GPIO
+        // assignments live until Demo Mode is turned back off. The Pinout
+        // card is already disabled client-side for this exact reason
+        // (#pinout-demo-lock, app.js), but per this file's own rule that
+        // client-side checks are a UX nicety only (see the validatePinSet
+        // comment above), a hand-crafted save_pins here must still be
+        // rejected server-side — otherwise it would silently overwrite the
+        // sentinel with real GPIO numbers while demo_mode stays true in NVS,
+        // and real_pin_* would never see the change, so turning Demo Mode
+        // off afterward would restore the OLD pins and quietly discard
+        // whatever was just saved.
+        if (currentConfig.demo_mode)
+        {
+            webLog(0, LOG_ERR, "save_pins rejected: Demo Mode is active.");
+            sendCmdAck(client, cmd, false, "Pin assignments are locked while Demo Mode is on. Turn off Demo Mode first.");
+            return;
+        }
+
         // Build the proposed post-apply pin set first, so we can validate
         // it as a whole (forbidden pins + cross-sensor duplicates) BEFORE
         // committing anything to currentConfig/NVS. Reject the whole
@@ -415,11 +442,20 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
     else if (cmd == "save_features")
     {
         // Any field the client omits leaves that flag unchanged — same
-        // "omit-to-leave-unchanged" pattern used by save_pins. Neither
-        // flag requires a reboot: both demo_mode and firebase_enabled
-        // are checked live, every cycle.
+        // "omit-to-leave-unchanged" pattern used by save_pins.
+        //
+        // firebase_enabled is still checked live, every cycle — no reboot
+        // needed for that one. demo_mode is different: flipping it now also
+        // swaps every sensor's pin field between its real GPIO and
+        // DEMO_MODE_PIN (config.h), and pin changes only take effect after
+        // the sensor task re-inits at boot (same rule save_pins and
+        // save_sensor_enabled already follow) — so a demo_mode change DOES
+        // require a reboot to safely apply, unlike before. reboot_required
+        // is only set true when demo_mode actually changed, not on every
+        // save_features call (e.g. a Firebase-only toggle stays reboot-free).
         bool wasFbEnabled = currentConfig.firebase_enabled;
-        currentConfig.demo_mode = doc["demo"] | currentConfig.demo_mode;
+        bool wasDemoMode = currentConfig.demo_mode;
+        bool newDemoMode = doc["demo"] | currentConfig.demo_mode;
         currentConfig.firebase_enabled = doc["fb_en"] | currentConfig.firebase_enabled;
 
         // Turning Firebase Upload back on (including right after an
@@ -431,6 +467,65 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
             firebaseResetFailureCount();
         }
 
+        bool demoModeChanged = (newDemoMode != wasDemoMode);
+        currentConfig.demo_mode = newDemoMode;
+
+        if (demoModeChanged)
+        {
+            if (newDemoMode)
+            {
+                // Turning Demo Mode ON: remember every sensor's real pin
+                // assignment (so turning it back off can restore them
+                // exactly, see ConfigState::real_pin_* in state.h), then
+                // swap every sensor's live pin field to the sentinel. Every
+                // sensor also ships enabled while demo mode is on — a demo
+                // dashboard with half its cards showing "no data" because
+                // they happened to be off beforehand isn't useful, and
+                // readAllDemo() (task_sensor.cpp) already skips a sensor
+                // whose enabled flag is false regardless of its pin, so this
+                // is required for demo mode to actually demo anything.
+                currentConfig.real_pin_dht = currentConfig.pin_dht;
+                currentConfig.real_pin_ds18b20 = currentConfig.pin_ds18b20;
+                currentConfig.real_pin_tds = currentConfig.pin_tds;
+                currentConfig.real_pin_ph = currentConfig.pin_ph;
+                currentConfig.real_pin_lux_sda = currentConfig.pin_lux_sda;
+                currentConfig.real_pin_lux_scl = currentConfig.pin_lux_scl;
+                currentConfig.real_pin_wl = currentConfig.pin_wl;
+                currentConfig.real_pin_wl_power = currentConfig.pin_wl_power;
+
+                currentConfig.pin_dht = DEMO_MODE_PIN;
+                currentConfig.pin_ds18b20 = DEMO_MODE_PIN;
+                currentConfig.pin_tds = DEMO_MODE_PIN;
+                currentConfig.pin_ph = DEMO_MODE_PIN;
+                currentConfig.pin_lux_sda = DEMO_MODE_PIN;
+                currentConfig.pin_lux_scl = DEMO_MODE_PIN;
+                currentConfig.pin_wl = DEMO_MODE_PIN;
+                currentConfig.pin_wl_power = DEMO_MODE_PIN;
+
+                for (int i = 0; i < S_COUNT; i++)
+                    currentConfig.sensor_enabled[i] = true;
+            }
+            else
+            {
+                // Turning Demo Mode OFF: restore every sensor's real pin
+                // assignment from the mirror saved above (or on whichever
+                // boot most recently turned demo mode on). Sensor
+                // enabled/disabled state is deliberately left as-is here —
+                // unlike the ON transition, there's no single correct
+                // "restore" for enabled state (the user may have wanted a
+                // sensor off before ever trying Demo Mode), so this only
+                // ever touches pins on the way out.
+                currentConfig.pin_dht = currentConfig.real_pin_dht;
+                currentConfig.pin_ds18b20 = currentConfig.real_pin_ds18b20;
+                currentConfig.pin_tds = currentConfig.real_pin_tds;
+                currentConfig.pin_ph = currentConfig.real_pin_ph;
+                currentConfig.pin_lux_sda = currentConfig.real_pin_lux_sda;
+                currentConfig.pin_lux_scl = currentConfig.real_pin_lux_scl;
+                currentConfig.pin_wl = currentConfig.real_pin_wl;
+                currentConfig.pin_wl_power = currentConfig.real_pin_wl_power;
+            }
+        }
+
         if (!state_save())
         {
             webLog(0, LOG_ERR, "save_features: state_save() failed — settings may not be fully persisted.");
@@ -438,8 +533,19 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
             return;
         }
         broadcastConfig();
-        webLog(0, LOG_INFO, "Feature flags updated.");
-        sendCmdAck(client, cmd, true);
+        webLog(0, LOG_INFO, demoModeChanged
+                                 ? String("Demo Mode ") + (newDemoMode ? "enabled — every sensor pin switched to simulation. Reboot required to apply."
+                                                                        : "disabled — real sensor pins restored. Reboot required to apply.")
+                                 : "Feature flags updated.");
+
+        // reboot_required rides along on the same ack the client already
+        // waits on (sendCmdAck()/handleCommandResult() in app.js) rather
+        // than a separate frame — the client only needs this the instant it
+        // sees the save succeed, so there's no reason to introduce a second
+        // round trip for it. sendCmdAck() omits the field entirely (not just
+        // false) when demoModeChanged is false, so an older client that
+        // doesn't look for it is unaffected either way.
+        sendCmdAck(client, cmd, true, "", demoModeChanged);
     }
     else if (cmd == "save_sensor_enabled")
     {
@@ -517,6 +623,22 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
     }
     else if (cmd == "reset_sensor_pin")
     {
+        // Same Demo Mode lock as save_pins above, and for the same reason —
+        // this handler writes straight to pin_* (the compiled default) and
+        // reboots immediately, which while Demo Mode is on would stomp the
+        // DEMO_MODE_PIN sentinel, leave real_pin_* stale, and reboot into a
+        // state where demo_mode is still true in NVS but this one sensor's
+        // pin no longer matches it — exactly the inconsistency the whole
+        // sentinel design (config.h) exists to prevent. Point the user at
+        // the one safe way to change a pin while Demo Mode is active: turn
+        // Demo Mode off first (which itself restores every real_pin_*).
+        if (currentConfig.demo_mode)
+        {
+            webLog(0, LOG_ERR, "reset_sensor_pin rejected: Demo Mode is active.");
+            sendCmdAck(client, cmd, false, "Pin assignments are locked while Demo Mode is on. Turn off Demo Mode first.");
+            return;
+        }
+
         String sensor = doc["sensor"] | "";
         bool matched = true;
 

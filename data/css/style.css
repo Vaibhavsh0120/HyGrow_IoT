@@ -625,13 +625,21 @@ video {
   height: 3rem;
 }
 .h-\[calc\(100vh-2rem\)\] {
+  /* 100vh on iOS Safari is the LARGEST possible viewport (toolbars hidden),
+     so anything sized against it gets clipped by the address/tab bar as
+     soon as it's visible — the classic "bottom of the sidebar is cut off"
+     mobile Safari bug. dvh tracks the toolbar's actual current state; the
+     vh line stays first as a fallback for older WebKit/browsers that don't
+     support dvh yet (dvh silently wins in the cascade wherever it's understood). */
   height: calc(100vh - 2rem);
+  height: calc(100dvh - 2rem);
 }
 .h-full {
   height: 100%;
 }
 .h-screen {
   height: 100vh;
+  height: 100dvh;
 }
 .min-h-\[400px\] {
   min-height: 400px;
@@ -1127,6 +1135,20 @@ video {
   border: 1px solid hsla(0, 0%, 100%, 0.08);
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
 }
+/* Floating-panel surface for #auth-login, #auth-setup, and #reboot-confirm
+   — see the --hg-modal-surface token comment (theme block, further down
+   this file) for why these three need a near-opaque background instead of
+   .liquid-glass's normal 3-5% opacity. Falls back to a dark opaque value
+   here so the panel still reads correctly for the brief instant before the
+   anti-flash theme script (index.html <head>) sets html.dark/html.light —
+   the theme block below overrides this with the correct value either way. */
+.hg-modal-surface {
+  background: var(--hg-modal-surface, rgba(28, 30, 36, 0.92));
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border: 1px solid hsla(0, 0%, 100%, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
 /* Auth overlay's dimmed backdrop (see #auth-overlay in index.html) — a
    softer blur than .liquid-glass's 20px, just enough to obscure the
    dashboard behind it without a fully opaque background. */
@@ -1496,6 +1518,15 @@ html.dark {
   --hg-error: rgb(255, 180, 171);
   --hg-error-container-20: rgba(147, 0, 10, 0.2);
   --hg-error-container-40: rgba(147, 0, 10, 0.4);
+  /* Floating-panel surface (login, first-run setup, reboot-confirm) — these
+     panels sit on top of #auth-overlay's dark blurred scrim (.bg-black/80),
+     not directly on the page background the way dashboard cards do. Regular
+     .liquid-glass is only ~3-5% opaque, which is correct for a card resting
+     on the page itself, but it lets that scrim show straight through and
+     muddies text contrast for anything modal. This token is deliberately
+     near-opaque so these three panels read cleanly regardless of what's
+     blurred behind them. See .hg-modal-surface below. */
+  --hg-modal-surface: rgba(28, 30, 36, 0.92);
 }
 
 html.light {
@@ -1521,6 +1552,11 @@ html.light {
   --hg-error: rgb(186, 26, 26);
   --hg-error-container-20: rgba(255, 218, 214, 0.6);
   --hg-error-container-40: rgba(255, 180, 171, 0.5);
+  /* See the dark-theme --hg-modal-surface definition above for why this
+     exists separately from --hg-surface. This is the bug fix for the
+     light-mode login/setup screen: a near-opaque light panel instead of a
+     3.5%-opaque one letting the dark auth-overlay scrim bleed through. */
+  --hg-modal-surface: rgba(250, 250, 251, 0.96);
 }
 
 /* Page background + base text color */
@@ -1534,6 +1570,14 @@ body {
 /* Glass card surface */
 .liquid-glass {
   background: var(--hg-surface);
+  border-color: var(--hg-surface-border);
+}
+
+/* Floating-panel surface (login, setup, reboot-confirm) — near-opaque in
+   both themes, unlike .liquid-glass above. See the --hg-modal-surface
+   token comment (dark theme block) for the full explanation. */
+.hg-modal-surface {
+  background: var(--hg-modal-surface);
   border-color: var(--hg-surface-border);
 }
 
@@ -1808,4 +1852,82 @@ body {
   .animate-spin {
     animation: none !important;
   }
+}
+
+/* ==========================================================================
+   Mobile / cross-device pass (macOS Safari/Chrome, iPad, iPhone)
+   ==========================================================================
+   Four independent fixes, each targeting a specific real-device symptom
+   rather than a general "make it responsive" pass — the layout itself
+   (Tailwind-style utility classes, flex/grid) already adapts fine across
+   sizes; these are the platform-specific gaps that utility classes alone
+   don't cover.
+   ========================================================================== */
+
+/* 1. Safe-area insets — iPhone notch / Dynamic Island and the home-indicator
+   bar (and iPad's rounded corners in some orientations) live in a region
+   `env(safe-area-inset-*)` reports, but only once <meta viewport-fit=cover>
+   (index.html <head>) opts the page into drawing under them at all. Without
+   both halves of this fix together, content either (a) never reaches the
+   edge (no viewport-fit=cover — the old, safe-but-wasteful default) or (b)
+   reaches the edge and sits UNDER system UI (viewport-fit=cover with no
+   inset padding) — this pass is what gets both: full-bleed background, but
+   real content padded back in from whichever edges are actually unsafe.
+   env() with a 0px fallback is a no-op on non-notched devices/desktop
+   browsers, so this is unconditionally safe to ship everywhere. */
+#sideNav {
+  padding-left: max(0.5rem, env(safe-area-inset-left));
+  padding-top: calc(1.5rem + env(safe-area-inset-top));
+  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
+}
+main {
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+@media (min-width: 768px) {
+  main {
+    padding-right: max(2rem, env(safe-area-inset-right));
+  }
+}
+#auth-overlay {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* 2. iOS Safari auto-zooms the whole page on focusing any input/select/
+   textarea with a computed font-size under 16px, then doesn't reliably
+   zoom back out on blur — every text/password input in this app currently
+   inherits .text-body-md at 15px (login, setup, Wi-Fi, pinout, calibration
+   forms), so this is a real, reproducible annoyance on iPhone specifically
+   (iPad is normally large enough that Safari doesn't trigger it, but this
+   covers it there too since it does no harm at any size). Desktop/Android
+   Chrome ignore this property entirely, so it's safe unconditionally rather
+   than needing a touch-only media query. */
+input,
+select,
+textarea {
+  font-size: max(16px, 1em);
+}
+
+/* 3. iOS/iPadOS Safari's pull-to-refresh + rubber-band overscroll can drag
+   the entire fixed-position app shell (body is h-screen/h-dvh + overflow-
+   hidden, intentionally non-scrolling — only <main> and #sideNav scroll
+   internally) — without this, a fast swipe from the very top of the page
+   can visibly detach the whole layout from the viewport for a frame.
+   overscroll-behavior-y: none is the standard, purpose-built fix and has no
+   effect on browsers that don't support it. */
+html,
+body {
+  overscroll-behavior-y: none;
+}
+
+/* 4. Momentum scrolling inside the two internally-scrolling regions
+   (#sideNav's nav list on small screens, <main>'s content area) — without
+   this, iOS Safari falls back to a janky, non-momentum scroll inside any
+   element with its own overflow, even though the page itself scrolls
+   smoothly. No effect outside WebKit. */
+#sideNav,
+main {
+  -webkit-overflow-scrolling: touch;
 }

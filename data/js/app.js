@@ -282,6 +282,60 @@ function showAuthPanel(panel) {
     if (login) login.classList.toggle('hidden', panel !== 'login');
 }
 
+// Shows the "Reboot Required?" modal in place of the browser's native
+// confirm() — every flow that needs a post-save reboot (Wi-Fi credentials,
+// Pinout, per-sensor Enabled toggle, Demo Mode) now calls this instead of
+// window.confirm() directly, so the prompt matches the rest of the UI (and,
+// on iOS/iPadOS Safari, isn't a blocking native dialog that looks jarringly
+// out of place in an installed/full-screen web app).
+//
+// `message` replaces the modal's body text with the exact wording each call
+// site already used with confirm() — kept verbatim per call site rather than
+// generalized, since each one explains something slightly different (Wi-Fi's
+// SoftAP-fallback note, Pinout's "reassign hardware interrupts" framing,
+// etc.) that's worth keeping specific. `onConfirm` runs only if the user taps
+// "Reboot Now" — same contract confirm() had (only the truthy branch used to
+// do anything), so callers that only ever branched on `if (confirm(...))`
+// port over unchanged. `onCancel` is optional, for the few call sites that
+// also had real work in confirm()'s `else` branch (reverting a toggle the
+// user just flipped, since the change was persisted but won't take effect
+// without the reboot they just declined).
+let s_rebootConfirmHandler = null;
+let s_rebootCancelHandler = null;
+
+function confirmReboot(message, onConfirm, onCancel) {
+    const modal = document.getElementById('reboot-confirm');
+    const text = document.getElementById('reboot-confirm-text');
+    if (!modal) { if (onConfirm) onConfirm(); return; } // defensive fallback — should never happen
+    if (text) text.innerText = message;
+    s_rebootConfirmHandler = onConfirm;
+    s_rebootCancelHandler = onCancel || null;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
+function closeRebootConfirm() {
+    const modal = document.getElementById('reboot-confirm');
+    if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+    s_rebootConfirmHandler = null;
+    s_rebootCancelHandler = null;
+}
+
+// Shared "actually send the reboot" action for confirmReboot()'s onConfirm
+// callback — flags the next spinner cycle to read "REBOOTING DEVICE..."
+// (see s_pendingRebootLabel/initWebSocket() above) before sending, so the
+// disconnect that's about to happen reads as expected rather than alarming.
+// Deliberately NOT routed through sendCommand(): reboot's handler
+// (command_handlers.cpp) never sends an ack — it calls ESP.restart()
+// directly — so waiting on one would always time out and show a false
+// "failed" error. The plain websocket.send() + swallowed catch here matches
+// what every pre-existing reboot call site already did.
+function sendReboot() {
+    s_pendingRebootLabel = true;
+    if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+    try { websocket.send(JSON.stringify({ command: "reboot" })); } catch (e) { /* device is about to drop the connection anyway */ }
+}
+
 // Handles the device's "auth_status" frame — the very first message sent on
 // every fresh WS connection (see sendAuthStatus() in task_network.cpp). If a
 // session token is already stored from a previous login, try it silently
@@ -387,6 +441,20 @@ function updateSpinnerStatus() {
     }
 }
 
+// Set true for exactly one initWebSocket() cycle — the one immediately
+// following a user-confirmed reboot (see confirmReboot() below) — so that
+// cycle's spinner reads "REBOOTING DEVICE..." instead of the generic
+// "CONNECTING...". Cleared the moment that spinner is actually shown, so an
+// ordinary drop/retry afterward (e.g. the reboot's first reconnect attempt
+// failing because the board is still mid-restart) falls back to the normal
+// label rather than claiming "rebooting" for the rest of the backoff cycle.
+let s_pendingRebootLabel = false;
+
+function resetSpinnerLabel() {
+    const label = document.getElementById('auth-spinner-label');
+    if (label) label.innerText = 'CONNECTING...';
+}
+
 function initWebSocket() {
     // Every fresh connection starts unauthenticated — including reconnects —
     // so the spinner (and, once auth_status arrives, the Setup/Login modal)
@@ -394,6 +462,13 @@ function initWebSocket() {
     // backend: authentication state lives per-WebSocket-connection, not per
     // browser tab, so a dropped/reconnected socket must prove itself again.
     showAuthPanel('spinner');
+    if (s_pendingRebootLabel) {
+        const label = document.getElementById('auth-spinner-label');
+        if (label) label.innerText = 'REBOOTING DEVICE...';
+        s_pendingRebootLabel = false;
+    } else {
+        resetSpinnerLabel();
+    }
     wsConnectAttempt++;
     updateSpinnerStatus();
     websocket = new WebSocket(gateway);
@@ -911,8 +986,13 @@ function updateConfigForm(msg) {
     // wizard's math and the CSV export, so nothing here needs to write them
     // into the DOM.
 
-    // Feature Flags (Part 1 / 2.3) — none of these require a reboot, so we can
-    // just reflect the device's live state every time a config frame arrives.
+    // Feature Flags — fb_en never requires a reboot, so it just reflects the
+    // device's live state every time a config frame arrives. demo_mode DOES
+    // require a reboot to actually apply (it swaps every sensor's pin — see
+    // save_features, command_handlers.cpp) but the checkbox itself still just
+    // mirrors the device's live saved value here; the reboot prompt is
+    // handled once, right after a successful save, by sendFeatureFlags()
+    // below — not on every routine config broadcast.
     if(document.getElementById('cfg-demo-mode')) document.getElementById('cfg-demo-mode').checked = !!msg.demo;
     if(document.getElementById('cfg-fb-enabled')) document.getElementById('cfg-fb-enabled').checked = !!msg.fb_en;
 
@@ -923,6 +1003,24 @@ function updateConfigForm(msg) {
         demoBadge.classList.toggle('hidden', !msg.demo);
         demoBadge.classList.toggle('flex', !!msg.demo);
     }
+
+    // Pinout card lock — while Demo Mode is on, every pin field on the
+    // device is pinned to the DEMO_MODE_PIN sentinel (config.h) and any edit
+    // here would just be overwritten the next time Demo Mode is turned off.
+    // Lock the fields and swap in the explainer banner instead of letting
+    // someone edit values that don't mean anything right now. Disabling the
+    // <input> also means validateAllPinFields() (which iterates
+    // PIN_FIELD_LABELS via document.getElementById) still runs against
+    // their last real values without user interaction reopening them.
+    const pinoutLockBanner = document.getElementById('pinout-demo-lock');
+    if (pinoutLockBanner) pinoutLockBanner.classList.toggle('hidden', !msg.demo);
+    Object.keys(PIN_FIELD_LABELS).forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = !!msg.demo;
+    });
+    document.querySelectorAll('[data-reset-sensor]').forEach((btn) => { btn.disabled = !!msg.demo; });
+    const btnSavePinsLock = document.getElementById('btn-save-pins');
+    if (btnSavePinsLock) btnSavePinsLock.disabled = !!msg.demo;
 
     // Timing intervals (Part 5.8)
     if(document.getElementById('cfg-int-read') && msg.int_read !== undefined) document.getElementById('cfg-int-read').value = msg.int_read;
@@ -1132,6 +1230,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const authSetupConfirmField = document.getElementById('auth-setup-pass-confirm');
     if (authSetupConfirmField) authSetupConfirmField.addEventListener('keydown', (e) => { if (e.key === 'Enter' && btnAuthSetup) btnAuthSetup.click(); });
 
+    // ------------------------------------------------------------------
+    // Reboot confirmation modal (see confirmReboot()/closeRebootConfirm()
+    // above) — "Reboot Now" sends the reboot command and proactively flags
+    // the next spinner cycle as a reboot (not a generic reconnect); "Not
+    // Now" just closes the modal, matching confirm()'s old cancel behavior
+    // (the caller's onConfirm callback simply never runs).
+    // ------------------------------------------------------------------
+    const btnRebootYes = document.getElementById('btn-reboot-confirm-yes');
+    if (btnRebootYes) {
+        btnRebootYes.addEventListener('click', () => {
+            const handler = s_rebootConfirmHandler;
+            closeRebootConfirm();
+            if (handler) handler();
+        });
+    }
+    const btnRebootLater = document.getElementById('btn-reboot-confirm-later');
+    if (btnRebootLater) {
+        btnRebootLater.addEventListener('click', () => {
+            const cancelHandler = s_rebootCancelHandler;
+            closeRebootConfirm();
+            if (cancelHandler) cancelHandler();
+        });
+    }
+
     // Settings > Change Password
     const btnChangePassword = document.getElementById('btn-change-password');
     if (btnChangePassword) {
@@ -1210,9 +1332,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const apPassNote = newApPass
                     ? "\n\nNote: you also just changed the SoftAP recovery password — use the NEW one, not the old one, when reconnecting."
                     : "";
-                if(confirm("Wi-Fi credentials saved. The ESP32 must reboot to connect with the new credentials. Reboot now?\n\nIf these credentials turn out to be wrong, the device will automatically fall back to its own \"HyGrow-Setup\" Wi-Fi network after about 15 seconds — reconnect to that network and browse to 192.168.4.1 to try again." + apPassNote)) {
-                    sendCommand({command: "reboot"}).catch(() => {});
-                }
+                confirmReboot("Wi-Fi credentials saved. The ESP32 must reboot to connect with the new credentials. Reboot now?\n\nIf these credentials turn out to be wrong, the device will automatically fall back to its own \"HyGrow-Setup\" Wi-Fi network after about 15 seconds — reconnect to that network and browse to 192.168.4.1 to try again." + apPassNote, sendReboot);
             }).catch((err) => {
                 btnSaveWifi.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
                 setTimeout(() => { btnSaveWifi.innerText = "Update Network"; }, 3000);
@@ -1299,9 +1419,7 @@ document.addEventListener('DOMContentLoaded', () => {
             sendCommand(payload).then(() => {
                 btnSavePins.disabled = false;
                 btnSavePins.innerText = original;
-                if(confirm("Pinout saved. The ESP32 must reboot to reassign hardware interrupts safely. Reboot now?")) {
-                    sendCommand({command: "reboot"}).catch(() => {});
-                }
+                confirmReboot("Pinout saved. The ESP32 must reboot to reassign hardware interrupts safely. Reboot now?", sendReboot);
             }).catch((err) => {
                 btnSavePins.disabled = false;
                 btnSavePins.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
@@ -1688,12 +1806,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             e.target.disabled = false;
-            if(confirm(`Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
-                sendCommand({command: "reboot"}).catch(() => {});
-            } else {
-                e.target.checked = !isEnabled;
-                syncPowerToggleLabel(e.target.id, toggleLabelId);
-            }
+            confirmReboot(
+                `Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`,
+                sendReboot,
+                () => {
+                    e.target.checked = !isEnabled;
+                    syncPowerToggleLabel(e.target.id, toggleLabelId);
+                }
+            );
         }).catch((err) => {
             document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} enable change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
             e.target.disabled = false;
@@ -1784,7 +1904,19 @@ document.addEventListener('DOMContentLoaded', () => {
             demo: !!document.getElementById('cfg-demo-mode')?.checked,
             fb_en: !!document.getElementById('cfg-fb-enabled')?.checked
         };
-        sendCommand(payload).catch((err) => {
+        sendCommand(payload).then((msg) => {
+            // reboot_required only ever comes back true when demo_mode
+            // itself just changed (see save_features, command_handlers.cpp)
+            // — Firebase-only changes stay reboot-free, so this never fires
+            // for the cfg-fb-enabled toggle.
+            if (msg && msg.reboot_required) {
+                confirmReboot(
+                    `Demo Mode ${payload.demo ? "enabled" : "disabled"}. The ESP32 must reboot to safely apply this change. Reboot now?`,
+                    sendReboot,
+                    () => { if (sourceEl) sourceEl.checked = !sourceEl.checked; }
+                );
+            }
+        }).catch((err) => {
             // Roll the checkbox back to the last known device state on
             // failure (e.g. offline/timeout) instead of leaving the UI
             // showing a state the device never actually accepted.
@@ -1815,11 +1947,11 @@ document.addEventListener('DOMContentLoaded', () => {
             sendCommand({ command: "save_sensor_enabled", sensor: sensorId, enabled }).then(() => {
                 e.target.disabled = false;
                 document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${escapeHtml(sensorId)}' ${enabled ? "ENABLED" : "DISABLED"}.</div>`;
-                if (confirm(`Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`)) {
-                    sendCommand({ command: "reboot" }).catch(() => {});
-                } else {
-                    e.target.checked = !enabled;
-                }
+                confirmReboot(
+                    `Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`,
+                    sendReboot,
+                    () => { e.target.checked = !enabled; }
+                );
             }).catch((err) => {
                 e.target.disabled = false;
                 e.target.checked = !enabled; // revert — the device never actually applied this

@@ -71,6 +71,9 @@
 #ifndef FALLBACK_DEVICE_ID
 #error "secrets.h is missing FALLBACK_DEVICE_ID — see example.secrets.h."
 #endif
+#ifndef FALLBACK_DEMO_MODE
+#error "secrets.h is missing FALLBACK_DEMO_MODE — see example.secrets.h. Set it to true or false explicitly."
+#endif
 
 // ---------- Identity & cloud ----------
 #define DEFAULT_DEVICE_ID FALLBACK_DEVICE_ID                     // [NVS] dev_id
@@ -161,8 +164,22 @@ enum SensorID
 };
 
 // ---------- Feature flags ----------
-#define DEFAULT_DEMO_MODE false       // [NVS] demo
-#define DEFAULT_FIREBASE_ENABLED true // [NVS] fb_en
+#define DEFAULT_DEMO_MODE FALLBACK_DEMO_MODE // [NVS] demo — see secrets.h
+#define DEFAULT_FIREBASE_ENABLED true         // [NVS] fb_en
+
+// ---------- Demo mode pin sentinel ----------
+// A sentinel GPIO number, never a real pin, assigned to every sensor's pin
+// field(s) while demo_mode is on. This is what makes demo mode a genuine
+// per-sensor hardware-layer fact rather than a UI-only concept: a sensor's
+// pin equals DEMO_MODE_PIN if and only if that sensor is currently sourcing
+// simulated data (see sensorPinIsDemo() in task_sensor.cpp). Any negative
+// value is already treated as "not a real GPIO, never conflicts" throughout
+// this codebase (see isForbiddenPin()/validatePinSet() in
+// command_handlers.cpp), so this slots into the existing pin-safety system
+// with zero risk of colliding with a real assignment. -42 is arbitrary but
+// memorable and unambiguous in logs/JSON payloads — it can never be mistaken
+// for a real GPIO number or for the "unset" sentinel some libraries use (-1).
+#define DEMO_MODE_PIN (-42)
 
 // [NVS] s_en_<i> (per sensor) — the SINGLE on/off switch for each sensor,
 // indexed the same way as the SensorID enum above (S_WL, S_LIGHT, S_TDS,

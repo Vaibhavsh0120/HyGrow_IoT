@@ -58,12 +58,52 @@ static float computeVPD(float tC, float rh)
 }
 
 // ----------------------------------------------------------------------------
-// Demo mode simulation (Part 1.6)
+// Demo mode simulation
 // ----------------------------------------------------------------------------
-// When currentConfig.demo_mode is true, initAllSensors()/readAll() below skip
-// real hardware entirely and this generates plausible fake readings instead —
-// a slow random-walk around realistic hydroponic setpoints, so the dashboard
-// looks "alive" for someone testing the UI with zero sensors wired up.
+// Demo Mode is a per-sensor HARDWARE fact, not just a global UI flag: a
+// sensor is "in demo mode" if and only if its own pin field(s) currently
+// equal DEMO_MODE_PIN (config.h) — see sensorPinIsDemo() just below. In
+// practice every sensor's pins move together (save_features,
+// command_handlers.cpp, swaps all of them at once when demo_mode is
+// toggled), so this is equivalent to the old single global check in the
+// common case — but it's now literally true at the pin level instead of only
+// true by UI convention, which also means a sensor's pin could in principle
+// be hand-set to the sentinel independently of the global flag (e.g. a
+// hand-crafted save_pins message) and it would still correctly read as
+// simulated here, rather than trying to bit-bang real hardware on a pin
+// number that was never a real GPIO to begin with.
+//
+// readAllDemo() generates plausible fake readings — a slow random-walk
+// around realistic hydroponic setpoints — so the dashboard looks "alive" for
+// someone testing the UI with zero sensors wired up.
+static bool sensorPinIsDemo(SensorID id)
+{
+  switch (id)
+  {
+    case S_DHT:
+      return currentConfig.pin_dht == DEMO_MODE_PIN;
+    case S_WTEMP:
+      return currentConfig.pin_ds18b20 == DEMO_MODE_PIN;
+    case S_TDS:
+      return currentConfig.pin_tds == DEMO_MODE_PIN;
+    case S_PH:
+      return currentConfig.pin_ph == DEMO_MODE_PIN;
+    case S_LIGHT:
+      // BH1750 uses a two-wire I2C bus (SDA+SCL) — either pin landing on
+      // the sentinel is enough to call this sensor "in demo mode"; save_features
+      // always moves both together, so this only ever differs from "both"
+      // on a hand-crafted/partial save_pins message, and treating that as
+      // demo is the safer read (never tries to drive a bus with one real
+      // and one fake pin).
+      return currentConfig.pin_lux_sda == DEMO_MODE_PIN || currentConfig.pin_lux_scl == DEMO_MODE_PIN;
+    case S_WL:
+      // Same reasoning as S_LIGHT: water level has a signal pin plus a
+      // separate power-gate pin.
+      return currentConfig.pin_wl == DEMO_MODE_PIN || currentConfig.pin_wl_power == DEMO_MODE_PIN;
+    default:
+      return false;
+  }
+}
 struct DemoWalkState
 {
   float value;
@@ -109,12 +149,21 @@ static float demoStep(DemoWalkState &state, float lo, float hi, float maxStep, f
 // defined further down this file.
 static void markOk(SensorID id);
 
-// Populates currentSensors with one simulated reading for every ENABLED
-// sensor and marks each of those OK. A sensor whose sensor_enabled[] flag is
-// off is skipped entirely here, exactly like real-mode readAll() skips it —
-// demo mode simulates hardware, it does not simulate having sensors that
-// were explicitly turned off. A disabled sensor's last_ok_ms/last_err are
-// left untouched so it shows as "no data", not fabricated data.
+// Populates currentSensors with one simulated reading for every sensor that
+// is BOTH enabled AND currently in demo mode (sensorPinIsDemo(), above), and
+// marks each of those OK. A sensor whose sensor_enabled[] flag is off is
+// skipped entirely, exactly like real-mode readAll() skips it — demo mode
+// simulates hardware, it does not simulate having sensors that were
+// explicitly turned off. A skipped sensor's last_ok_ms/last_err are left
+// untouched so it shows as "no data", not fabricated data.
+//
+// In the common case every enabled sensor's pin moves to DEMO_MODE_PIN
+// together (save_features flips them all at once), so this reads the same
+// as "demo mode is on" — but checking per-sensor here means a sensor that
+// was individually pinned back to a real GPIO (a hand-crafted save_pins
+// message) correctly falls through to readAll()'s real-hardware branch for
+// that one sensor instead, rather than being forced into simulation by a
+// stale global flag.
 static void readAllDemo()
 {
   if (!s_demoSeeded)
@@ -123,7 +172,7 @@ static void readAllDemo()
     s_demoSeeded = true;
   }
 
-  if (currentConfig.sensor_enabled[S_DHT])
+  if (currentConfig.sensor_enabled[S_DHT] && sensorPinIsDemo(S_DHT))
   {
     float airTemp = demoStep(s_demoAirTemp, 22.0f, 26.0f, 0.3f, 1.5f);
     float humidity = demoStep(s_demoHumidity, 55.0f, 70.0f, 0.6f, 1.5f);
@@ -133,31 +182,31 @@ static void readAllDemo()
     markOk(S_DHT);
   }
 
-  if (currentConfig.sensor_enabled[S_WTEMP])
+  if (currentConfig.sensor_enabled[S_WTEMP] && sensorPinIsDemo(S_WTEMP))
   {
     currentSensors.water_temp_c = demoStep(s_demoWaterTemp, 20.0f, 24.0f, 0.2f, 1.5f);
     markOk(S_WTEMP);
   }
 
-  if (currentConfig.sensor_enabled[S_TDS])
+  if (currentConfig.sensor_enabled[S_TDS] && sensorPinIsDemo(S_TDS))
   {
     currentSensors.tds_ppm = demoStep(s_demoTds, 800.0f, 1200.0f, 15.0f, 2.0f);
     markOk(S_TDS);
   }
 
-  if (currentConfig.sensor_enabled[S_PH])
+  if (currentConfig.sensor_enabled[S_PH] && sensorPinIsDemo(S_PH))
   {
     currentSensors.ph_val = demoStep(s_demoPh, 6.0f, 6.5f, 0.05f, 2.0f);
     markOk(S_PH);
   }
 
-  if (currentConfig.sensor_enabled[S_LIGHT])
+  if (currentConfig.sensor_enabled[S_LIGHT] && sensorPinIsDemo(S_LIGHT))
   {
     currentSensors.lux = demoStep(s_demoLux, 200.0f, 800.0f, 8.0f, 3.0f);
     markOk(S_LIGHT);
   }
 
-  if (currentConfig.sensor_enabled[S_WL])
+  if (currentConfig.sensor_enabled[S_WL] && sensorPinIsDemo(S_WL))
   {
     currentSensors.wl_percent = demoStep(s_demoWl, 40.0f, 90.0f, 0.5f, 1.0f);
     markOk(S_WL);
@@ -287,72 +336,112 @@ static void validateSensor(SensorID id, const char *name, bool (*readFn)())
 
 static void initAllSensors()
 {
-  // Demo mode (Part 1.6): skip real hardware init/validation entirely. The
-  // dashboard gets simulated "live" readings instead via readAllDemo() below,
-  // which is genuinely useful for testing/demoing the UI with zero sensors
-  // wired up (new users assembling hardware, or anyone just evaluating it).
-  if (currentConfig.demo_mode)
+  // Demo mode: skip real hardware init/validation for every sensor currently
+  // on the DEMO_MODE_PIN sentinel (sensorPinIsDemo()) — checked per-sensor
+  // rather than one global branch, matching readAll()'s per-sensor check
+  // below. In the common case (save_features swaps every sensor's pin
+  // together) this behaves exactly like the old all-or-nothing branch: every
+  // enabled sensor is in demo mode, so no real init/validation runs at all
+  // and the log line below fires for the whole board.
+  bool anyRealSensorEnabled = false;
+  for (int i = 0; i < S_COUNT; i++)
   {
-    webLog(1, LOG_INFO, "Demo mode enabled — simulating sensor data, skipping real hardware init.");
+    if (currentConfig.sensor_enabled[i] && !sensorPinIsDemo((SensorID)i))
+    {
+      anyRealSensorEnabled = true;
+      break;
+    }
+  }
+
+  if (!anyRealSensorEnabled)
+  {
+    webLog(1, LOG_INFO, "Demo mode: every enabled sensor is simulated — skipping real hardware init.");
     readAllDemo();
     return;
   }
 
-  sensor_dht_init();
-  sensor_ds18b20_init();
-  sensor_tds_init();
-  sensor_ph_init();
-  sensor_wl_init();
+  if (!sensorPinIsDemo(S_DHT))
+    sensor_dht_init();
+  if (!sensorPinIsDemo(S_WTEMP))
+    sensor_ds18b20_init();
+  if (!sensorPinIsDemo(S_TDS))
+    sensor_tds_init();
+  if (!sensorPinIsDemo(S_PH))
+    sensor_ph_init();
+  if (!sensorPinIsDemo(S_WL))
+    sensor_wl_init();
 
   // BH1750 is the one sensor with a reliable "is it actually wired up" probe
   // at init time (I2C ACK on the bus) — see bringUpI2CAndProbeLight() above,
-  // which itself no-ops if the Light sensor is disabled. Run that probe
-  // first; if nothing ACKed (and the sensor was enabled), disable it
+  // which itself no-ops if the Light sensor is disabled. Skip the probe
+  // entirely while Light is in demo mode (a real I2C probe against the
+  // sentinel pins would only ever fail and auto-disable a sensor that was
+  // never meant to touch hardware in the first place). Run it first when not
+  // in demo mode; if nothing ACKed (and the sensor was enabled), disable it
   // immediately rather than letting the 5x startup-validation loop below
   // burn through retries on a device that was never there.
-  bool lightDetected = bringUpI2CAndProbeLight() && sensor_lux_init();
-  if (!lightDetected && currentConfig.sensor_enabled[S_LIGHT])
+  if (!sensorPinIsDemo(S_LIGHT))
   {
-    currentConfig.sensor_enabled[S_LIGHT] = false;
-    webLog(1, LOG_WARN, "BH1750 not found at boot — automatically disabled for this session. Re-enable from the Web UI once wiring is fixed and the device is rebooted.");
+    bool lightDetected = bringUpI2CAndProbeLight() && sensor_lux_init();
+    if (!lightDetected && currentConfig.sensor_enabled[S_LIGHT])
+    {
+      currentConfig.sensor_enabled[S_LIGHT] = false;
+      webLog(1, LOG_WARN, "BH1750 not found at boot — automatically disabled for this session. Re-enable from the Web UI once wiring is fixed and the device is rebooted.");
+    }
   }
 
   // 5x startup validation for every sensor that survived init with its
-  // feature flag still enabled. Each capture-less lambda adapts the
-  // sensor's real read signature to the bool()-returning shape validateSensor()
-  // expects, discarding the value itself (only pass/fail matters here —
-  // the steady-state readAll() below is what populates currentSensors).
-  validateSensor(S_DHT, "DHT22 (Air Temp/Humidity)", []() -> bool
-                 { float t, h; return sensor_dht_read(t, h); });
+  // feature flag still enabled — skipped per-sensor for anything still in
+  // demo mode, same reasoning as the init calls above. Each capture-less
+  // lambda adapts the sensor's real read signature to the bool()-returning
+  // shape validateSensor() expects, discarding the value itself (only
+  // pass/fail matters here — the steady-state readAll() below is what
+  // populates currentSensors).
+  if (!sensorPinIsDemo(S_DHT))
+    validateSensor(S_DHT, "DHT22 (Air Temp/Humidity)", []() -> bool
+                   { float t, h; return sensor_dht_read(t, h); });
 
-  validateSensor(S_WTEMP, "DS18B20 (Water Temp)", []() -> bool
-                 { float t; return sensor_ds18b20_read(t); });
+  if (!sensorPinIsDemo(S_WTEMP))
+    validateSensor(S_WTEMP, "DS18B20 (Water Temp)", []() -> bool
+                   { float t; return sensor_ds18b20_read(t); });
 
-  validateSensor(S_TDS, "TDS", []() -> bool
-                 { float v; return sensor_tds_read(currentSensors.water_temp_c, currentConfig.tds_k, v); });
+  if (!sensorPinIsDemo(S_TDS))
+    validateSensor(S_TDS, "TDS", []() -> bool
+                   { float v; return sensor_tds_read(currentSensors.water_temp_c, currentConfig.tds_k, v); });
 
-  validateSensor(S_PH, "pH", []() -> bool
-                 { float v; return sensor_ph_read(currentConfig.ph_offset, currentConfig.ph_slope, v); });
+  if (!sensorPinIsDemo(S_PH))
+    validateSensor(S_PH, "pH", []() -> bool
+                   { float v; return sensor_ph_read(currentConfig.ph_offset, currentConfig.ph_slope, v); });
 
-  validateSensor(S_LIGHT, "BH1750 (Light)", []() -> bool
-                 { float v; return sensor_lux_read(v); });
+  if (!sensorPinIsDemo(S_LIGHT))
+    validateSensor(S_LIGHT, "BH1750 (Light)", []() -> bool
+                   { float v; return sensor_lux_read(v); });
 
-  validateSensor(S_WL, "Water Level", []() -> bool
-                 { float v; return sensor_wl_read(v); });
+  if (!sensorPinIsDemo(S_WL))
+    validateSensor(S_WL, "Water Level", []() -> bool
+                   { float v; return sensor_wl_read(v); });
+
+  // Any sensor that WAS in demo mode still needs its first simulated
+  // reading populated now, same as the all-demo early-return path above did
+  // for the whole board — otherwise a mixed real/demo boot would leave the
+  // demo sensors' currentSensors fields at their zeroed startup value until
+  // the next full sensorTaskLoop() cycle.
+  readAllDemo();
 }
 
 static void readAll()
 {
-  // Demo mode (Part 1.6): populate currentSensors with simulated values
-  // instead of calling the real sensor_*_read() functions.
-  if (currentConfig.demo_mode)
-  {
-    readAllDemo();
-    return;
-  }
+  // Demo mode: any sensor currently on the DEMO_MODE_PIN sentinel gets a
+  // simulated reading instead of a real sensor_*_read() call — checked
+  // per-sensor (sensorPinIsDemo()) rather than one global branch, so this
+  // stays correct even if a sensor's pin was hand-set independently of the
+  // usual save_features all-at-once swap. In the common case every enabled
+  // sensor is in the same state, so this reads exactly like the old
+  // all-or-nothing branch did.
+  readAllDemo();
 
   // DHT (temp + humidity)
-  if (currentConfig.sensor_enabled[S_DHT])
+  if (currentConfig.sensor_enabled[S_DHT] && !sensorPinIsDemo(S_DHT))
   {
     float t = NAN, h = NAN;
     if (sensor_dht_read(t, h))
@@ -369,7 +458,7 @@ static void readAll()
   }
 
   // DS18B20 (water temp)
-  if (currentConfig.sensor_enabled[S_WTEMP])
+  if (currentConfig.sensor_enabled[S_WTEMP] && !sensorPinIsDemo(S_WTEMP))
   {
     float wt = NAN;
     if (sensor_ds18b20_read(wt))
@@ -384,7 +473,7 @@ static void readAll()
   }
 
   // TDS (needs water temp for compensation)
-  if (currentConfig.sensor_enabled[S_TDS])
+  if (currentConfig.sensor_enabled[S_TDS] && !sensorPinIsDemo(S_TDS))
   {
     float ppm = NAN;
     if (sensor_tds_read(currentSensors.water_temp_c, currentConfig.tds_k, ppm))
@@ -399,7 +488,7 @@ static void readAll()
   }
 
   // pH
-  if (currentConfig.sensor_enabled[S_PH])
+  if (currentConfig.sensor_enabled[S_PH] && !sensorPinIsDemo(S_PH))
   {
     float ph = NAN;
     if (sensor_ph_read(currentConfig.ph_offset, currentConfig.ph_slope, ph))
@@ -414,7 +503,7 @@ static void readAll()
   }
 
   // Lux
-  if (currentConfig.sensor_enabled[S_LIGHT])
+  if (currentConfig.sensor_enabled[S_LIGHT] && !sensorPinIsDemo(S_LIGHT))
   {
     float lx = NAN;
     if (sensor_lux_read(lx))
@@ -429,7 +518,7 @@ static void readAll()
   }
 
   // Water level
-  if (currentConfig.sensor_enabled[S_WL])
+  if (currentConfig.sensor_enabled[S_WL] && !sensorPinIsDemo(S_WL))
   {
     float pct = NAN;
     if (sensor_wl_read(pct))
