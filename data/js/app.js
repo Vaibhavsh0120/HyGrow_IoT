@@ -39,6 +39,30 @@ let currentTabId = 0;
 let isTerminalPaused = false;
 let globalConfigCache = {}; // Cache config data for CSV export
 
+// ------------------------------------------------------------------
+// Settings staging state (Part 5.9). Every Settings card whose Save
+// button now buffers changes instead of sending on `change` tracks its
+// own "last confirmed device value" and "has unsaved edits" flag here,
+// module-scope so updateConfigForm() (triggered by any incoming "config"
+// frame, not just this tab's own saves) can skip overwriting a field the
+// user hasn't saved yet — see the guards in updateConfigForm() below.
+// Each card is independent, matching how Save Pinout/Save
+// Credentials/Save Wi-Fi were already independent buttons before this.
+// ------------------------------------------------------------------
+let lastConfirmedDemo = false;
+let featuresDirty = false;
+let lastConfirmedFbEnabled = false;
+let fbEnabledDirty = false;
+// Keyed by short sensor id (tds/dht/ph/wt/wl/light), matching S_EN_INDEX/
+// TAB_TO_SENSOR_ID elsewhere in this file.
+let lastConfirmedSensorEnabled = {};
+// Keyed by pin field element id (cfg-pin-tds, cfg-pin-wlp, etc), the
+// device's real current value for each pin field — the pin-field
+// equivalent of lastConfirmedSensorEnabled above. Populated in
+// updateConfigForm() from every config frame's msg.pins[].
+let lastConfirmedPins = {};
+let pinoutDirty = false; // true if ANY pin field OR ANY sensor-enable toggle differs from last-confirmed
+
 // Chart Buffers (Keep last 20 readings for the UI graphs and CSV Export)
 const MAX_POINTS = 20;
 const sensorBuffers = {
@@ -158,6 +182,24 @@ function syncPowerToggleLabel(toggleId, labelId) {
     label.classList.toggle('text-on-surface-variant', !toggle.checked);
 }
 
+// Same ON/OFF text-sync job as syncPowerToggleLabel() above, kept as its
+// own function (rather than reused directly) since Demo Mode is styled
+// with text-primary rather than text-secondary while active — unlike a
+// sensor's power toggle, "on" here means "you're looking at simulated
+// data, not the real sensor", so it deliberately reads as a distinct
+// accent from the healthy sensor-ON state instead of an identical green.
+// (No dedicated warning/amber token exists in this stylesheet — see
+// style.css's .text-error/.text-primary/.text-secondary — so this reuses
+// an existing one rather than adding a new color for a single label.)
+function syncDemoToggleLabel(toggleId, labelId) {
+    const toggle = document.getElementById(toggleId);
+    const label = document.getElementById(labelId);
+    if (!toggle || !label) return;
+    label.innerText = toggle.checked ? 'ON' : 'OFF';
+    label.classList.toggle('text-primary', toggle.checked);
+    label.classList.toggle('text-on-surface-variant', !toggle.checked);
+}
+
 function switchTab(index, element) {
     currentTabId = index;
     const navTabsContainer = document.getElementById('nav-tabs');
@@ -202,6 +244,26 @@ function switchTab(index, element) {
         document.getElementById('dual-sensor-pin').innerText = (pin === null || pin < 0) ? '--' : pin;
         document.getElementById('dual-sensor-toggle').checked = resolveSensorOn(index);
         syncPowerToggleLabel('dual-sensor-toggle', 'dual-sensor-toggle-state');
+        // Demo Mode toggle: globalConfigCache.demo is kept fresh by every
+        // config frame (see updateConfigForm()) independent of which page
+        // is open, so this is safe to read here even before this tab's
+        // first visit.
+        document.getElementById('dual-sensor-demo-toggle').checked = !!globalConfigCache.demo;
+        syncDemoToggleLabel('dual-sensor-demo-toggle', 'dual-sensor-demo-toggle-state');
+
+        // Same immediate-from-buffer treatment as the single-sensor branch
+        // above — sensorBuffers[2] isn't cleared on tab switch, so render
+        // the last-known temp/humidity now instead of leaving whatever
+        // text was last written (stale, from before this switch) on
+        // screen until the next "data" frame arrives.
+        const lastTemp = sensorBuffers[2].temp[sensorBuffers[2].temp.length - 1];
+        const lastHum = sensorBuffers[2].hum[sensorBuffers[2].hum.length - 1];
+        document.getElementById('sensor-dual-temp').innerHTML = lastTemp !== undefined
+            ? `${lastTemp.toFixed(1)} <span class="text-headline-md text-white/50 ml-1">°C</span>`
+            : `-- <span class="text-headline-md text-white/50 ml-1">°C</span>`;
+        document.getElementById('sensor-dual-hum').innerHTML = lastHum !== undefined
+            ? `${lastHum.toFixed(0)} <span class="text-headline-md text-white/50 ml-1">%</span>`
+            : `-- <span class="text-headline-md text-white/50 ml-1">%</span>`;
 
         setTimeout(resizeCanvas, 50);
     } else {
@@ -223,6 +285,10 @@ function switchTab(index, element) {
         const sensorOn = resolveSensorOn(index);
         document.getElementById('sensor-toggle').checked = sensorOn;
         syncPowerToggleLabel('sensor-toggle', 'sensor-toggle-state');
+        // Demo Mode toggle — same globalConfigCache.demo source as the
+        // dual-sensor page above.
+        document.getElementById('sensor-demo-toggle').checked = !!globalConfigCache.demo;
+        syncDemoToggleLabel('sensor-demo-toggle', 'sensor-demo-toggle-state');
 
         // tabsData.ok[index] (from the latest "data" frame's s_ok[], see
         // updateTelemetry()) distinguishes "disabled" from "enabled but not
@@ -248,7 +314,18 @@ function switchTab(index, element) {
         sensorCanvasContainer.appendChild(currentSensorCanvas);
         currentSensorCtx = currentSensorCanvas.getContext('2d');
 
-        document.getElementById('sensor-current-val').innerHTML = `-- <span class="text-headline-md text-white/50 ml-1">${tabsData.units[index]}</span>`;
+        // Render the last-known value immediately from the existing
+        // sensorBuffers[] buffer instead of blanking to "--" and waiting
+        // for the next "data" WebSocket frame (up to interval_ws_ms, 1s by
+        // default) to arrive — sensorBuffers[] isn't cleared on tab switch,
+        // so a value from before this switch is already sitting there.
+        // resizeCanvas() below (its own setTimeout) redraws the chart line
+        // from the same buffer once the fresh canvas has real dimensions,
+        // so only the numeric readout needs handling here.
+        const bufferedVal = sensorBuffers[index] ? sensorBuffers[index][sensorBuffers[index].length - 1] : undefined;
+        document.getElementById('sensor-current-val').innerHTML = bufferedVal !== undefined
+            ? `${bufferedVal.toFixed(1)} <span class="text-headline-md text-white/50 ml-1">${tabsData.units[index]}</span>`
+            : `-- <span class="text-headline-md text-white/50 ml-1">${tabsData.units[index]}</span>`;
         setTimeout(resizeCanvas, 50);
     }
 }
@@ -961,13 +1038,61 @@ function validateAllPinFields() {
 
     const pinValidationBanner = document.getElementById('pin-validation-error');
     const pinValidationText = document.getElementById('pin-validation-error-text');
-    const btnSavePinsEl = document.getElementById('btn-save-pins');
 
     if (pinValidationBanner) pinValidationBanner.classList.toggle('hidden', !problem);
     if (pinValidationText && problem) pinValidationText.innerText = problem;
-    if (btnSavePinsEl) btnSavePinsEl.disabled = !!problem;
+
+    // Save Pinout Config's disabled state has two independent inputs now
+    // (Part 5.9b): a pin-validation problem always disables it regardless of
+    // dirty state, but a *clean* pass no longer unconditionally re-enables
+    // it — that's recomputePinoutDirty()'s job, since the button should stay
+    // disabled when there's simply nothing unsaved to send. Set the error
+    // half here; recomputePinoutDirty() (called right after, wherever this
+    // function is invoked) reconciles the rest.
+    lastPinValidationOk = problem === "";
+    if (typeof recomputePinoutDirty === 'function') recomputePinoutDirty();
 
     return problem === "";
+}
+let lastPinValidationOk = true;
+
+// ------------------------------------------------------------------
+// Combined dirty-tracking for the Settings > Sensor Implementation Config
+// card (Part 5.9b) — covers BOTH the 8 pin fields and the 6 per-sensor
+// Enabled toggles living in the same card, saved/discarded together via
+// btn-save-pins/btn-discard-pins. Mirrors the simpler single-field pattern
+// used by Feature Flags (setFeaturesDirty()) and Cloud Provisioning
+// further down, just checking more inputs at once. Module-scope (not just
+// inside DOMContentLoaded) so updateConfigForm() can call it directly
+// after a fresh config frame updates lastConfirmedSensorEnabled/pin values,
+// same reasoning as validateAllPinFields() above.
+// ------------------------------------------------------------------
+function recomputePinoutDirty() {
+    const btnSavePins = document.getElementById('btn-save-pins');
+    const btnDiscardPins = document.getElementById('btn-discard-pins');
+    if (!btnSavePins) return; // Settings page not in the DOM yet
+
+    let dirty = false;
+    Object.keys(PIN_FIELD_LABELS).forEach((id) => {
+        const el = document.getElementById(id);
+        if (el && lastConfirmedPins[id] !== undefined && parseInt(el.value, 10) !== lastConfirmedPins[id]) {
+            dirty = true;
+        }
+    });
+    Object.keys(S_EN_INDEX).forEach((sensorId) => {
+        const el = document.getElementById('cfg-sensor-enabled-' + sensorId);
+        if (el && lastConfirmedSensorEnabled[sensorId] !== undefined && el.checked !== lastConfirmedSensorEnabled[sensorId]) {
+            dirty = true;
+        }
+    });
+
+    pinoutDirty = dirty;
+    // Demo Mode lock (see updateConfigForm()) always wins over dirty state —
+    // don't re-enable Save just because something's unsaved if the whole
+    // card is locked. A pin-validation problem also always wins.
+    const demoLocked = !!(document.getElementById('pinout-demo-lock') && !document.getElementById('pinout-demo-lock').classList.contains('hidden'));
+    btnSavePins.disabled = demoLocked || !lastPinValidationOk || !dirty;
+    if (btnDiscardPins) btnDiscardPins.classList.toggle('hidden', !dirty);
 }
 
 // Client-side form validation (Part 2.3 / Forms) — stop users from saving
@@ -1055,15 +1180,32 @@ function updateConfigForm(msg) {
     // wizard's math and the CSV export, so nothing here needs to write them
     // into the DOM.
 
-    // Feature Flags — fb_en never requires a reboot, so it just reflects the
-    // device's live state every time a config frame arrives. demo_mode DOES
-    // require a reboot to actually apply (it swaps every sensor's pin — see
-    // save_features, command_handlers.cpp) but the checkbox itself still just
-    // mirrors the device's live saved value here; the reboot prompt is
-    // handled once, right after a successful save, by sendFeatureFlags()
-    // below — not on every routine config broadcast.
-    if(document.getElementById('cfg-demo-mode')) document.getElementById('cfg-demo-mode').checked = !!msg.demo;
-    if(document.getElementById('cfg-fb-enabled')) document.getElementById('cfg-fb-enabled').checked = !!msg.fb_en;
+    // Feature Flags — fb_en and demo_mode are both staged now (Part 5.9,
+    // see the Settings > Feature Flags / Cloud Provisioning wiring further
+    // down): lastConfirmedDemo/lastConfirmedFbEnabled always track the
+    // device's real value from every config frame, but the visible
+    // checkbox is only overwritten when the card has no unsaved edit in
+    // progress — otherwise an incoming config frame (e.g. triggered by
+    // this same user's OWN save in a different card) would silently wipe
+    // out a change they haven't hit Save on yet, which is exactly the kind
+    // of surprise staging is meant to prevent. The sensor-page Demo Mode
+    // toggles are NOT staged (see handleSensorPageDemoToggle() below) so
+    // they always mirror msg.demo directly, same as before.
+    lastConfirmedDemo = !!msg.demo;
+    lastConfirmedFbEnabled = !!msg.fb_en;
+    if (!featuresDirty && document.getElementById('cfg-demo-mode')) document.getElementById('cfg-demo-mode').checked = lastConfirmedDemo;
+    if (!fbEnabledDirty && document.getElementById('cfg-fb-enabled')) document.getElementById('cfg-fb-enabled').checked = lastConfirmedFbEnabled;
+
+    // Demo Mode toggle duplicated on the per-sensor and dual-sensor pages
+    // (see handleSensorPageDemoToggle() below) — same live value as
+    // cfg-demo-mode above, kept in sync here too so a page that isn't
+    // currently visible doesn't show stale state if the user switches to
+    // it later without another config frame arriving first. Not staged —
+    // always mirrors the device's live value directly.
+    if(document.getElementById('sensor-demo-toggle')) document.getElementById('sensor-demo-toggle').checked = !!msg.demo;
+    if(document.getElementById('dual-sensor-demo-toggle')) document.getElementById('dual-sensor-demo-toggle').checked = !!msg.demo;
+    syncDemoToggleLabel('sensor-demo-toggle', 'sensor-demo-toggle-state');
+    syncDemoToggleLabel('dual-sensor-demo-toggle', 'dual-sensor-demo-toggle-state');
 
     // Demo Mode badge on the Dashboard — only shown while demo mode is on, so
     // simulated readings are never mistaken for real sensor data.
@@ -1090,6 +1232,14 @@ function updateConfigForm(msg) {
     document.querySelectorAll('[data-reset-sensor]').forEach((btn) => { btn.disabled = !!msg.demo; });
     const btnSavePinsLock = document.getElementById('btn-save-pins');
     if (btnSavePinsLock) btnSavePinsLock.disabled = !!msg.demo;
+    // Per-sensor enable toggles ride along with the same demo-mode lock as
+    // the pin fields — while Demo Mode is on, sensor_enabled[] is still a
+    // real flag (unlike pins, it isn't pinned to a sentinel), but every
+    // sensor is force-simulated regardless of this flag, so editing it here
+    // would look like it did something and silently not until Demo Mode is
+    // turned back off. Simplest to just lock it alongside the pins it lives
+    // next to in the same card.
+    document.querySelectorAll('[data-sensor-enable]').forEach((el) => { el.disabled = !!msg.demo; });
 
     // Timing intervals (Part 5.8)
     if(document.getElementById('cfg-int-read') && msg.int_read !== undefined) document.getElementById('cfg-int-read').value = msg.int_read;
@@ -1102,10 +1252,21 @@ function updateConfigForm(msg) {
     // be enabled:false (pH ships off by default; any sensor can auto-disable
     // after failed startup validation), and the toggle should show that.
     if (msg.s_en && msg.s_en.length >= 6) {
+        // lastConfirmedSensorEnabled always tracks the device's real value
+        // from every config frame, same as lastConfirmedDemo/lastConfirmedFbEnabled
+        // above. The visible Settings-card checkbox is only overwritten when
+        // the pinout card has no unsaved edit in progress (Part 5.9b) — see
+        // recomputePinoutDirty()/btn-save-pins below. tabsData.enabled[]
+        // (used by the per-sensor detail page and calibration gating) always
+        // mirrors the device's real value directly regardless of staging,
+        // same as before.
         Object.keys(S_EN_INDEX).forEach((sensorId) => {
+            const real = !!msg.s_en[S_EN_INDEX[sensorId]];
+            lastConfirmedSensorEnabled[sensorId] = real;
             const el = document.getElementById('cfg-sensor-enabled-' + sensorId);
-            if (el) el.checked = !!msg.s_en[S_EN_INDEX[sensorId]];
+            if (el && !pinoutDirty) el.checked = real;
         });
+        if (typeof recomputePinoutDirty === 'function') recomputePinoutDirty();
 
         // Same data, indexed by tab id instead of short sensor-id string, for
         // the per-sensor detail page toggle/error-banner (see resolveSensorOn()).
@@ -1131,23 +1292,35 @@ function updateConfigForm(msg) {
         tabsData.gpios[5] = msg.pins[4]; // W_Level
         tabsData.gpios[4] = msg.pins[5]; // Light SDA
 
-        if(document.getElementById('cfg-pin-tds')) document.getElementById('cfg-pin-tds').value = msg.pins[0];
-        if(document.getElementById('cfg-pin-dht')) document.getElementById('cfg-pin-dht').value = msg.pins[1];
-        if(document.getElementById('cfg-pin-ph'))  document.getElementById('cfg-pin-ph').value = msg.pins[2];
-        if(document.getElementById('cfg-pin-wt'))  document.getElementById('cfg-pin-wt').value = msg.pins[3];
-        if(document.getElementById('cfg-pin-wl'))  document.getElementById('cfg-pin-wl').value = msg.pins[4];
-        if(document.getElementById('cfg-pin-sda')) document.getElementById('cfg-pin-sda').value = msg.pins[5];
-        if(document.getElementById('cfg-pin-scl')) document.getElementById('cfg-pin-scl').value = msg.pins[6];
-
+        // lastConfirmedPins always tracks the device's real values from every
+        // config frame (Part 5.9b), same pattern as lastConfirmedSensorEnabled
+        // above. The visible <input> fields are only overwritten while the
+        // pinout card has no unsaved edit in progress — otherwise a config
+        // frame arriving mid-edit (e.g. triggered by another card's own save)
+        // would silently wipe out pin values the user hasn't saved yet.
+        lastConfirmedPins['cfg-pin-tds'] = msg.pins[0];
+        lastConfirmedPins['cfg-pin-dht'] = msg.pins[1];
+        lastConfirmedPins['cfg-pin-ph'] = msg.pins[2];
+        lastConfirmedPins['cfg-pin-wt'] = msg.pins[3];
+        lastConfirmedPins['cfg-pin-wl'] = msg.pins[4];
+        lastConfirmedPins['cfg-pin-sda'] = msg.pins[5];
+        lastConfirmedPins['cfg-pin-scl'] = msg.pins[6];
         // 8th element (added alongside pin_wl_power support) — older firmware
         // that hasn't been reflashed yet just won't send it, so guard the length.
-        if(msg.pins.length >= 8 && document.getElementById('cfg-pin-wlp')) {
-            document.getElementById('cfg-pin-wlp').value = msg.pins[7];
+        if (msg.pins.length >= 8) lastConfirmedPins['cfg-pin-wlp'] = msg.pins[7];
+
+        if (!pinoutDirty) {
+            Object.keys(lastConfirmedPins).forEach((id) => {
+                const el = document.getElementById(id);
+                if (el) el.value = lastConfirmedPins[id];
+            });
         }
 
         // Re-run pin validation now that fresh values landed in the fields —
         // keeps the Save Pins button's disabled state in sync with reality
         // instead of whatever it was before this config frame arrived.
+        // validateAllPinFields() itself calls recomputePinoutDirty() at the
+        // end, so that's covered here too.
         if (typeof validateAllPinFields === 'function') validateAllPinFields();
     }
 }
@@ -1410,7 +1583,43 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ------------------------------------------------------------------
+    // Settings > Cloud Provisioning card — Firebase Upload toggle, staged.
+    // Folded into the existing Save Credentials button rather than getting
+    // its own Save button: it's the same "everything about Firebase lives
+    // in this one card" grouping the card's original comment already
+    // established, just extended to include staging. On click: if the
+    // toggle is dirty, send save_features first (fb_en only — passing the
+    // live cfg-demo-mode checkbox value keeps Demo Mode from being pulled
+    // in by a save that's only about Firebase), then always send
+    // save_firebase for the credential fields exactly as before. Both
+    // requests share runSaveButton's disabled/"Saving…" UI on btnSaveFb;
+    // if the save_features leg fails, save_firebase is skipped entirely
+    // rather than saving credentials while silently leaving the toggle
+    // change unsent.
+    // ------------------------------------------------------------------
     const btnSaveFb = document.getElementById('btn-save-firebase');
+    const btnDiscardFbEnabled = document.getElementById('btn-discard-fb-enabled');
+    const cfgFbEnabled = document.getElementById('cfg-fb-enabled');
+
+    const setFbEnabledDirty = (dirty) => {
+        fbEnabledDirty = dirty;
+        if (btnDiscardFbEnabled) btnDiscardFbEnabled.classList.toggle('hidden', !dirty);
+    };
+
+    if (cfgFbEnabled) {
+        cfgFbEnabled.addEventListener('change', () => {
+            setFbEnabledDirty(cfgFbEnabled.checked !== lastConfirmedFbEnabled);
+        });
+    }
+
+    if (btnDiscardFbEnabled) {
+        btnDiscardFbEnabled.addEventListener('click', () => {
+            if (cfgFbEnabled) cfgFbEnabled.checked = lastConfirmedFbEnabled;
+            setFbEnabledDirty(false);
+        });
+    }
+
     if(btnSaveFb) {
         btnSaveFb.addEventListener('click', () => {
             if (!validateFirebaseForm()) return;
@@ -1422,7 +1631,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 pass: document.getElementById('cfg-fb-pass').value,
                 col: document.getElementById('cfg-fb-col').value
             };
-            runSaveButton(btnSaveFb, payload, "Credentials Saved", "Save Credentials");
+            const wasDirty = fbEnabledDirty;
+            const sendCredentials = () => runSaveButton(btnSaveFb, payload, "Credentials Saved", "Save Credentials");
+            if (wasDirty && cfgFbEnabled) {
+                const original = btnSaveFb.innerText;
+                btnSaveFb.disabled = true;
+                btnSaveFb.innerText = 'Saving…';
+                sendFeatureFlags(cfgFbEnabled, cfgDemoMode ? cfgDemoMode.checked : undefined).then(() => {
+                    lastConfirmedFbEnabled = cfgFbEnabled.checked;
+                    setFbEnabledDirty(false);
+                    btnSaveFb.disabled = false;
+                    btnSaveFb.innerText = original;
+                    sendCredentials();
+                }).catch((err) => {
+                    btnSaveFb.disabled = false;
+                    btnSaveFb.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
+                    setTimeout(() => { btnSaveFb.innerText = original; }, 3000);
+                });
+            } else {
+                sendCredentials();
+            }
         });
     }
 
@@ -1454,7 +1682,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Client-side pin validation (Part 4 / 5.5) — validateAllPinFields()
     // itself is defined at module scope (near updateConfigForm) so it can
     // also be called after a fresh "config" frame lands. Just wire up the
-    // live listeners and initial pass here.
+    // live listeners and initial pass here. validateAllPinFields() calls
+    // recomputePinoutDirty() internally (Part 5.9b), so a plain pin edit
+    // updates both the error banner and the Save/Discard buttons together.
     // ------------------------------------------------------------------
     Object.keys(PIN_FIELD_LABELS).forEach((id) => {
         const el = document.getElementById(id);
@@ -1463,16 +1693,43 @@ document.addEventListener('DOMContentLoaded', () => {
         el.addEventListener('change', validateAllPinFields);
     });
     validateAllPinFields(); // initial pass in case fields already have values
+    recomputePinoutDirty(); // initial pass — also covers the sensor-enable checkboxes
 
+    // ------------------------------------------------------------------
+    // Save Pinout Config / Discard Changes (Part 5.9b) — staged like Feature
+    // Flags and Cloud Provisioning above, but this card buffers TWO kinds of
+    // field together: the 8 pin number inputs (unchanged payload shape,
+    // still save_pins) and the 6 per-sensor Enabled toggles (save_sensor_enabled,
+    // one command per changed sensor — the server only accepts one sensor id
+    // at a time, see command_handlers.cpp). Only sensors that actually
+    // differ from lastConfirmedSensorEnabled are sent, not all 6
+    // unconditionally, since an unrelated pin edit shouldn't also churn
+    // every sensor's enabled flag.
+    //
+    // sendCommand() rejects a second in-flight command with the SAME
+    // `command` name (see the note above sendCommand() itself) — so the
+    // save_sensor_enabled calls must go out one at a time via a promise
+    // chain, not Promise.all, or every one after the first would reject
+    // immediately. save_pins goes last, after every dirty toggle has been
+    // confirmed, so a failure partway through leaves the pins field
+    // untouched on the device rather than half-applying a mixed state.
+    // ------------------------------------------------------------------
     const btnSavePins = document.getElementById('btn-save-pins');
-    if(btnSavePins) {
+    const btnDiscardPins = document.getElementById('btn-discard-pins');
+
+    if (btnSavePins) {
         btnSavePins.addEventListener('click', () => {
             // Re-check right before send — don't rely solely on the live
             // listener having already run (e.g. a value changed via script).
             if (!validateAllPinFields()) return;
 
+            const dirtySensorIds = Object.keys(S_EN_INDEX).filter((sensorId) => {
+                const el = document.getElementById('cfg-sensor-enabled-' + sensorId);
+                return el && lastConfirmedSensorEnabled[sensorId] !== undefined && el.checked !== lastConfirmedSensorEnabled[sensorId];
+            });
+
             const wlpEl = document.getElementById('cfg-pin-wlp');
-            const payload = {
+            const pinsPayload = {
                 command: "save_pins",
                 pin_tds: parseInt(document.getElementById('cfg-pin-tds').value),
                 pin_dht: parseInt(document.getElementById('cfg-pin-dht').value),
@@ -1482,19 +1739,65 @@ document.addEventListener('DOMContentLoaded', () => {
                 pin_sda: parseInt(document.getElementById('cfg-pin-sda').value),
                 pin_scl: parseInt(document.getElementById('cfg-pin-scl').value)
             };
-            if (wlpEl) payload.pin_wlp = parseInt(wlpEl.value);
+            if (wlpEl) pinsPayload.pin_wlp = parseInt(wlpEl.value);
+
             const original = btnSavePins.innerText;
             btnSavePins.disabled = true;
+            if (btnDiscardPins) btnDiscardPins.disabled = true;
             btnSavePins.innerText = 'Saving…';
-            sendCommand(payload).then(() => {
-                btnSavePins.disabled = false;
-                btnSavePins.innerText = original;
-                confirmReboot("Pinout saved. The ESP32 must reboot to reassign hardware interrupts safely. Reboot now?", sendReboot);
-            }).catch((err) => {
-                btnSavePins.disabled = false;
-                btnSavePins.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
-                setTimeout(() => { btnSavePins.innerText = original; }, 3000);
+
+            // Chain the dirty sensor-enable saves one after another, then
+            // save_pins last. reduce() over a resolved-Promise seed is the
+            // standard way to turn an array into a sequential async chain.
+            dirtySensorIds.reduce((chain, sensorId) => {
+                return chain.then(() => sendCommand({
+                    command: "save_sensor_enabled",
+                    sensor: sensorId,
+                    enabled: document.getElementById('cfg-sensor-enabled-' + sensorId).checked
+                }));
+            }, Promise.resolve())
+                .then(() => sendCommand(pinsPayload))
+                .then(() => {
+                    // Both kinds of field are now confirmed — pull the
+                    // just-saved checkbox states into lastConfirmedSensorEnabled
+                    // directly rather than waiting for the next config frame,
+                    // same as how Feature Flags' Save handler above updates
+                    // lastConfirmedDemo immediately after its own send.
+                    dirtySensorIds.forEach((sensorId) => {
+                        lastConfirmedSensorEnabled[sensorId] = document.getElementById('cfg-sensor-enabled-' + sensorId).checked;
+                    });
+                    Object.keys(PIN_FIELD_LABELS).forEach((id) => {
+                        const el = document.getElementById(id);
+                        if (el) lastConfirmedPins[id] = parseInt(el.value, 10);
+                    });
+                    if (btnDiscardPins) btnDiscardPins.disabled = false;
+                    btnSavePins.innerText = original;
+                    recomputePinoutDirty();
+                    confirmReboot("Pinout saved. The ESP32 must reboot to reassign hardware interrupts safely. Reboot now?", sendReboot);
+                })
+                .catch((err) => {
+                    if (btnDiscardPins) btnDiscardPins.disabled = false;
+                    btnSavePins.disabled = false;
+                    btnSavePins.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
+                    setTimeout(() => {
+                        btnSavePins.innerText = original;
+                        recomputePinoutDirty();
+                    }, 3000);
+                });
+        });
+    }
+
+    if (btnDiscardPins) {
+        btnDiscardPins.addEventListener('click', () => {
+            Object.keys(PIN_FIELD_LABELS).forEach((id) => {
+                const el = document.getElementById(id);
+                if (el && lastConfirmedPins[id] !== undefined) el.value = lastConfirmedPins[id];
             });
+            Object.keys(S_EN_INDEX).forEach((sensorId) => {
+                const el = document.getElementById('cfg-sensor-enabled-' + sensorId);
+                if (el && lastConfirmedSensorEnabled[sensorId] !== undefined) el.checked = lastConfirmedSensorEnabled[sensorId];
+            });
+            validateAllPinFields(); // clears any error highlighting from the discarded values
         });
     }
 
@@ -1967,28 +2270,38 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ------------------------------------------------------------------
-    // Feature Flags — Demo Mode (Settings > Feature Flags card) and
-    // Firebase Upload (Settings > Cloud Provisioning card) both persist via
-    // the same save_features command, but they live in two DIFFERENT cards
-    // and are wired independently so each one saves the moment it's
-    // toggled — a switch that visually flips but silently isn't saved
-    // until some other button (in another card) is clicked looks broken:
-    // the next "config" frame from the device (e.g. right after Save
-    // Credentials or Test Connection triggers a broadcast) reflects the
-    // real still-unsaved device state and snaps the checkbox back, which
-    // reads as "the toggle turns itself off". Sending on `change` for both
-    // switches removes that gap entirely. Always send BOTH current checkbox
-    // values together (not just the one that changed) since save_features
-    // treats an omitted field as "leave unchanged" but these two live
-    // fields are the actual source of truth for what's currently checked.
+    // Feature Flags — Demo Mode (Settings > Feature Flags card) persists via
+    // save_features. Firebase Upload (Settings > Cloud Provisioning card)
+    // shares the same save_features command but is staged and sent
+    // separately below, alongside Save Credentials — see the
+    // btn-save-firebase handler further down.
+    //
+    // Staged (Part 5.9): unlike the Demo Mode toggle duplicated on the
+    // sensor/dual-sensor pages (which still applies immediately — see
+    // handleSensorPageDemoToggle() below, unchanged from before), the
+    // Settings > Feature Flags copy of this toggle only updates local
+    // buffered state on change now. Nothing is sent to the device until
+    // Save is clicked. This closes the gap where a live-applying toggle
+    // could show "Not saved — Connection lost..." after a disconnect even
+    // though the device had already applied and persisted the change
+    // moments earlier, before the ack made it back.
+    //
+    // sendFeatureFlags() itself is unchanged — still the single function
+    // that actually sends save_features, still takes an explicit demo
+    // value so the sensor-page toggles (which have no cfg-fb-enabled field
+    // in the DOM at all) can supply it directly. fb_en always falls back
+    // to globalConfigCache.fb_en when the Settings checkbox isn't present
+    // on the current page.
     // ------------------------------------------------------------------
-    const sendFeatureFlags = (sourceEl) => {
+    const sendFeatureFlags = (sourceEl, demoOverride) => {
+        const cfgFbEnabledEl = document.getElementById('cfg-fb-enabled');
+        const demo = demoOverride !== undefined ? !!demoOverride : !!document.getElementById('cfg-demo-mode')?.checked;
         const payload = {
             command: "save_features",
-            demo: !!document.getElementById('cfg-demo-mode')?.checked,
-            fb_en: !!document.getElementById('cfg-fb-enabled')?.checked
+            demo,
+            fb_en: cfgFbEnabledEl ? !!cfgFbEnabledEl.checked : !!globalConfigCache.fb_en
         };
-        sendCommand(payload).then((msg) => {
+        return sendCommand(payload).then((msg) => {
             // reboot_required only ever comes back true when demo_mode
             // itself just changed (see save_features, command_handlers.cpp)
             // — Firebase-only changes stay reboot-free, so this never fires
@@ -2000,47 +2313,101 @@ document.addEventListener('DOMContentLoaded', () => {
                     () => { if (sourceEl) sourceEl.checked = !sourceEl.checked; }
                 );
             }
-        }).catch((err) => {
-            // Roll the checkbox back to the last known device state on
-            // failure (e.g. offline/timeout) instead of leaving the UI
-            // showing a state the device never actually accepted.
-            if (sourceEl) sourceEl.checked = !sourceEl.checked;
-            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Feature flag change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
+            return msg;
         });
     };
 
-    const cfgDemoMode = document.getElementById('cfg-demo-mode');
-    if (cfgDemoMode) cfgDemoMode.addEventListener('change', () => sendFeatureFlags(cfgDemoMode));
+    // ------------------------------------------------------------------
+    // Settings > Feature Flags card — Demo Mode toggle, staged.
+    // lastConfirmedDemo/featuresDirty are declared at module scope (top of
+    // file) so updateConfigForm() can also see them; this block just wires
+    // the DOM listeners against that shared state.
+    // ------------------------------------------------------------------
+    const btnSaveFeatures = document.getElementById('btn-save-features');
+    const btnDiscardFeatures = document.getElementById('btn-discard-features');
 
-    const cfgFbEnabled = document.getElementById('cfg-fb-enabled');
-    if (cfgFbEnabled) cfgFbEnabled.addEventListener('change', () => sendFeatureFlags(cfgFbEnabled));
+    const setFeaturesDirty = (dirty) => {
+        featuresDirty = dirty;
+        if (btnSaveFeatures) btnSaveFeatures.disabled = !dirty;
+        if (btnDiscardFeatures) btnDiscardFeatures.classList.toggle('hidden', !dirty);
+    };
+
+    const cfgDemoMode = document.getElementById('cfg-demo-mode');
+    if (cfgDemoMode) {
+        cfgDemoMode.addEventListener('change', () => {
+            setFeaturesDirty(cfgDemoMode.checked !== lastConfirmedDemo);
+        });
+    }
+
+    if (btnSaveFeatures) {
+        btnSaveFeatures.addEventListener('click', () => {
+            if (!cfgDemoMode) return;
+            const original = btnSaveFeatures.innerText;
+            btnSaveFeatures.disabled = true;
+            btnSaveFeatures.innerText = 'Saving…';
+            sendFeatureFlags(cfgDemoMode, cfgDemoMode.checked).then(() => {
+                lastConfirmedDemo = cfgDemoMode.checked;
+                setFeaturesDirty(false);
+                btnSaveFeatures.innerText = 'Saved!';
+                setTimeout(() => { btnSaveFeatures.innerText = original; }, 2000);
+            }).catch((err) => {
+                btnSaveFeatures.disabled = false;
+                btnSaveFeatures.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
+                setTimeout(() => { btnSaveFeatures.innerText = original; btnSaveFeatures.disabled = !featuresDirty; }, 3000);
+                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Feature flag save failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
+            });
+        });
+    }
+
+    if (btnDiscardFeatures) {
+        btnDiscardFeatures.addEventListener('click', () => {
+            if (cfgDemoMode) cfgDemoMode.checked = lastConfirmedDemo;
+            setFeaturesDirty(false);
+        });
+    }
+
+    // Demo Mode toggle duplicated on the single-sensor detail page and the
+    // dual-sensor (Air Temp & Hum) page — same underlying switch as
+    // cfg-demo-mode above, just reachable without a trip to Settings.
+    // Deliberately NOT staged like the Settings copy above: this one still
+    // applies immediately with its own reboot-confirm dialog, matching the
+    // existing "Enable Power" toggle right next to it on the same page
+    // (see handleToggle() above) — a quick contextual action on a sensor's
+    // own page, not a Settings form field. Both share this one handler;
+    // syncDemoToggleLabel() (called from switchTab() and updateConfigForm())
+    // keeps whichever one isn't currently visible in sync too, so neither
+    // goes stale while hidden.
+    const handleSensorPageDemoToggle = (e) => {
+        sendFeatureFlags(e.target, e.target.checked).catch((err) => {
+            e.target.checked = !e.target.checked;
+            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Feature flag change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
+        });
+    };
+    const sensorDemoToggle = document.getElementById('sensor-demo-toggle');
+    if (sensorDemoToggle) sensorDemoToggle.addEventListener('change', handleSensorPageDemoToggle);
+    const dualSensorDemoToggle = document.getElementById('dual-sensor-demo-toggle');
+    if (dualSensorDemoToggle) dualSensorDemoToggle.addEventListener('change', handleSensorPageDemoToggle);
 
     // ------------------------------------------------------------------
-    // Per-sensor enable toggle inside each pinout card in Settings — the
-    // SINGLE on/off switch for a sensor, bound to save_sensor_enabled. This
-    // is the exact same switch as the "Enable Power" toggle on the
-    // per-sensor detail page (see handleToggle() above) — both just flip
-    // sensor_enabled[] and never touch pins. Requires a reboot to apply,
-    // since the change only takes effect after the sensor task re-inits.
+    // Per-sensor enable toggle inside each pinout card in Settings — now
+    // STAGED (Part 5.9b) and folded into the same Save Pinout Config /
+    // Discard Changes pair as the pin fields below, instead of sending
+    // save_sensor_enabled immediately on change. This is still the exact
+    // same underlying flag as the "Enable Power" toggle on the per-sensor
+    // detail page (see handleToggle() above) — that copy is UNCHANGED and
+    // still applies immediately with its own reboot-confirm, matching how
+    // the sensor-page Demo Mode toggle stays live while the Settings copy
+    // is staged. Only this Settings-card copy is buffered now.
+    //
+    // lastConfirmedSensorEnabled/pinoutDirty are declared at module scope
+    // (top of file) so updateConfigForm() can see them too. recomputePinoutDirty()
+    // is the single source of truth for "is anything in this card unsaved" —
+    // both the pin-field listeners further below and these checkboxes call
+    // it on every change instead of each maintaining their own dirty flag.
     // ------------------------------------------------------------------
     document.querySelectorAll('[data-sensor-enable]').forEach((el) => {
-        el.addEventListener('change', (e) => {
-            const sensorId = el.dataset.sensorEnable;
-            const enabled = e.target.checked;
-            e.target.disabled = true;
-            sendCommand({ command: "save_sensor_enabled", sensor: sensorId, enabled }).then(() => {
-                e.target.disabled = false;
-                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${escapeHtml(sensorId)}' ${enabled ? "ENABLED" : "DISABLED"}.</div>`;
-                confirmReboot(
-                    `Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`,
-                    sendReboot,
-                    () => { e.target.checked = !enabled; }
-                );
-            }).catch((err) => {
-                e.target.disabled = false;
-                e.target.checked = !enabled; // revert — the device never actually applied this
-                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Sensor '${escapeHtml(sensorId)}' enable change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
-            });
+        el.addEventListener('change', () => {
+            recomputePinoutDirty();
         });
     });
 

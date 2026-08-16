@@ -349,10 +349,18 @@
                     </h2>
                     <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">GPIO PIN: <span class="text-primary" id="sensor-pin">--</span></p>
                 </div>
-                <div class="flex items-center gap-4">
+                <div class="flex flex-wrap items-center gap-4">
                     <button id="btn-export-sensor-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
                         <span class="material-symbols-outlined text-[20px]">download</span> Export CSV
                     </button>
+                    <div class="flex items-center">
+                        <label class="hg-toggle">
+                            <input class="sr-only peer" id="sensor-demo-toggle" type="checkbox"/>
+                            <span class="hg-toggle-track"></span>
+                        </label>
+                        <span class="ml-3 font-label-md text-label-md text-white">Demo Mode</span>
+                        <span id="sensor-demo-toggle-state" class="ml-3 font-label-sm text-label-sm text-on-surface-variant">OFF</span>
+                    </div>
                     <div class="flex items-center">
                         <label class="hg-toggle">
                             <input checked="" class="sr-only peer" id="sensor-toggle" type="checkbox"/>
@@ -388,13 +396,23 @@
                     </h2>
                     <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">GPIO PIN: <span class="text-primary" id="dual-sensor-pin">--</span></p>
                 </div>
-                <div class="flex items-center">
-                    <label class="hg-toggle">
-                        <input checked="" class="sr-only peer" id="dual-sensor-toggle" type="checkbox"/>
-                        <span class="hg-toggle-track"></span>
-                    </label>
-                    <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
-                    <span id="dual-sensor-toggle-state" class="ml-3 font-label-sm text-label-sm text-secondary">ON</span>
+                <div class="flex flex-wrap items-center gap-4">
+                    <div class="flex items-center">
+                        <label class="hg-toggle">
+                            <input class="sr-only peer" id="dual-sensor-demo-toggle" type="checkbox"/>
+                            <span class="hg-toggle-track"></span>
+                        </label>
+                        <span class="ml-3 font-label-md text-label-md text-white">Demo Mode</span>
+                        <span id="dual-sensor-demo-toggle-state" class="ml-3 font-label-sm text-label-sm text-on-surface-variant">OFF</span>
+                    </div>
+                    <div class="flex items-center">
+                        <label class="hg-toggle">
+                            <input checked="" class="sr-only peer" id="dual-sensor-toggle" type="checkbox"/>
+                            <span class="hg-toggle-track"></span>
+                        </label>
+                        <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
+                        <span id="dual-sensor-toggle-state" class="ml-3 font-label-sm text-label-sm text-secondary">ON</span>
+                    </div>
                 </div>
             </header>
             <div class="flex-1 liquid-glass rounded-3xl p-6 md:p-8 flex flex-col relative min-h-[400px]">
@@ -632,10 +650,21 @@
                          Provisioning card instead (see Firebase Upload
                          there, next to Test Connection). Demo Mode is a
                          sensor concern (it swaps real hardware reads for
-                         simulated ones), so it's the only switch left here. -->
+                         simulated ones), so it's the only switch left here.
+
+                         Staged like every other Settings card (Part 5.9):
+                         the toggle only updates local buffered state on
+                         change — see handleFeatureToggleChange() in app.js
+                         — nothing is sent to the device until Save is
+                         clicked, and Discard reverts the toggle to the
+                         last-confirmed device value without sending
+                         anything. This closes the gap where a toggle that
+                         applies live can show "Not saved" after a
+                         disconnect even though the device already applied
+                         it moments before the ack was lost. -->
                     <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Feature Flags</h3>
-                        <p class="text-on-surface-variant text-body-md mb-2">Toggle whole-system behaviors. Applies immediately — none of these require a reboot.</p>
+                        <p class="text-on-surface-variant text-body-md mb-2">Toggle whole-system behaviors. Demo Mode requires a reboot to apply; changes here aren't sent to the device until you hit Save.</p>
 
                         <div class="flex items-center justify-between gap-4">
                             <span class="flex flex-col gap-0.5">
@@ -646,6 +675,10 @@
                                 <input class="sr-only peer" id="cfg-demo-mode" type="checkbox"/>
                                 <span class="hg-toggle-track"></span>
                             </label>
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-3">
+                            <button id="btn-save-features" class="flex-1 bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed" disabled>Save</button>
+                            <button id="btn-discard-features" class="hidden flex-1 bg-transparent border border-white/10 text-on-surface-variant font-label-md py-3 rounded-xl hover:text-white hover:border-white/30 transition-all">Discard Changes</button>
                         </div>
                     </div>
                 </div>
@@ -660,11 +693,19 @@
                         <!-- Firebase Upload lives here — everything about
                              whether/how this device talks to Firebase is in
                              this one card: the toggle, the credentials, and
-                             Test Connection, together. -->
+                             Test Connection, together.
+
+                             Staged (Part 5.9): the toggle only updates local
+                             buffered state on change — nothing is sent until
+                             Save Credentials is clicked, which now sends
+                             save_features alongside save_firebase whenever
+                             the toggle is dirty (see the click handler in
+                             app.js). Discard reverts just the toggle back to
+                             the last-confirmed device value. -->
                         <div class="flex items-center justify-between gap-4">
                             <span class="flex flex-col gap-0.5">
                                 <span class="font-label-md text-label-md text-white">Firebase Upload</span>
-                                <span class="font-label-sm text-label-sm text-on-surface-variant">Push sensor readings to Firestore on the interval configured below. Applies immediately. Auto-disables after 5 consecutive failed uploads.</span>
+                                <span class="font-label-sm text-label-sm text-on-surface-variant">Push sensor readings to Firestore on the interval configured below. Auto-disables after 5 consecutive failed uploads. Saved with the credentials below.</span>
                             </span>
                             <label class="hg-toggle">
                                 <input class="sr-only peer" id="cfg-fb-enabled" type="checkbox"/>
@@ -723,6 +764,7 @@
                                  has run at least once. -->
                             <button id="btn-test-firebase" class="flex-1 bg-white/5 border border-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/10 transition-all">Test Connection</button>
                         </div>
+                        <button id="btn-discard-fb-enabled" class="hidden w-full bg-transparent border border-white/10 text-on-surface-variant font-label-md py-3 rounded-xl hover:text-white hover:border-white/30 transition-all">Discard Firebase Upload Change</button>
                         <!-- The device already tracks real Firebase/Firestore
                              upload health (firebase_ready, firebase_last_ok_ms,
                              firebase_last_error) and sends it in every vitals
@@ -740,7 +782,7 @@
                      md:grid-cols-2) — still stacks single-column on tablet/mobile. -->
                 <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 lg:col-span-2">
                     <h3 class="font-headline-md text-headline-md text-white">Sensor Implementation Config</h3>
-                    <p class="text-on-surface-variant text-body-md mb-2">Manage physical hardware pinouts and status. GPIO numbers always stay saved and visible; use each card's <strong class="text-white font-bold">Enabled</strong> switch to turn a sensor on or off.</p>
+                    <p class="text-on-surface-variant text-body-md mb-2">Manage physical hardware pinouts and status. GPIO numbers always stay saved and visible; use each card's <strong class="text-white font-bold">Enabled</strong> switch to turn a sensor on or off. Changes to pins and Enabled switches aren't sent to the device until you hit Save.</p>
                     <!-- Client-side pin validation banner (Part 4.2) — hidden by
                          default, shown by app.js when any pin field is 19, 20, or
                          a forbidden/duplicate value. Styled consistently with the
@@ -869,6 +911,7 @@
                         </div>
                     </div>
                     <button id="btn-save-pins" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Save Pinout Config (Requires Reboot)</button>
+                    <button id="btn-discard-pins" class="hidden w-full bg-transparent border border-white/10 text-on-surface-variant font-label-md py-3 rounded-xl hover:text-white hover:border-white/30 transition-all">Discard Changes</button>
                 </div>
 
                 <!-- Timing card -->
