@@ -174,10 +174,8 @@ canvas {
    Terminal Specific Overrides
    (Optional: Used if Tailwind logging classes need enforcement)
    ========================================================================== */
-.log-core-0 { color: #afc6ff; } /* Network Task logs */
-.log-core-1 { color: #4edea3; } /* Sensor Task logs */
-.log-warn { color: #ffb4ab; }
-.log-error { color: #ff516a; font-weight: bold; }
+.log-core-0 { color: var(--hg-on-background); } /* Network Task logs */
+.log-core-1 { color: var(--hg-secondary); } /* Sensor Task logs */
 
 
 /* ==========================================================================
@@ -210,8 +208,8 @@ canvas {
   --tw-numeric-fraction: ;
   --tw-ring-inset: ;
   --tw-ring-offset-width: 0px;
-  --tw-ring-offset-color: #fff;
-  --tw-ring-color: rgba(59, 130, 246, 0.5);
+  --tw-ring-offset-color: var(--hg-surface, #fff);
+  --tw-ring-color: var(--hg-primary, rgba(59, 130, 246, 0.5));
   --tw-ring-offset-shadow: 0 0 #0000;
   --tw-ring-shadow: 0 0 #0000;
   --tw-shadow: 0 0 #0000;
@@ -263,8 +261,8 @@ canvas {
   --tw-numeric-fraction: ;
   --tw-ring-inset: ;
   --tw-ring-offset-width: 0px;
-  --tw-ring-offset-color: #fff;
-  --tw-ring-color: rgba(59, 130, 246, 0.5);
+  --tw-ring-offset-color: var(--hg-surface, #fff);
+  --tw-ring-color: var(--hg-primary, rgba(59, 130, 246, 0.5));
   --tw-ring-offset-shadow: 0 0 #0000;
   --tw-ring-shadow: 0 0 #0000;
   --tw-shadow: 0 0 #0000;
@@ -296,7 +294,7 @@ canvas {
 :after,
 :before {
   box-sizing: border-box;
-  border: 0 solid #e5e7eb;
+  border: 0 solid var(--hg-surface-border, rgba(255, 255, 255, 0.08));
 }
 :after,
 :before {
@@ -484,12 +482,12 @@ textarea {
 input::-moz-placeholder,
 textarea::-moz-placeholder {
   opacity: 1;
-  color: #9ca3af;
+  color: var(--hg-on-surface-variant);
 }
 input::placeholder,
 textarea::placeholder {
   opacity: 1;
-  color: #9ca3af;
+  color: var(--hg-on-surface-variant);
 }
 [role="button"],
 button {
@@ -892,9 +890,6 @@ video {
 .border-error\/50 {
   border-color: hsla(6, 100%, 84%, 0.5);
 }
-.border-secondary\/20 {
-  border-color: rgba(78, 222, 163, 0.2);
-}
 .border-secondary\/40 {
   border-color: rgba(78, 222, 163, 0.4);
 }
@@ -1251,67 +1246,14 @@ canvas {
   image-rendering: crisp-edges;
   image-rendering: pixelated;
 }
-.log-core-0 {
-  color: #afc6ff;
-}
-.log-core-1 {
-  color: #4edea3;
-}
-.after\:absolute:after {
-  content: var(--tw-content);
-  position: absolute;
-}
-.after\:left-\[2px\]:after {
-  content: var(--tw-content);
-  left: 2px;
-}
-.after\:top-\[2px\]:after {
-  content: var(--tw-content);
-  top: 2px;
-}
-.after\:h-5:after {
-  content: var(--tw-content);
-  height: 1.25rem;
-}
-.after\:w-5:after {
-  content: var(--tw-content);
-  width: 1.25rem;
-}
-.after\:rounded-full:after {
-  content: var(--tw-content);
-  border-radius: 9999px;
-}
-.after\:border:after {
-  content: var(--tw-content);
-  border-width: 1px;
-}
-.after\:border-\[rgba\(0\2c 0\2c 0\2c 0\.1\)\]:after {
-  content: var(--tw-content);
-  border-color: rgba(0, 0, 0, 0.1);
-}
-.after\:bg-white:after {
-  content: var(--tw-content);
-  --tw-bg-opacity: 1;
-  background-color: rgb(255 255 255 / var(--tw-bg-opacity, 1));
-}
-.after\:transition-all:after {
-  content: var(--tw-content);
-  transition-property: all;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 0.15s;
-}
-.after\:content-\[\'\'\]:after {
-  --tw-content: "";
-  content: var(--tw-content);
-}
 .hover\:bg-error-container\/40:hover {
   background-color: rgba(147, 0, 10, 0.4);
 }
 .hover\:bg-white\/10:hover {
-  background-color: hsla(0, 0%, 100%, 0.1);
+  background-color: var(--hg-surface-alt-10);
 }
 .hover\:bg-white\/20:hover {
-  background-color: hsla(0, 0%, 100%, 0.2);
+  background-color: var(--hg-surface-alt-20);
 }
 .hover\:text-white:hover {
   color: var(--hg-white, #fff);
@@ -1336,12 +1278,6 @@ canvas {
 .disabled\:cursor-not-allowed:disabled {
   cursor: not-allowed;
 }
-.disabled\:hover\:brightness-100:hover:disabled {
-  --tw-brightness: brightness(1);
-  filter: var(--tw-blur) var(--tw-brightness) var(--tw-contrast)
-    var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate)
-    var(--tw-sepia) var(--tw-drop-shadow);
-}
 .focus\:border-primary:focus {
   --tw-border-opacity: 1;
   border-color: rgb(175 198 255 / var(--tw-border-opacity, 1));
@@ -1361,76 +1297,6 @@ canvas {
 }
 .group:hover .group-hover\:opacity-100 {
   opacity: 1;
-}
-.peer:checked ~ .peer-checked\:bg-primary-container {
-  --tw-bg-opacity: 1;
-  background-color: var(--hg-primary-container);
-}
-.after\:content-\[\'\'\]:after {
-  content: '';
-}
-.after\:absolute:after {
-  content: var(--tw-content);
-  position: absolute;
-}
-.after\:top-\[2px\]:after {
-  content: var(--tw-content);
-  top: 2px;
-}
-.after\:left-\[2px\]:after {
-  content: var(--tw-content);
-  left: 2px;
-}
-.after\:bg-white:after {
-  content: var(--tw-content);
-  --tw-bg-opacity: 1;
-  background-color: rgb(255 255 255 / var(--tw-bg-opacity, 1));
-}
-.after\:border:after {
-  content: var(--tw-content);
-  border-width: 1px;
-}
-.after\:rounded-full:after {
-  content: var(--tw-content);
-  border-radius: 9999px;
-}
-.after\:h-4:after {
-  content: var(--tw-content);
-  height: 1rem;
-}
-.after\:w-4:after {
-  content: var(--tw-content);
-  width: 1rem;
-}
-.after\:h-5:after {
-  content: var(--tw-content);
-  height: 1.25rem;
-}
-.after\:w-5:after {
-  content: var(--tw-content);
-  width: 1.25rem;
-}
-.after\:transition-all:after {
-  content: var(--tw-content);
-  transition-property: all;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms;
-}
-.peer:checked ~ .peer-checked\:after\:translate-x-full:after {
-  content: var(--tw-content);
-  --tw-translate-x: 100%;
-  transform: translate(var(--tw-translate-x), var(--tw-translate-y))
-    rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y))
-    scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
-}
-.peer:checked ~ .peer-checked\:after\:border-white:after {
-  content: var(--tw-content);
-  --tw-border-opacity: 1;
-  border-color: rgb(255 255 255 / var(--tw-border-opacity, 1));
-}
-.peer:focus ~ .peer-focus\:outline-none {
-  outline: 2px solid transparent;
-  outline-offset: 2px;
 }
 .dark\:text-primary:is(.dark *) {
   --tw-text-opacity: 1;
@@ -1529,6 +1395,15 @@ canvas {
   }
   .lg\:hidden {
     display: none;
+  }
+  /* Added for #sideNav's breakpoint move (md -> lg, see the #sideNav/
+     #bottomNav comments in index.html) — mirrors .md\:flex above exactly.
+     Without this, `hidden lg:flex` on #sideNav has nothing to ever
+     override `.hidden`'s `display: none` back to visible at any width,
+     since this hand-authored utility sheet has no build step to generate
+     missing classes on demand — #sideNav would stay invisible forever. */
+  .lg\:flex {
+    display: flex;
   }
   .lg\:w-72 {
     width: 18rem;
@@ -1731,6 +1606,9 @@ body {
 .border-white\/10 {
   border-color: var(--hg-surface-border) !important;
 }
+.border-\[rgba\(255\2c 255\2c 255\2c 0\.08\)\] {
+  border-color: var(--hg-surface-border) !important;
+}
 
 /* Text colors */
 .text-on-background {
@@ -1795,10 +1673,13 @@ body {
 .border-error {
   border-color: var(--hg-error) !important;
 }
-/* Used by the Factory Reset danger-zone card border/button (index.html).
-   Base rules for these two live earlier in this file, hardcoded to the dark
-   theme's error color — without this override they stayed that same
-   dark-theme pink-red in light mode instead of tracking --hg-error. */
+/* Used by the Factory Reset danger-zone card border/button, the demo-mode
+   badge/lock indicators, and the logout button (index.html). Base rules for
+   these live earlier in this file, several hardcoded to dark-theme-only
+   colors (error pink-red, secondary green) — without this override block
+   they stayed those same dark-theme values in light mode instead of
+   tracking --hg-error / --hg-secondary. .border-secondary\/60 has no base
+   rule at all elsewhere in the file (was previously undefined/unstyled). */
 .border-error\/30 {
   border-color: color-mix(in srgb, var(--hg-error) 30%, transparent) !important;
 }
@@ -1810,6 +1691,15 @@ body {
 }
 .bg-error-container\/40 {
   background-color: var(--hg-error-container-40) !important;
+}
+.hover\:bg-error-container\/40:hover {
+  background-color: var(--hg-error-container-40) !important;
+}
+.border-secondary\/40 {
+  border-color: color-mix(in srgb, var(--hg-secondary) 40%, transparent) !important;
+}
+.border-secondary\/60 {
+  border-color: color-mix(in srgb, var(--hg-secondary) 60%, transparent) !important;
 }
 
 /* Native <select> — the theme picker is the only <select> in the app and
@@ -2126,11 +2016,11 @@ body {
   padding-top: calc(1.5rem + env(safe-area-inset-top));
   padding-bottom: calc(1.5rem + env(safe-area-inset-bottom));
 }
-main {
+main.p-4 {
   padding-right: max(1rem, env(safe-area-inset-right));
 }
 @media (min-width: 768px) {
-  main {
+  main.md\:p-8 {
     padding-right: max(2rem, env(safe-area-inset-right));
   }
 }
@@ -2178,24 +2068,15 @@ main {
   -webkit-overflow-scrolling: touch;
 }
 
-/* 5. Mobile sidebar overlay (below the 768px `md` breakpoint — iPhone and
-   small-screen use only; iPad's existing icon-only mini sidebar and
-   desktop's full sidebar, both `md` and up, are completely unaffected by
-   any rule in this block).
-
-   Below md, #sideNav starts translated fully off-canvas (hidden, not just
-   narrow) instead of the permanent w-20 icon rail it shows from md up —
-   there's no room for even an icon-only rail next to real content on a
-   360-430px-wide phone. #btn-mobile-menu (fixed, top-left, safe-area-aware)
-   toggles a `.hg-sidenav-mobile-open` class on #sideNav to slide it in as a
-   full-width/full-height overlay, with #mobile-nav-scrim dimming <main>
-   behind it. JS in app.js (see initMobileNav()) owns adding/removing that
-   class and the scrim's hidden state together, plus closing on scrim tap,
-   Escape, and after any nav-tab selection.
-
-   Uses transform (not width/display) for the slide so it composites on
-   its own GPU layer and animates smoothly instead of triggering a full
-   layout recalculation on every open/close. */
+/* 5. Mobile sidebar overlay — DEAD CODE: .hg-sidenav-mobile-hidden is never
+   applied to any element (see index.html's #sideNav) and #btn-mobile-menu,
+   the only trigger for the JS that would add it, is permanently `hidden`
+   (see its comment in index.html). #sideNav's actual show/hide today is
+   the plain `hidden lg:flex` Tailwind toggle (moved from md to lg — see
+   the #sideNav/#bottomNav comments in index.html); #bottomNav is the real
+   navigation below lg. Left in place rather than deleted since removing it
+   isn't part of this breakpoint fix's scope — if this block is ever
+   revived, update `767px`/`768px` below to `1023px`/`1024px` to match. */
 @media (max-width: 767px) {
   .hg-sidenav-mobile-hidden {
     width: 100vw;
@@ -2226,9 +2107,10 @@ main {
     display: flex !important;
   }
 }
-/* #mobile-nav-scrim only ever renders below md — the inline .hidden class
-   plus this rule keeps it fully inert (no hit-testing, no paint) at md and
-   up even if JS ever left it toggled open from a narrower viewport. */
+/* #mobile-nav-scrim — same dead-code status as the block above (its only
+   trigger, #btn-mobile-menu, is permanently hidden). Kept inert at every
+   width via the inline .hidden class on the element itself; this rule is
+   redundant belt-and-suspenders and not load-bearing either way. */
 @media (min-width: 768px) {
   #mobile-nav-scrim {
     display: none !important;
@@ -2250,32 +2132,33 @@ main {
   width: 100%;
 }
 
-/* 7. iPhone bottom navbar clearance (chunk 4d) — #bottomNav is `fixed
+/* 7. Bottom navbar clearance (chunk 4d) — #bottomNav is `fixed
    bottom-0`, so without this <main> would let its last row of content sit
    underneath the bar rather than scrolling clear of it. Sized generously
    (5.5rem) to cover the bar's own content (icon + label, py-2 padding)
    plus its safe-area-inset-bottom padding, which varies by device and
    can't be known at CSS-write time — better to over-reserve a bit of
-   clearance below md than clip content on the tallest home-indicator
-   devices. No effect at md and up, where #bottomNav doesn't render (see
-   .md\:hidden) and #sideNav's own left-margin layout applies instead.
+   clearance below lg than clip content on the tallest home-indicator
+   devices. Threshold moved from md (768px) to lg (1024px) to match
+   #bottomNav's own breakpoint (see the #sideNav/#bottomNav comments in
+   index.html) — #bottomNav now covers phone AND tablet widths, so this
+   clearance has to follow it the whole way or tablet-width content would
+   sit clipped under the bar between 768–1024px. No effect at lg and up,
+   where #bottomNav doesn't render (see .lg\:hidden) and #sideNav's own
+   left-margin layout applies instead.
 
    NOTE: this is written as `main.p-4` / `main.md\:p-8` (compound element+
    class selectors, specificity 0,1,1) rather than a bare `main { }` rule,
    because .p-4's/.md\:p-8's shorthand `padding` property (specificity
    0,1,0, a plain class) beats a bare `main` element selector (0,0,1) on
    specificity regardless of source order and would silently zero this
-   out otherwise. Flagging for whoever picks this up next: the existing
-   `main { padding-right: ... }` safe-area-inset-right rule earlier in
-   this file (fix #1 above) has this exact same bug — it's a bare element
-   selector losing to the same .p-4/.md\:p-8 shorthand, so that padding
-   is very likely a no-op today as shipped. Not fixed here since it
-   wasn't part of what was asked this chunk — mentioning so it isn't
-   mistaken for "already working" if picked up later. */
+   out otherwise. The `main { padding-right: ... }` safe-area-inset-right
+   rule earlier in this file (fix #1 above) had this exact same bug and
+   has been fixed the same way (`main.p-4` / `main.md\:p-8`). */
 main.p-4 {
   padding-bottom: 5.5rem;
 }
-@media (min-width: 768px) {
+@media (min-width: 1024px) {
   main.md\:p-8 {
     padding-bottom: 2rem;
   }

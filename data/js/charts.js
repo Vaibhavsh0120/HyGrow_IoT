@@ -3,13 +3,58 @@
  * Handles high-performance Canvas API rendering and CSV generation.
  */
 
+// Canvas fill/stroke styles can't reference CSS variables directly, so chart
+// colors are resolved from the live theme tokens at draw time instead of
+// being hardcoded. This keeps chart lines in sync with light/dark mode and
+// with the app's single monochrome+two-accent color system (see style.css's
+// :root/html.light token blocks) rather than duplicating separate hex
+// values here that could drift out of sync with the theme.
+function getThemeColor(varName, fallback) {
+    const val = getComputedStyle(document.documentElement)
+        .getPropertyValue(varName)
+        .trim();
+    return val || fallback;
+}
+
+// Named color roles used by chart lines — 'primary' for a chart's main/only
+// series (was hardcoded #afc6ff blue), 'secondary' for a second series in a
+// dual chart (was hardcoded #4edea3 green, reusing the app's one intentional
+// green accent token). Resolves to an "r, g, b" triplet string so callers
+// can build rgba() glow/gradient colors at any alpha.
+function getChartColorRgb(role) {
+    const varName = role === 'secondary' ? '--hg-secondary' : '--hg-on-background';
+    const fallback = role === 'secondary' ? 'rgb(78, 222, 163)' : '#e1e1e1';
+    const resolved = getThemeColor(varName, fallback);
+    return hexOrRgbToRgbTriplet(resolved);
+}
+
+// Accepts '#rrggbb' or 'rgb(r, g, b)' / 'rgba(r, g, b, a)' and returns a
+// plain 'r, g, b' string suitable for building new rgba(...) strings.
+function hexOrRgbToRgbTriplet(color) {
+    color = color.trim();
+    if (color.startsWith('#')) {
+        let hex = color.slice(1);
+        if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        return `${r}, ${g}, ${b}`;
+    }
+    const match = color.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+    if (match) return `${match[1]}, ${match[2]}, ${match[3]}`;
+    return '225, 225, 225'; // last-resort neutral fallback, never a brand hue
+}
+
 // Draws a standard single-value line chart with a gradient fill
-function drawChart(context, cvs, dataArr, colorStr) {
+function drawChart(context, cvs, dataArr, role) {
     if(!cvs || !cvs.width || !context) return;
     const w = cvs.width / window.devicePixelRatio;
     const h = cvs.height / window.devicePixelRatio;
 
     context.clearRect(0, 0, w, h);
+
+    const rgb = getChartColorRgb(role);
+    const colorStr = `rgb(${rgb})`;
 
     context.beginPath();
     context.strokeStyle = colorStr;
@@ -34,7 +79,7 @@ function drawChart(context, cvs, dataArr, colorStr) {
 
     // Soft glow effect
     context.shadowBlur = 20;
-    context.shadowColor = colorStr === '#afc6ff' ? 'rgba(175, 198, 255, 0.4)' : 'rgba(78, 222, 163, 0.4)';
+    context.shadowColor = `rgba(${rgb}, 0.4)`;
     context.stroke();
     context.shadowBlur = 0;
 
@@ -44,7 +89,6 @@ function drawChart(context, cvs, dataArr, colorStr) {
     context.closePath();
 
     const gradient = context.createLinearGradient(0, 0, 0, h);
-    let rgb = colorStr === '#afc6ff' ? '175, 198, 255' : '78, 222, 163';
     gradient.addColorStop(0, `rgba(${rgb}, 0.15)`);
     gradient.addColorStop(1, `rgba(${rgb}, 0)`);
 
@@ -60,9 +104,9 @@ function drawDualChart(context, cvs, dataArr1, dataArr2) {
 
     context.clearRect(0, 0, w, h);
 
-    // Draw Data Array 1 (Humidity - Primary Color #afc6ff)
+    // Draw Data Array 1 (Humidity - Primary chart color)
     context.beginPath();
-    context.strokeStyle = '#afc6ff';
+    context.strokeStyle = `rgb(${getChartColorRgb('primary')})`;
     context.lineWidth = 3;
     const step = w / Math.max(dataArr1.length - 1, 1); // see drawChart() for why Math.max guards against a single-point buffer
 
@@ -74,9 +118,9 @@ function drawDualChart(context, cvs, dataArr1, dataArr2) {
     });
     context.stroke();
 
-    // Draw Data Array 2 (Temp - Secondary Color #4edea3)
+    // Draw Data Array 2 (Temp - Secondary chart color)
     context.beginPath();
-    context.strokeStyle = '#4edea3';
+    context.strokeStyle = `rgb(${getChartColorRgb('secondary')})`;
     context.lineWidth = 3;
 
     dataArr2.forEach((val, i) => {
@@ -91,7 +135,7 @@ function drawDualChart(context, cvs, dataArr1, dataArr2) {
 // Exports a given array of data to a CSV file (Offline capability)
 function exportSeriesToCsv(sensorName, dataArr) {
     if (!dataArr || dataArr.length === 0) {
-        alert("No data available to export.");
+        showAlertModal("No data available to export.");
         return;
     }
 

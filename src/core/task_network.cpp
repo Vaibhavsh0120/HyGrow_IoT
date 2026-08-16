@@ -182,6 +182,17 @@ void broadcastConfig()
     doc["ph_slope"] = currentConfig.ph_slope;
     doc["tds_k"] = currentConfig.tds_k;
 
+    // Plaintext credentials, sent to every already-authenticated client.
+    // Deliberate — see auth_get_password_for_ws() (state.cpp) for the trust
+    // tradeoff this represents. wifi_pass/ap_pass/fb_pass are read straight
+    // from currentConfig (same storage broadcastConfig already reads above);
+    // admin_pass goes through auth_get_password_for_ws() because it lives in
+    // its own NVS namespace, separate from currentConfig (see state.h).
+    doc["wifi_pass"] = currentConfig.wifi_pass;
+    doc["ap_pass"] = currentConfig.ap_pass;
+    doc["fb_pass"] = currentConfig.fb_pass;
+    doc["admin_pass"] = auth_get_password_for_ws();
+
     // Feature flags — no reboot required for either of these.
     doc["demo"] = currentConfig.demo_mode;
     doc["fb_en"] = currentConfig.firebase_enabled;

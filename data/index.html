@@ -171,6 +171,59 @@
                 <button id="btn-reboot-confirm-later" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all">Not Now</button>
             </div>
         </div>
+
+        <!-- 5. Generic alert modal — replaces every window.alert() call
+             (invalid input, "not connected", pin-reset failures, CSV export
+             guards, etc.) with an in-app popup that matches the rest of the
+             UI instead of a native browser dialog. Single "OK" button; icon
+             swaps between info and error styling via showAlertModal()'s
+             `isError` argument. See showAlertModal()/closeAlertModal() in
+             app.js. -->
+        <div id="alert-modal" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+            <div class="flex flex-col gap-1 items-center text-center">
+                <span id="alert-modal-icon" class="material-symbols-outlined text-primary text-[40px]">info</span>
+                <h2 id="alert-modal-title" class="font-headline-md text-headline-md text-white">Notice</h2>
+                <p id="alert-modal-text" class="font-body-md text-body-md text-on-surface-variant"></p>
+            </div>
+            <button id="btn-alert-modal-ok" class="w-full bg-primary-container text-on-primary-container font-label-md py-3 rounded-xl hover:opacity-90 transition-all">OK</button>
+        </div>
+
+        <!-- 6. Generic confirm modal — replaces every window.confirm() call
+             that isn't specifically about a device reboot (logout, manual
+             reboot button, per-sensor pin factory-reset). Two buttons, both
+             wired per-call via confirmModal()'s onConfirm/onCancel
+             callbacks, same contract confirm() had. See
+             confirmModal()/closeConfirmModal() in app.js. -->
+        <div id="confirm-modal" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+            <div class="flex flex-col gap-1 items-center text-center">
+                <span id="confirm-modal-icon" class="material-symbols-outlined text-primary text-[40px]">help</span>
+                <h2 id="confirm-modal-title" class="font-headline-md text-headline-md text-white">Are you sure?</h2>
+                <p id="confirm-modal-text" class="font-body-md text-body-md text-on-surface-variant"></p>
+            </div>
+            <div class="flex flex-col gap-3">
+                <button id="btn-confirm-modal-yes" class="w-full bg-primary-container text-on-primary-container font-label-md py-3 rounded-xl hover:opacity-90 transition-all">Confirm</button>
+                <button id="btn-confirm-modal-cancel" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all">Cancel</button>
+            </div>
+        </div>
+
+        <!-- 7. Generic typed-confirmation prompt modal — replaces the single
+             window.prompt() call (factory reset's "type RESET to confirm"
+             safeguard). A text input in place of the native prompt's input,
+             checked against a required phrase before Confirm is enabled. See
+             promptModal()/closePromptModal() in app.js. -->
+        <div id="prompt-modal" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+            <div class="flex flex-col gap-1 items-center text-center">
+                <span id="prompt-modal-icon" class="material-symbols-outlined text-error text-[40px]">warning</span>
+                <h2 id="prompt-modal-title" class="font-headline-md text-headline-md text-white">Confirm Action</h2>
+                <p id="prompt-modal-text" class="font-body-md text-body-md text-on-surface-variant"></p>
+            </div>
+            <input id="prompt-modal-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+                   class="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 font-body-md text-body-md text-white focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all" />
+            <div class="flex flex-col gap-3">
+                <button id="btn-prompt-modal-confirm" disabled class="w-full bg-error-container/20 border border-error/50 text-error font-label-md py-3 rounded-xl hover:bg-error-container/40 disabled:opacity-40 disabled:cursor-not-allowed transition-all">Confirm</button>
+                <button id="btn-prompt-modal-cancel" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all">Cancel</button>
+            </div>
+        </div>
     </div>
 
     <!-- MOBILE MENU BUTTON — dead below md AND at md/lg (chunk 4d). This
@@ -189,28 +242,34 @@
         <span class="material-symbols-outlined" aria-hidden="true" id="btn-mobile-menu-icon">menu</span>
     </button>
 
-    <!-- SIDE NAVIGATION SHELL — md and up only now (chunk 4d). Below md
-         (iPhone/small-screen), this is replaced entirely by #bottomNav
-         further down; the old hg-sidenav-mobile-hidden/-open overlay
-         states, #btn-mobile-menu, and #mobile-nav-scrim are now dead
-         below md (see md:hidden below and the removed scrim). This nav
-         still renders normally at md (iPad icon rail) and lg (full
-         desktop sidebar) exactly as before — nothing about that changed. -->
-    <nav class="liquid-glass rounded-3xl h-[calc(100vh-2rem)] w-20 lg:w-72 hidden md:flex flex-col fixed left-4 top-4 z-40 py-6 px-2 lg:px-4 transition-all duration-300" id="sideNav">
-        <div class="mb-8 flex flex-col gap-2 items-center lg:items-start overflow-hidden">
-            <h1 class="text-headline-md font-headline-md font-bold text-primary dark:text-primary tracking-tight hidden lg:block whitespace-nowrap">Web Doctor 🩺</h1>
-            <span class="material-symbols-outlined text-[32px] text-primary lg:hidden block">health_and_safety</span>
+    <!-- SIDE NAVIGATION SHELL — lg and up only (breakpoint moved from md to
+         lg). Previously this appeared at md (768px) as an icon-only rail
+         (w-20, no labels — the lg:w-72/lg:px-4/label-reveal classes below
+         only kick in at 1024px) while #bottomNav disappeared at that same
+         md breakpoint, leaving a dead zone from 768–1024px with an
+         unlabeled icon rail and no bottom nav fallback. Moving both this
+         nav's appearance and #bottomNav's disappearance (below) to lg
+         closes that gap: #bottomNav now covers the full range below 1024px,
+         and #sideNav only ever appears already-labeled at lg, never in the
+         cramped icon-only state. Below lg, this is replaced entirely by
+         #bottomNav; the old hg-sidenav-mobile-hidden/-open overlay states,
+         #btn-mobile-menu, and #mobile-nav-scrim remain dead below lg (as
+         they already were below md). -->
+    <nav class="liquid-glass rounded-3xl h-[calc(100vh-2rem)] lg:w-72 hidden lg:flex flex-col fixed left-4 top-4 z-40 py-6 lg:px-4 transition-all duration-300" id="sideNav">
+        <div class="mb-8 flex flex-col gap-2 items-start overflow-hidden">
+            <h1 class="text-headline-md font-headline-md font-bold text-primary dark:text-primary tracking-tight whitespace-nowrap">Web Doctor 🩺</h1>
         </div>
         <!-- Main Tabs injected by app.js -->
-        <ul class="flex-1 flex flex-col gap-2 overflow-y-auto hide-scrollbar items-center lg:items-stretch" id="nav-tabs">
+        <ul class="flex-1 flex flex-col gap-2 overflow-y-auto hide-scrollbar items-stretch" id="nav-tabs">
         </ul>
     </nav>
 
-    <!-- BOTTOM NAVIGATION — iPhone/small-screen only (chunk 4d), below the
-         768px `md` breakpoint, replacing the old full-screen overlay
-         sidebar entirely on this size class. iPad (md) and desktop (lg)
-         are completely unaffected — #sideNav renders normally for them,
-         exactly as before this chunk.
+    <!-- BOTTOM NAVIGATION — everything below the 1024px `lg` breakpoint
+         (moved from `md`/768px — see the #sideNav comment above), covering
+         both phone AND iPad/tablet widths now, replacing the old
+         full-screen overlay sidebar entirely on those size classes.
+         Desktop (lg and up) is unaffected — #sideNav renders normally
+         there, exactly as before this chunk.
 
          Only 3 destinations: Dashboard (tab 0), Settings (tab 8), Terminal
          (tab 9) — the individual per-sensor detail pages (tabs 1,3,4,5,6
@@ -241,12 +300,16 @@
          #sideNav's existing safe-area padding (style.css, fix #1) and
          #auth-overlay's (fix #1 block, same file). -->
     <nav id="bottomNav" role="tablist" aria-label="Primary"
-        class="liquid-glass md:hidden fixed left-0 right-0 bottom-0 z-40 flex items-stretch justify-around rounded-t-3xl rounded-b-none border-t border-white/10"
+        class="liquid-glass lg:hidden fixed left-0 right-0 bottom-0 z-40 flex items-stretch justify-around rounded-t-3xl rounded-b-none border-t border-white/10"
         style="padding-bottom: env(safe-area-inset-bottom, 0px);">
     </nav>
 
     <!-- MAIN CANVAS -->
-    <main class="ml-0 md:ml-[96px] lg:ml-[320px] flex-1 h-screen overflow-y-auto p-4 md:p-8 relative z-10 transition-all duration-300">
+    <!-- Left margin only reserves space for #sideNav at lg (moved from md —
+         see the #sideNav/#bottomNav comments above); below lg there's no
+         fixed sidebar to clear, #bottomNav is a bottom-docked bar instead,
+         so ml-0 now covers both phone and tablet widths. -->
+    <main class="ml-0 lg:ml-[320px] flex-1 h-screen overflow-y-auto p-4 md:p-8 relative z-10 transition-all duration-300">
 
         <!-- PAGE 0: Dashboard & Vitals -->
         <section class="page-section flex flex-col gap-8" id="page-0">
@@ -647,11 +710,26 @@
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-wifi-pass">Password</label>
-                            <input id="cfg-wifi-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
+                            <!-- Pre-filled with the device's live plaintext value (see
+                                 updateConfigForm() -> msg.wifi_pass) and paired with the
+                                 eye-toggle like the other secret fields below. Saving still
+                                 works exactly as before: clear the field to "Leave blank to
+                                 keep current password", or edit it to change. -->
+                            <div class="hg-secret-field">
+                                <input id="cfg-wifi-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-wifi-pass" aria-label="Show Wi-Fi Password">
+                                    <span class="material-symbols-outlined">visibility</span>
+                                </button>
+                            </div>
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-ap-pass">SoftAP Recovery Password</label>
-                            <input id="cfg-ap-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
+                            <div class="hg-secret-field">
+                                <input id="cfg-ap-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-ap-pass" aria-label="Show SoftAP Recovery Password">
+                                    <span class="material-symbols-outlined">visibility</span>
+                                </button>
+                            </div>
                             <p class="font-label-sm text-label-sm text-on-surface-variant">Password for the "HyGrow-Setup" recovery network the device falls back to if Wi-Fi fails. Minimum 8 characters. Leave blank to keep the current one.</p>
                         </div>
                         <p id="cfg-ap-pass-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
@@ -671,6 +749,19 @@
                     <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Change Password</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Update the admin password used to access this device's dashboard.</p>
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant" for="cfg-admin-pass-display">Current Password (on device)</label>
+                            <!-- Read-only — shows the device's actual live admin password
+                                 (msg.admin_pass, updateConfigForm()), separate from
+                                 cfg-pass-current below which is the field you TYPE INTO to
+                                 authorize a change. Never written back to the device. -->
+                            <div class="hg-secret-field">
+                                <input id="cfg-admin-pass-display" maxlength="64" readonly class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-on-surface-variant outline-none font-body-md" type="password"/>
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-admin-pass-display" aria-label="Show Current Admin Password">
+                                    <span class="material-symbols-outlined">visibility</span>
+                                </button>
+                            </div>
+                        </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-pass-current">Current Password</label>
                             <div class="hg-secret-field">

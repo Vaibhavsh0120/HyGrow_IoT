@@ -14,8 +14,8 @@ const DEFAULT_PINS = { tds: 2, dht: 6, wt: 4, sda: 8, scl: 9, wl: 1, wlp: 5, ph:
 const tabsData = {
     labels: ["Dashboard & Vitals", "TDS", "Air Temp & Hum", "Water Temp", "Light", "Water Level", "pH", "Live Calibration", "System Settings", "Terminal"],
     icons: ["monitoring", "water_drop", "thermostat", "device_thermostat", "light_mode", "waves", "science", "settings_input_component", "settings", "terminal"],
-    activeStyle: "text-white font-bold bg-[rgba(255,255,255,0.1)] rounded-2xl shadow-inner",
-    inactiveStyle: "text-on-surface-variant font-medium hover:bg-[rgba(255,255,255,0.05)] hover:text-white rounded-2xl transition-colors duration-200",
+    activeStyle: "text-white font-bold bg-white/10 rounded-2xl shadow-inner",
+    inactiveStyle: "text-on-surface-variant font-medium hover:bg-white/10 hover:text-white rounded-2xl transition-colors duration-200",
     baseStyle: "flex items-center justify-start gap-4 p-3 lg:px-6 lg:py-3 cursor-pointer transition-all duration-150 w-full",
     // Placeholder values shown only until the first "config" WS message arrives
     // and overwrites these with the device's real, live pin assignments.
@@ -81,8 +81,14 @@ let currentSensorCtx = null;
 const canvasDual = document.getElementById('telemetryChartDual');
 const ctxDual = canvasDual ? canvasDual.getContext('2d') : null;
 
-// Mobile sidebar overlay (below the 768px `md` breakpoint — see the fix #5
-// CSS comment in style.css for the full behavior). Owns opening/closing
+// Mobile sidebar overlay — legacy/currently inert: #btn-mobile-menu (the
+// only trigger for setMobileNavOpen(true)) is permanently `hidden` in the
+// DOM (see its comment in index.html), so this never actually opens today.
+// #sideNav itself now only ever renders at the lg breakpoint (moved from
+// md — see the #sideNav/#bottomNav comments in index.html), below which
+// #bottomNav is the real navigation. Left in place rather than removed
+// since deleting it isn't part of this breakpoint fix's scope. Owns
+// opening/closing
 // #sideNav's `.hg-sidenav-mobile-open` class and #mobile-nav-scrim's
 // visibility together, so they can never drift out of sync with each other.
 function setMobileNavOpen(open) {
@@ -118,14 +124,15 @@ function initMobileNav() {
         if (e.key === 'Escape' && isMobileNavOpen()) setMobileNavOpen(false);
     });
 
-    // A resize that crosses back up into the md/lg desktop layout (e.g.
+    // A resize that crosses back up into the lg desktop layout (e.g.
     // rotating an iPhone in a stage-manager/external-display setup, or
     // just a window resize on a browser dev-tools device toolbar) should
     // never leave the overlay state stuck open and unreachable behind the
     // now-fixed desktop sidebar — close it whenever the viewport is no
-    // longer in the mobile range this behavior applies to.
+    // longer in the mobile range this behavior applies to. Threshold moved
+    // to 1024 to match #sideNav's breakpoint (was 768/md).
     window.addEventListener('resize', () => {
-        if (window.innerWidth >= 768 && isMobileNavOpen()) setMobileNavOpen(false);
+        if (window.innerWidth >= 1024 && isMobileNavOpen()) setMobileNavOpen(false);
     });
 }
 
@@ -353,11 +360,14 @@ function switchTab(index, element) {
         document.getElementById('dual-sensor-pin').innerText = (pin === null || pin < 0) ? '--' : pin;
         document.getElementById('dual-sensor-toggle').checked = resolveSensorOn(index);
         syncPowerToggleLabel('dual-sensor-toggle', 'dual-sensor-toggle-state');
-        // Demo Mode toggle: globalConfigCache.demo is kept fresh by every
-        // config frame (see updateConfigForm()) independent of which page
-        // is open, so this is safe to read here even before this tab's
-        // first visit.
-        document.getElementById('dual-sensor-demo-toggle').checked = !!globalConfigCache.demo;
+        // Demo Mode toggle: PER-SENSOR now, same reasoning as the
+        // single-sensor branch below — reflects this sensor's own pin
+        // against the DEMO_MODE_PIN sentinel, not the global demo_mode
+        // flag. tabsData.gpios[index] carries the live raw pin value from
+        // every config frame regardless of which page is open, so this is
+        // safe to read here even before this tab's first visit, same as
+        // before.
+        document.getElementById('dual-sensor-demo-toggle').checked = (pin === -42);
         syncDemoToggleLabel('dual-sensor-demo-toggle', 'dual-sensor-demo-toggle-state');
 
         // Same immediate-from-buffer treatment as the single-sensor branch
@@ -394,9 +404,16 @@ function switchTab(index, element) {
         const sensorOn = resolveSensorOn(index);
         document.getElementById('sensor-toggle').checked = sensorOn;
         syncPowerToggleLabel('sensor-toggle', 'sensor-toggle-state');
-        // Demo Mode toggle — same globalConfigCache.demo source as the
-        // dual-sensor page above.
-        document.getElementById('sensor-demo-toggle').checked = !!globalConfigCache.demo;
+        // Demo Mode toggle — PER-SENSOR now (see save_sensor_demo,
+        // command_handlers.cpp / handleSensorPageDemoToggle(), further down
+        // this file): reflects whether THIS sensor's own pin currently equals
+        // the DEMO_MODE_PIN sentinel (-42, config.h), not the global
+        // demo_mode flag. tabsData.gpios[index] already carries the sensor's
+        // live raw pin value from every config frame (see the msg.pins[]
+        // parsing above), so no extra field is needed to detect this
+        // client-side — same sentinel-equality check sensorPinIsDemo()
+        // (task_sensor.cpp) does server-side.
+        document.getElementById('sensor-demo-toggle').checked = (pin === -42);
         syncDemoToggleLabel('sensor-demo-toggle', 'sensor-demo-toggle-state');
 
         // tabsData.ok[index] (from the latest "data" frame's s_ok[], see
@@ -448,7 +465,7 @@ function resizeCanvas() {
         currentSensorCanvas.height = currentSensorCanvas.parentElement.clientHeight * window.devicePixelRatio;
         currentSensorCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
         if(typeof drawChart === 'function') {
-            drawChart(currentSensorCtx, currentSensorCanvas, sensorBuffers[currentTabId], currentTabId === 1 ? '#4edea3' : '#afc6ff');
+            drawChart(currentSensorCtx, currentSensorCanvas, sensorBuffers[currentTabId], currentTabId === 1 ? 'secondary' : 'primary');
         }
     }
 
@@ -558,6 +575,96 @@ function closeRebootConfirm() {
     if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
     s_rebootConfirmHandler = null;
     s_rebootCancelHandler = null;
+}
+
+// ----------------------------------------------------------------------
+// Generic alert / confirm / prompt modals — replace every remaining
+// window.alert()/confirm()/prompt() call in the app with an in-UI popup
+// that matches the rest of the interface (and isn't a blocking native
+// dialog that looks out of place in an installed/full-screen web app).
+// Each follows the same open/close/state-handler shape as confirmReboot()
+// above, just generalized: alerts take a message and optional isError
+// flag, confirms take a message plus onConfirm/onCancel callbacks (same
+// contract confirm() had), and the prompt takes a message, the exact
+// phrase the user must type, and an onConfirm callback that only runs on
+// an exact match.
+// ----------------------------------------------------------------------
+
+function showAlertModal(message, isError) {
+    const modal = document.getElementById('alert-modal');
+    const text = document.getElementById('alert-modal-text');
+    const icon = document.getElementById('alert-modal-icon');
+    const title = document.getElementById('alert-modal-title');
+    if (!modal) { return; } // defensive fallback — should never happen
+    if (text) text.innerText = message;
+    if (icon) {
+        icon.innerText = isError ? 'error' : 'info';
+        icon.classList.toggle('text-error', !!isError);
+        icon.classList.toggle('text-primary', !isError);
+    }
+    if (title) title.innerText = isError ? 'Error' : 'Notice';
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
+function closeAlertModal() {
+    const modal = document.getElementById('alert-modal');
+    if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+}
+
+let s_confirmModalHandler = null;
+let s_confirmModalCancelHandler = null;
+
+function confirmModal(message, onConfirm, onCancel, opts) {
+    const modal = document.getElementById('confirm-modal');
+    const text = document.getElementById('confirm-modal-text');
+    const title = document.getElementById('confirm-modal-title');
+    const yesBtn = document.getElementById('btn-confirm-modal-yes');
+    if (!modal) { if (onConfirm) onConfirm(); return; } // defensive fallback
+    if (text) text.innerText = message;
+    if (title && opts && opts.title) title.innerText = opts.title;
+    else if (title) title.innerText = 'Are you sure?';
+    if (yesBtn && opts && opts.confirmLabel) yesBtn.innerText = opts.confirmLabel;
+    else if (yesBtn) yesBtn.innerText = 'Confirm';
+    s_confirmModalHandler = onConfirm;
+    s_confirmModalCancelHandler = onCancel || null;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
+function closeConfirmModal() {
+    const modal = document.getElementById('confirm-modal');
+    if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+    s_confirmModalHandler = null;
+    s_confirmModalCancelHandler = null;
+}
+
+let s_promptModalHandler = null;
+let s_promptModalRequiredText = null;
+
+function promptModal(message, requiredText, onConfirm) {
+    const modal = document.getElementById('prompt-modal');
+    const text = document.getElementById('prompt-modal-text');
+    const input = document.getElementById('prompt-modal-input');
+    const confirmBtn = document.getElementById('btn-prompt-modal-confirm');
+    if (!modal) { return; } // defensive fallback — should never happen
+    if (text) text.innerText = message;
+    if (input) input.value = '';
+    if (confirmBtn) confirmBtn.disabled = true;
+    s_promptModalHandler = onConfirm;
+    s_promptModalRequiredText = requiredText;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    if (input) setTimeout(() => input.focus(), 50);
+}
+
+function closePromptModal() {
+    const modal = document.getElementById('prompt-modal');
+    const input = document.getElementById('prompt-modal-input');
+    if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+    if (input) input.value = '';
+    s_promptModalHandler = null;
+    s_promptModalRequiredText = null;
 }
 
 // Shared "actually send the reboot" action for confirmReboot()'s onConfirm
@@ -1045,7 +1152,7 @@ function updateTelemetry(msg) {
 
     if(sensorPage && !sensorPage.classList.contains('hidden') && [1,3,4,5,6].includes(currentTabId)) {
         if(typeof drawChart === 'function') {
-            drawChart(currentSensorCtx, currentSensorCanvas, sensorBuffers[currentTabId], currentTabId === 1 ? '#4edea3' : '#afc6ff');
+            drawChart(currentSensorCtx, currentSensorCanvas, sensorBuffers[currentTabId], currentTabId === 1 ? 'secondary' : 'primary');
         }
         const unitStr = tabsData.units[currentTabId];
         const currentVal = sensorBuffers[currentTabId][sensorBuffers[currentTabId].length-1];
@@ -1070,11 +1177,12 @@ function updateTelemetry(msg) {
 // distinct and intentional, same note as in task_network.cpp.
 const S_EN_INDEX = { wl: 0, light: 1, tds: 2, dht: 3, ph: 4, wt: 5 };
 
-// Tab index -> short sensor id used by save_sensor_enabled/reset_sensor_pin.
-// Module-scope (not just inside DOMContentLoaded) so both the per-sensor
-// detail page's power toggle (handleToggle()) and the "Reset" button
-// (btn-reset-current-sensor) share this one mapping instead of each
-// maintaining their own copy.
+// Tab index -> short sensor id used by save_sensor_enabled/reset_sensor_pin/
+// save_sensor_demo. Module-scope (not just inside DOMContentLoaded) so both
+// the per-sensor detail page's power toggle (handleToggle()), the "Reset"
+// button (btn-reset-current-sensor), and the per-sensor Demo Mode toggle
+// (handleSensorPageDemoToggle(), further down) share
+// this one mapping instead of each maintaining their own copy.
 const TAB_TO_SENSOR_ID = { 1: "tds", 2: "dht", 3: "wt", 4: "light", 5: "wl", 6: "ph" };
 
 // ------------------------------------------------------------------
@@ -1276,6 +1384,20 @@ function updateConfigForm(msg) {
     if(document.getElementById('cfg-fb-email')) document.getElementById('cfg-fb-email').value = msg.fb_email || "";
     if(document.getElementById('cfg-fb-col')) document.getElementById('cfg-fb-col').value = msg.fb_col || "";
 
+    // Plaintext credentials (see broadcastConfig(), task_network.cpp, and
+    // auth_get_password_for_ws(), state.cpp, for the tradeoff this
+    // represents). wifi-pass/ap-pass are the same "leave blank to keep
+    // current" inputs used for saving — pre-filling them means an untouched
+    // Update Network click now re-submits the current password instead of
+    // leaving it unchanged server-side, so save_wifi (command_handlers.cpp)
+    // must treat "unchanged from msg.wifi_pass" the same as blank. cfg-fb-pass
+    // gets the same treatment for consistency with cfg-fb-api just above.
+    // cfg-admin-pass-display is read-only and never submitted anywhere.
+    if(document.getElementById('cfg-wifi-pass')) document.getElementById('cfg-wifi-pass').value = msg.wifi_pass || "";
+    if(document.getElementById('cfg-ap-pass')) document.getElementById('cfg-ap-pass').value = msg.ap_pass || "";
+    if(document.getElementById('cfg-fb-pass')) document.getElementById('cfg-fb-pass').value = msg.fb_pass || "";
+    if(document.getElementById('cfg-admin-pass-display')) document.getElementById('cfg-admin-pass-display').value = msg.admin_pass || "";
+
     // Re-run form validation now that fresh values landed in these fields —
     // same reasoning as the pin-field re-validation below.
     if (typeof validateWifiForm === 'function') validateWifiForm();
@@ -1306,22 +1428,46 @@ function updateConfigForm(msg) {
     if (!fbEnabledDirty && document.getElementById('cfg-fb-enabled')) document.getElementById('cfg-fb-enabled').checked = lastConfirmedFbEnabled;
 
     // Demo Mode toggle duplicated on the per-sensor and dual-sensor pages
-    // (see handleSensorPageDemoToggle() below) — same live value as
-    // cfg-demo-mode above, kept in sync here too so a page that isn't
+    // (see handleSensorPageDemoToggle() further
+    // down) — PER-SENSOR now, not the global demo_mode flag (that's what
+    // cfg-demo-mode above still mirrors). Reads directly from msg.pins[]
+    // rather than tabsData.gpios[] since that array isn't populated until
+    // later in this same function (see the msg.pins[] parsing further
+    // down) — this runs first, so it can't depend on that having already
+    // happened. Order matches broadcastConfig()'s own comment (task_network.cpp):
+    // TDS, DHT, pH, WaterTemp, WaterLevel, SDA, SCL, WaterLevelPower.
+    // Kept in sync here (not just in switchTab()) so a page that isn't
     // currently visible doesn't show stale state if the user switches to
     // it later without another config frame arriving first. Not staged —
-    // always mirrors the device's live value directly.
-    if(document.getElementById('sensor-demo-toggle')) document.getElementById('sensor-demo-toggle').checked = !!msg.demo;
-    if(document.getElementById('dual-sensor-demo-toggle')) document.getElementById('dual-sensor-demo-toggle').checked = !!msg.demo;
+    // always mirrors the device's live per-sensor value directly, same as
+    // the toggle always did before this was per-sensor.
+    if (Array.isArray(msg.pins) && msg.pins.length >= 8) {
+        const currentSensorId = TAB_TO_SENSOR_ID[currentTabId];
+        const pinsBySensor = { tds: msg.pins[0], dht: msg.pins[1], ph: msg.pins[2], wt: msg.pins[3], wl: msg.pins[4], light: msg.pins[5] };
+        const currentPin = currentSensorId ? pinsBySensor[currentSensorId] : undefined;
+        if (document.getElementById('sensor-demo-toggle')) document.getElementById('sensor-demo-toggle').checked = (currentPin === -42);
+        if (document.getElementById('dual-sensor-demo-toggle')) document.getElementById('dual-sensor-demo-toggle').checked = (currentPin === -42);
+    }
     syncDemoToggleLabel('sensor-demo-toggle', 'sensor-demo-toggle-state');
     syncDemoToggleLabel('dual-sensor-demo-toggle', 'dual-sensor-demo-toggle-state');
 
-    // Demo Mode badge on the Dashboard — only shown while demo mode is on, so
-    // simulated readings are never mistaken for real sensor data.
+    // Demo Mode badge on the Dashboard — shown whenever ANY sensor is
+    // currently simulated (msg.demo OR any single pin at the DEMO_MODE_PIN
+    // sentinel), not just while the global flag is on. This has to widen
+    // now that demo state can be per-sensor (save_sensor_demo,
+    // command_handlers.cpp): the badge's whole purpose is "don't mistake
+    // what you're seeing for real sensor data", and with a partial demo
+    // state (e.g. only TDS simulated) that warning is if anything MORE
+    // important, not less — showing it only for the all-sensors case would
+    // silently mislead someone looking at one faked card on an otherwise
+    // real dashboard.
     const demoBadge = document.getElementById('demo-mode-badge');
     if (demoBadge) {
-        demoBadge.classList.toggle('hidden', !msg.demo);
-        demoBadge.classList.toggle('flex', !!msg.demo);
+        const anySensorDemo = Array.isArray(msg.pins) && msg.pins.length >= 8 &&
+            [0, 1, 2, 3, 4, 5, 6].some((i) => msg.pins[i] === -42);
+        const showBadge = !!msg.demo || anySensorDemo;
+        demoBadge.classList.toggle('hidden', !showBadge);
+        demoBadge.classList.toggle('flex', showBadge);
     }
 
     // Pinout card lock — while Demo Mode is on, every pin field on the
@@ -1608,6 +1754,63 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ------------------------------------------------------------------
+    // Generic alert modal (see showAlertModal()/closeAlertModal() above) —
+    // single "OK" button, matching window.alert()'s only affordance.
+    // ------------------------------------------------------------------
+    const btnAlertOk = document.getElementById('btn-alert-modal-ok');
+    if (btnAlertOk) btnAlertOk.addEventListener('click', closeAlertModal);
+
+    // ------------------------------------------------------------------
+    // Generic confirm modal (see confirmModal()/closeConfirmModal() above)
+    // — same two-callback contract as the reboot-confirm modal above, just
+    // for non-reboot yes/no decisions (logout, manual reboot, pin reset).
+    // ------------------------------------------------------------------
+    const btnConfirmYes = document.getElementById('btn-confirm-modal-yes');
+    if (btnConfirmYes) {
+        btnConfirmYes.addEventListener('click', () => {
+            const handler = s_confirmModalHandler;
+            closeConfirmModal();
+            if (handler) handler();
+        });
+    }
+    const btnConfirmCancel = document.getElementById('btn-confirm-modal-cancel');
+    if (btnConfirmCancel) {
+        btnConfirmCancel.addEventListener('click', () => {
+            const cancelHandler = s_confirmModalCancelHandler;
+            closeConfirmModal();
+            if (cancelHandler) cancelHandler();
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // Generic prompt modal (see promptModal()/closePromptModal() above) —
+    // Confirm stays disabled until the typed text exactly matches the
+    // required phrase, mirroring the manual `typed !== "RESET"` check the
+    // old window.prompt()-based factory-reset flow used to do after the
+    // fact (this just prevents the click instead of rejecting it after).
+    // ------------------------------------------------------------------
+    const promptInput = document.getElementById('prompt-modal-input');
+    const btnPromptConfirm = document.getElementById('btn-prompt-modal-confirm');
+    if (promptInput && btnPromptConfirm) {
+        promptInput.addEventListener('input', () => {
+            btnPromptConfirm.disabled = (promptInput.value !== s_promptModalRequiredText);
+        });
+        promptInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !btnPromptConfirm.disabled) btnPromptConfirm.click();
+        });
+    }
+    if (btnPromptConfirm) {
+        btnPromptConfirm.addEventListener('click', () => {
+            if (btnPromptConfirm.disabled) return;
+            const handler = s_promptModalHandler;
+            closePromptModal();
+            if (handler) handler();
+        });
+    }
+    const btnPromptCancel = document.getElementById('btn-prompt-modal-cancel');
+    if (btnPromptCancel) btnPromptCancel.addEventListener('click', closePromptModal);
+
     // Settings > Change Password
     const btnChangePassword = document.getElementById('btn-change-password');
     if (btnChangePassword) {
@@ -1664,11 +1867,25 @@ document.addEventListener('DOMContentLoaded', () => {
         btnSaveWifi.addEventListener('click', () => {
             if (!validateWifiForm() || !validateApPassField()) return;
             const apPassEl = document.getElementById('cfg-ap-pass');
-            const newApPass = apPassEl ? apPassEl.value : '';
+            const rawApPass = apPassEl ? apPassEl.value : '';
+            // cfg-ap-pass/cfg-wifi-pass now arrive pre-filled with the
+            // device's live password (updateConfigForm() -> msg.ap_pass/
+            // msg.wifi_pass) so the reveal-eye has something to show. That
+            // means the field is no longer blank just because the user
+            // didn't touch it, so "did the user actually change this" has
+            // to be a comparison against the last value the device sent us,
+            // not a blank check — otherwise every save (even one that only
+            // touched the SSID) would resend the current password and
+            // needlessly re-trip save_wifi's changingWifiPass/changingApPass
+            // branches (command_handlers.cpp) on every click.
+            const newApPass = (rawApPass && rawApPass !== (globalConfigCache.ap_pass || '')) ? rawApPass : '';
+            const wifiPassEl = document.getElementById('cfg-wifi-pass');
+            const rawWifiPass = wifiPassEl ? wifiPassEl.value : '';
+            const newWifiPass = (rawWifiPass && rawWifiPass !== (globalConfigCache.wifi_pass || '')) ? rawWifiPass : '';
             const payload = {
                 command: "save_wifi",
                 ssid: document.getElementById('cfg-wifi-ssid').value,
-                pass: document.getElementById('cfg-wifi-pass').value
+                pass: newWifiPass
             };
             if (newApPass) payload.ap_pass = newApPass; // omit entirely when blank — server keeps the current one
             sendCommand(payload).then(() => {
@@ -1734,12 +1951,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if(btnSaveFb) {
         btnSaveFb.addEventListener('click', () => {
             if (!validateFirebaseForm()) return;
+            // cfg-fb-pass is pre-filled with the live device value the same
+            // way cfg-wifi-pass/cfg-ap-pass are (see the save_wifi handler
+            // above) — same "only send it if it actually changed" guard,
+            // for the same reason.
+            const fbPassEl = document.getElementById('cfg-fb-pass');
+            const rawFbPass = fbPassEl ? fbPassEl.value : '';
+            const newFbPass = (rawFbPass && rawFbPass !== (globalConfigCache.fb_pass || '')) ? rawFbPass : '';
             const payload = {
                 command: "save_firebase",
                 proj: document.getElementById('cfg-fb-proj').value,
                 api: document.getElementById('cfg-fb-api').value,
                 email: document.getElementById('cfg-fb-email').value,
-                pass: document.getElementById('cfg-fb-pass').value,
+                pass: newFbPass,
                 col: document.getElementById('cfg-fb-col').value
             };
             const wasDirty = fbEnabledDirty;
@@ -1954,7 +2178,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const targetPpm = parseFloat(document.getElementById('cfg-tds-target').value);
             const currentPpm = parseFloat(document.getElementById('cal-tds-raw').innerText);
             if (isNaN(targetPpm) || isNaN(currentPpm) || currentPpm === 0) {
-                alert("Invalid TDS readings");
+                showAlertModal("Invalid TDS readings", true);
                 return;
             }
             const currentK = globalConfigCache.tds_k || 1.0;
@@ -2060,7 +2284,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // stale click queued just before the sensor was disabled.
             if (!tabsData.enabled[6]) { updateCalibrationGating(); return; }
             const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
-            if (isNaN(livePh)) { alert("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected."); return; }
+            if (isNaN(livePh)) { showAlertModal("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected.", true); return; }
             const off = globalConfigCache.ph_off || 0.0;
             const slope = globalConfigCache.ph_slope || 1.0;
             ph7Volt = (livePh - off) / slope;
@@ -2075,14 +2299,14 @@ document.addEventListener('DOMContentLoaded', () => {
         btnCalPh4.addEventListener('click', () => {
             if (!tabsData.enabled[6]) { updateCalibrationGating(); return; }
             const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
-            if (isNaN(livePh)) { alert("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected."); return; }
+            if (isNaN(livePh)) { showAlertModal("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected.", true); return; }
             if (ph7Volt === null) { setPhStepUI(1); return; } // shouldn't happen, but don't let Step 2 run without Step 1
             const off = globalConfigCache.ph_off || 0.0;
             const slope = globalConfigCache.ph_slope || 1.0;
             ph4Volt = (livePh - off) / slope;
 
             if (ph4Volt === ph7Volt) {
-                alert("The 4.0 reading matches the 7.0 reading exactly — the probe may still be in the first solution. Rinse it and place it in the pH 4.0 buffer before capturing.");
+                showAlertModal("The 4.0 reading matches the 7.0 reading exactly — the probe may still be in the first solution. Rinse it and place it in the pH 4.0 buffer before capturing.", true);
                 ph4Volt = null;
                 return;
             }
@@ -2106,7 +2330,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if(btnCalPhSave) {
         btnCalPhSave.addEventListener('click', () => {
             if (ph7Volt === null || ph4Volt === null || ph7Volt === ph4Volt) {
-                alert("Please complete both Step 1 (pH 7.0) and Step 2 (pH 4.0) before saving.");
+                showAlertModal("Please complete both Step 1 (pH 7.0) and Step 2 (pH 4.0) before saving.", true);
                 return;
             }
             const newSlope = (7.0 - 4.0) / (ph7Volt - ph4Volt);
@@ -2139,50 +2363,55 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const btnLogout = document.getElementById('btn-logout');
     if(btnLogout) btnLogout.addEventListener('click', () => {
-        if(!confirm("Log out? You'll need your password again to get back in.")) return;
-        if (!websocket || websocket.readyState !== WebSocket.OPEN) {
-            // No live connection to tell the device about — nothing server-side
-            // to invalidate, so just drop the local token and show the login
-            // screen directly rather than leaving the button silently do nothing.
-            setStoredAuthToken('');
-            showAuthPanel(lastAuthStatusSetupRequired ? 'setup' : 'login');
-            return;
-        }
-        websocket.send(JSON.stringify({command: "logout"}));
+        confirmModal("Log out? You'll need your password again to get back in.", () => {
+            if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+                // No live connection to tell the device about — nothing server-side
+                // to invalidate, so just drop the local token and show the login
+                // screen directly rather than leaving the button silently do nothing.
+                setStoredAuthToken('');
+                showAuthPanel(lastAuthStatusSetupRequired ? 'setup' : 'login');
+                return;
+            }
+            websocket.send(JSON.stringify({command: "logout"}));
+        }, null, { title: 'Log Out?', confirmLabel: 'Log Out' });
     });
 
     const btnReboot = document.getElementById('btn-reboot');
     if(btnReboot) btnReboot.addEventListener('click', () => {
-        if(!confirm("Reboot the device?")) return;
-        // Deliberately NOT routed through sendCommand(): reboot's handler
-        // (command_handlers.cpp) calls ESP.restart() directly with no
-        // sendCmdAck() on the success path — the device is gone before it
-        // could send one. Waiting on an ack here would time out on every
-        // single successful reboot and show a false "failed" error.
-        if (!websocket || websocket.readyState !== WebSocket.OPEN) { alert("Not connected to the device right now."); return; }
-        websocket.send(JSON.stringify({command: "reboot"}));
+        confirmModal("Reboot the device?", () => {
+            // Deliberately NOT routed through sendCommand(): reboot's handler
+            // (command_handlers.cpp) calls ESP.restart() directly with no
+            // sendCmdAck() on the success path — the device is gone before it
+            // could send one. Waiting on an ack here would time out on every
+            // single successful reboot and show a false "failed" error.
+            if (!websocket || websocket.readyState !== WebSocket.OPEN) { showAlertModal("Not connected to the device right now.", true); return; }
+            websocket.send(JSON.stringify({command: "reboot"}));
+        }, null, { title: 'Reboot Device?', confirmLabel: 'Reboot Now' });
     });
 
     const btnReset = document.getElementById('btn-factory-reset');
     if(btnReset) btnReset.addEventListener('click', () => {
-        // A single confirm() popup is one accidental click away from wiping
+        // A single confirm() popup was one accidental click away from wiping
         // every setting on the device (Wi-Fi, Firebase, calibration, pins,
         // admin password — everything in state_factory_reset()). Requiring
         // the user to type the exact word "RESET" is a much stronger,
         // harder-to-fat-finger gate than a Yes/No dialog, while still being
         // a client-side UX safeguard rather than a security boundary (the
         // device itself has no way to know what the browser prompted with).
-        const typed = prompt("This will permanently erase ALL settings on this device — Wi-Fi, Firebase credentials, calibration, pin assignments, and the admin password.\n\nThis cannot be undone.\n\nType RESET (all caps) to confirm:");
-        if (typed === null) return; // user cancelled
-        if (typed !== "RESET") {
-            alert("Factory reset cancelled — you must type RESET exactly.");
-            return;
-        }
-        // Same reasoning as btn-reboot above: state_factory_reset() also
-        // restarts the device with no ack on the way out, so this stays a
-        // raw send rather than going through sendCommand().
-        if (!websocket || websocket.readyState !== WebSocket.OPEN) { alert("Not connected to the device right now."); return; }
-        websocket.send(JSON.stringify({command: "factory_reset"}));
+        // promptModal()'s Confirm button stays disabled until the typed text
+        // is an exact match, so there's no "wrong text" branch to handle here
+        // the way the old prompt()-based flow needed — only true cancel.
+        promptModal(
+            "This will permanently erase ALL settings on this device — Wi-Fi, Firebase credentials, calibration, pin assignments, and the admin password.\n\nThis cannot be undone.\n\nType RESET (all caps) to confirm:",
+            "RESET",
+            () => {
+                // Same reasoning as btn-reboot above: state_factory_reset() also
+                // restarts the device with no ack on the way out, so this stays a
+                // raw send rather than going through sendCommand().
+                if (!websocket || websocket.readyState !== WebSocket.OPEN) { showAlertModal("Not connected to the device right now.", true); return; }
+                websocket.send(JSON.stringify({command: "factory_reset"}));
+            }
+        );
     });
 
     const btnTermPause = document.getElementById('btn-term-pause');
@@ -2210,7 +2439,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // array exportSeriesToCsv expects) — guard the same way
             // updateTelemetry() already gates chart drawing for these tabs.
             if (!Array.isArray(buf)) {
-                alert("CSV export isn't available for this page.");
+                showAlertModal("CSV export isn't available for this page.", true);
                 return;
             }
             const sensorName = (tabsData.labels[currentTabId] || "sensor").replace(/\s+/g, '_');
@@ -2224,7 +2453,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnExport = document.getElementById('btn-export-csv');
     if(btnExport) {
         btnExport.addEventListener('click', () => {
-            if(!sensorBuffers[1].length) { alert("Waiting for telemetry data..."); return; }
+            if(!sensorBuffers[1].length) { showAlertModal("Waiting for telemetry data...", true); return; }
 
             let csv = "data:text/csv;charset=utf-8,\n";
             csv += "--- SYSTEM CONFIGURATION ---\n";
@@ -2342,31 +2571,33 @@ document.addEventListener('DOMContentLoaded', () => {
     // the device reboots) is treated as success and simply times out the
     // listener with no user-visible effect.
     const sendResetSensorPin = (sensorId) => {
-        if (!confirm(`Reset the '${sensorId}' pin(s) to the factory default and reboot?`)) return;
-        if (!websocket || websocket.readyState !== WebSocket.OPEN) { alert("Not connected to the device right now."); return; }
+        confirmModal(`Reset the '${sensorId}' pin(s) to the factory default and reboot?`, () => {
+            if (!websocket || websocket.readyState !== WebSocket.OPEN) { showAlertModal("Not connected to the device right now.", true); return; }
 
-        const onResult = (msg) => {
-            if (msg.type !== "command_result" || msg.command !== "reset_sensor_pin") return;
-            resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
-            if (!msg.ok) {
-                alert(`Pin reset failed: ${msg.error || 'the device rejected the request.'}`);
+            const onResult = (msg) => {
+                if (msg.type !== "command_result" || msg.command !== "reset_sensor_pin") return;
+                resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
+                if (!msg.ok) {
+                    showAlertModal(`Pin reset failed: ${msg.error || 'the device rejected the request.'}`, true);
+                }
+                // ok:true is never actually sent (see comment above) — this
+                // branch exists only so a future firmware change that DOES ack
+                // success doesn't silently do nothing here.
+            };
+            resetSensorPinListeners.push(onResult);
+            setTimeout(() => {
+                resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
+            }, ACK_TIMEOUT_MS);
+
+            try {
+                websocket.send(JSON.stringify({ command: "reset_sensor_pin", sensor: sensorId }));
+            } catch (e) {
+                resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
+                showAlertModal("Failed to send reset request: " + e.message, true);
             }
-            // ok:true is never actually sent (see comment above) — this
-            // branch exists only so a future firmware change that DOES ack
-            // success doesn't silently do nothing here.
-        };
-        resetSensorPinListeners.push(onResult);
-        setTimeout(() => {
-            resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
-        }, ACK_TIMEOUT_MS);
-
-        try {
-            websocket.send(JSON.stringify({ command: "reset_sensor_pin", sensor: sensorId }));
-        } catch (e) {
-            resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
-            alert("Failed to send reset request: " + e.message);
-        }
+        }, null, { title: 'Reset Pin?', confirmLabel: 'Reset & Reboot' });
     };
+
 
     document.querySelectorAll('[data-reset-sensor]').forEach((btn) => {
         btn.addEventListener('click', () => sendResetSensorPin(btn.dataset.resetSensor));
@@ -2478,26 +2709,70 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Demo Mode toggle duplicated on the single-sensor detail page and the
-    // dual-sensor (Air Temp & Hum) page — same underlying switch as
-    // cfg-demo-mode above, just reachable without a trip to Settings.
-    // Deliberately NOT staged like the Settings copy above: this one still
+    // dual-sensor (Air Temp & Hum) page — now a PER-SENSOR toggle (see
+    // save_sensor_demo, command_handlers.cpp) rather than the global
+    // demo_mode flag: flipping it only simulates the ONE sensor currently
+    // showing, leaving every other sensor's real/demo state untouched.
+    // This is a behavior change from before — the toggle used to call
+    // sendFeatureFlags (save_features, the same global switch as
+    // Settings > Feature Flags), which is still what the Settings copy of
+    // this toggle uses (see sendFeatureFlags() above, unchanged). Still
     // applies immediately with its own reboot-confirm dialog, matching the
-    // existing "Enable Power" toggle right next to it on the same page
-    // (see handleToggle() above) — a quick contextual action on a sensor's
-    // own page, not a Settings form field. Both share this one handler;
-    // syncDemoToggleLabel() (called from switchTab() and updateConfigForm())
-    // keeps whichever one isn't currently visible in sync too, so neither
-    // goes stale while hidden.
-    const handleSensorPageDemoToggle = (e) => {
-        sendFeatureFlags(e.target, e.target.checked).catch((err) => {
-            e.target.checked = !e.target.checked;
-            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Feature flag change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
+    // existing "Enable Power" toggle right next to it on the same page —
+    // modeled directly on handleToggle() just above (same TAB_TO_SENSOR_ID
+    // lookup, same startedOnTabId staleness guard against the tab changing
+    // before the WS ack returns, since #sensor-demo-toggle/
+    // #dual-sensor-demo-toggle are shared DOM elements reused across every
+    // tab, exactly like #sensor-toggle/#dual-sensor-toggle are) — a quick
+    // contextual action on a sensor's own page, not a Settings form field,
+    // so not staged like the Settings > Feature Flags copy.
+    const handleSensorPageDemoToggle = (e, tabId) => {
+        const demo = e.target.checked;
+        const sensorId = TAB_TO_SENSOR_ID[tabId];
+        if (!sensorId) return; // toggle fired on a tab with no corresponding sensor — shouldn't happen, but don't send a malformed command if it does
+
+        const toggleLabelId = e.target.id === 'dual-sensor-demo-toggle' ? 'dual-sensor-demo-toggle-state' : 'sensor-demo-toggle-state';
+        syncDemoToggleLabel(e.target.id, toggleLabelId); // immediate feedback on click, before the round-trip completes
+
+        const startedOnTabId = tabId;
+        e.target.disabled = true;
+        sendCommand({ command: "save_sensor_demo", sensor: sensorId, demo }).then((msg) => {
+            if (currentTabId !== startedOnTabId) {
+                // Same staleness guard as handleToggle() above — user
+                // navigated away before the ack came back. Still re-enable
+                // the toggle so it isn't stranded disabled if they come
+                // back to this tab; switchTab() already re-syncs its
+                // checked state from the fresh pin data by then.
+                e.target.disabled = false;
+                return;
+            }
+            e.target.disabled = false;
+            // reboot_required mirrors save_features's own convention (see
+            // sendFeatureFlags() above) — only true when this sensor's demo
+            // state actually changed (see command_handlers.cpp), so
+            // re-toggling to the same state never pops a needless prompt.
+            if (msg && msg.reboot_required) {
+                confirmReboot(
+                    `Demo Mode ${demo ? "enabled" : "disabled"} for this sensor. The ESP32 must reboot to safely apply this change. Reboot now?`,
+                    sendReboot,
+                    () => {
+                        e.target.checked = !demo;
+                        syncDemoToggleLabel(e.target.id, toggleLabelId);
+                    }
+                );
+            }
+        }).catch((err) => {
+            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Demo Mode change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
+            e.target.disabled = false;
+            if (currentTabId !== startedOnTabId) return; // stale — switchTab() already shows the real state for whatever tab is open now
+            e.target.checked = !demo; // revert — the device never actually applied this
+            syncDemoToggleLabel(e.target.id, toggleLabelId);
         });
     };
     const sensorDemoToggle = document.getElementById('sensor-demo-toggle');
-    if (sensorDemoToggle) sensorDemoToggle.addEventListener('change', handleSensorPageDemoToggle);
+    if (sensorDemoToggle) sensorDemoToggle.addEventListener('change', (e) => handleSensorPageDemoToggle(e, currentTabId));
     const dualSensorDemoToggle = document.getElementById('dual-sensor-demo-toggle');
-    if (dualSensorDemoToggle) dualSensorDemoToggle.addEventListener('change', handleSensorPageDemoToggle);
+    if (dualSensorDemoToggle) dualSensorDemoToggle.addEventListener('change', (e) => handleSensorPageDemoToggle(e, 2));
 
     // ------------------------------------------------------------------
     // Per-sensor enable toggle inside each pinout card in Settings — now

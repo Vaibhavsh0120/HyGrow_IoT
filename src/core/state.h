@@ -192,6 +192,11 @@ void auth_reset();                         // wipe ONLY the password + token (BO
 // Boot-time Serial banner only (HyGrow_IoT.ino setup()) — never sent over
 // the network. See the comment on the definition in state.cpp.
 String auth_get_password_for_boot_display();
+// Returns the current plaintext admin password, or "" if unconfigured.
+// Unlike auth_get_password_for_boot_display() above, this IS sent over the
+// network — see the comment on its definition in state.cpp for the trust
+// tradeoff this represents before calling it from anywhere new.
+String auth_get_password_for_ws();
 
 // Log helper — core is 0 (network) or 1 (sensor); level is LOG_INFO/WARN/ERR.
 // Every call does three things, always in this order, so the Serial monitor

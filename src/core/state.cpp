@@ -581,6 +581,22 @@ String auth_get_password_for_boot_display()
   return auth_is_configured() ? String(s_adminPass) : String("(not set — open the web UI to create one)");
 }
 
+// Deliberately breaks the boundary described above: this value now travels
+// over the WebSocket to any client that has already passed auth (see
+// broadcastConfig(), task_network.cpp, which is the only caller). Once a
+// browser holds the dashboard session, it can also read back the plaintext
+// admin password, WiFi password, SoftAP password, and Firebase password
+// (see wifi_pass/ap_pass/fb_pass in broadcastConfig()) — a real widening of
+// who can obtain those credentials, not just a UI convenience. Kept as its
+// own function (rather than repurposing auth_get_password_for_boot_display())
+// so the two trust boundaries — physical serial vs. authenticated WebSocket —
+// stay visibly distinct in the code even though they now return the same
+// value.
+String auth_get_password_for_ws()
+{
+  return auth_is_configured() ? String(s_adminPass) : String("");
+}
+
 bool auth_check_password(const String &candidate)
 {
   if (!auth_is_configured())
