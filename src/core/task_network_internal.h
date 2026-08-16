@@ -12,7 +12,7 @@
 //                           + broadcastVitals()/broadcastConfig()/broadcastData()
 //   auth.cpp              — single-owner login: s_authedClients tracking,
 //                           sendAuthStatus(), handleAuthCommand(),
-//                           handleChangePasswordCommand()
+//                           handleLogoutCommand(), handleChangePasswordCommand()
 //   firebase.cpp           — Firestore token exchange + firebaseUploadCycle()
 //   websocket.cpp          — wsTextAllAuthed(), onWsEvent(),
 //                           handleWebSocketMessage() (the top-level frame
@@ -55,6 +55,7 @@ void sendAuthStatus(AsyncWebSocketClient *client);
 void broadcastAuthStatus();
 void auth_reset_session_and_lockout();
 void handleAuthCommand(AsyncWebSocketClient *client, JsonDocument &doc);
+void handleLogoutCommand(AsyncWebSocketClient *client, JsonDocument &doc);
 void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc);
 
 // ---------- firebase.cpp ----------

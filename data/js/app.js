@@ -57,6 +57,54 @@ let currentSensorCtx = null;
 const canvasDual = document.getElementById('telemetryChartDual');
 const ctxDual = canvasDual ? canvasDual.getContext('2d') : null;
 
+// Mobile sidebar overlay (below the 768px `md` breakpoint — see the fix #5
+// CSS comment in style.css for the full behavior). Owns opening/closing
+// #sideNav's `.hg-sidenav-mobile-open` class and #mobile-nav-scrim's
+// visibility together, so they can never drift out of sync with each other.
+function setMobileNavOpen(open) {
+    const nav = document.getElementById('sideNav');
+    const scrim = document.getElementById('mobile-nav-scrim');
+    const btn = document.getElementById('btn-mobile-menu');
+    if (!nav) return;
+    nav.classList.toggle('hg-sidenav-mobile-open', open);
+    if (scrim) scrim.classList.toggle('hidden', !open);
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    // Prevents the page behind the full-screen overlay from scrolling along
+    // with it on iOS — without this, a swipe that starts on the overlay can
+    // still rubber-band/scroll <main> underneath, which reads as the menu
+    // itself being broken/laggy.
+    document.body.classList.toggle('overflow-hidden', open);
+}
+
+function isMobileNavOpen() {
+    const nav = document.getElementById('sideNav');
+    return !!nav && nav.classList.contains('hg-sidenav-mobile-open');
+}
+
+function initMobileNav() {
+    const btnOpen = document.getElementById('btn-mobile-menu');
+    const btnClose = document.getElementById('btn-mobile-nav-close');
+    const scrim = document.getElementById('mobile-nav-scrim');
+
+    if (btnOpen) btnOpen.addEventListener('click', () => setMobileNavOpen(!isMobileNavOpen()));
+    if (btnClose) btnClose.addEventListener('click', () => setMobileNavOpen(false));
+    if (scrim) scrim.addEventListener('click', () => setMobileNavOpen(false));
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && isMobileNavOpen()) setMobileNavOpen(false);
+    });
+
+    // A resize that crosses back up into the md/lg desktop layout (e.g.
+    // rotating an iPhone in a stage-manager/external-display setup, or
+    // just a window resize on a browser dev-tools device toolbar) should
+    // never leave the overlay state stuck open and unreachable behind the
+    // now-fixed desktop sidebar — close it whenever the viewport is no
+    // longer in the mobile range this behavior applies to.
+    window.addEventListener('resize', () => {
+        if (window.innerWidth >= 768 && isMobileNavOpen()) setMobileNavOpen(false);
+    });
+}
+
 function initNavigation() {
     const navTabsContainer = document.getElementById('nav-tabs');
     if (!navTabsContainer) return;
@@ -113,6 +161,11 @@ function syncPowerToggleLabel(toggleId, labelId) {
 function switchTab(index, element) {
     currentTabId = index;
     const navTabsContainer = document.getElementById('nav-tabs');
+
+    // On the mobile overlay, selecting a page means "go there" — leaving the
+    // menu open over the freshly-switched page would just be in the way.
+    // No-op at md and up, where the sidebar was never in overlay mode.
+    if (isMobileNavOpen()) setMobileNavOpen(false);
 
     // Update Active Classes
     Array.from(navTabsContainer.children).forEach(child => {
@@ -415,6 +468,21 @@ function handleChangePasswordResult(msg) {
     }
 }
 
+// Handles the device's "logout_result" frame, sent in response to
+// { command: "logout" } (see handleLogoutCommand() in auth.cpp). The server
+// has already invalidated the stored session token and broadcast a fresh
+// auth_status to every connection by this point, but this client's own
+// localStorage token is cleared here immediately rather than waiting for
+// that broadcast to arrive — otherwise handleAuthStatus() would try one
+// doomed silent-reauth with the now-invalid token first (getStoredAuthToken()
+// still returning the stale value), get rejected, and only then fall back to
+// the login screen. Clearing it here skips straight there.
+function handleLogoutResult(msg) {
+    if (!msg.ok) return; // nothing to clean up client-side if the server didn't confirm
+    setStoredAuthToken('');
+    showAuthPanel(lastAuthStatusSetupRequired ? 'setup' : 'login');
+}
+
 // ============================================================================
 // 2. WEBSOCKET & DATA HANDLING
 // ============================================================================
@@ -636,6 +704,7 @@ function onMessage(event) {
     if (msg.type === "auth_status") handleAuthStatus(msg);
     else if (msg.type === "auth_result") handleAuthResult(msg);
     else if (msg.type === "change_password_result") handleChangePasswordResult(msg);
+    else if (msg.type === "logout_result") handleLogoutResult(msg);
     else if (msg.type === "command_result") handleCommandResult(msg);
     else if (msg.type === "vitals") updateVitals(msg);
     else if (msg.type === "data") updateTelemetry(msg);
@@ -1140,6 +1209,7 @@ function updateTerminal(msg) {
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
+    initMobileNav();
     initWebSocket();
     setTimeout(resizeCanvas, 100);
 
@@ -1652,6 +1722,20 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+
+    const btnLogout = document.getElementById('btn-logout');
+    if(btnLogout) btnLogout.addEventListener('click', () => {
+        if(!confirm("Log out? You'll need your password again to get back in.")) return;
+        if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+            // No live connection to tell the device about — nothing server-side
+            // to invalidate, so just drop the local token and show the login
+            // screen directly rather than leaving the button silently do nothing.
+            setStoredAuthToken('');
+            showAuthPanel(lastAuthStatusSetupRequired ? 'setup' : 'login');
+            return;
+        }
+        websocket.send(JSON.stringify({command: "logout"}));
+    });
 
     const btnReboot = document.getElementById('btn-reboot');
     if(btnReboot) btnReboot.addEventListener('click', () => {

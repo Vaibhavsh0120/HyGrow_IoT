@@ -60,6 +60,17 @@ behavior, not a bug.
   against the fresh password (every other session's token, including this
   one's old value, is invalidated).
 
+- `{"command": "logout"}` — invalidates the single stored session token
+  (same reissue mechanism as `change_password`, just without setting a new
+  password) and disconnects every currently-authed WS client, including
+  this one, back to the login screen. This is a deliberate all-or-nothing
+  logout consistent with the single-remembered-session model above: there's
+  no way to log out only this browser while leaving another one's token
+  valid. Response: `{"type": "logout_result", "ok": true}`. The frontend
+  clears its own `localStorage` token on receiving this rather than relying
+  on the reconnect to notice, so the UI returns to the login screen
+  immediately.
+
 **BOOT-button recovery:** holding the onboard BOOT button resets the admin
 password/session so a lost password doesn't permanently lock a device out
 (see `state.cpp` / `led_status.cpp` for the hold-duration thresholds).

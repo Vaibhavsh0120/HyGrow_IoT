@@ -48,7 +48,12 @@
   font-family: 'Material Symbols Outlined';
   font-style: normal;
   font-weight: 100 700;
-  font-display: block;
+  /* This file is a hand-subsetted 20KB font containing only the 21 glyphs
+     this app actually uses (subset from the full ~4MB Material Symbols
+     set). At this size font-display: block's ~3s invisible-text window is
+     never actually reached on LittleFS, but swap is used anyway to match
+     the other three fonts and avoid any FOIT even in the worst case. */
+  font-display: swap;
   src: url('../fonts/material-symbols-outlined.woff2') format('woff2');
 }
 
@@ -64,8 +69,11 @@
   white-space: nowrap;
   word-wrap: normal;
   direction: ltr;
-  font-feature-settings: 'liga';
-  -webkit-font-feature-settings: 'liga';
+  /* Note: this font ligates icon names via the always-on 'rlig'/'rclt'
+     OpenType features, not 'liga' (it has no 'liga' feature table), so
+     the substitution fires automatically and no font-feature-settings
+     is actually required here. Kept unset rather than declaring a no-op
+     'liga' value that doesn't reflect how this font works. */
   -webkit-font-smoothing: antialiased;
 }
 
@@ -96,6 +104,16 @@ body {
 /*
  * Liquid Glass Effect
  * High-performance blurred UI for cards and navigation
+ *
+ * Perf note: backdrop-filter: blur() is expensive because, without a
+ * compositing hint, the browser can end up re-sampling everything behind
+ * the element on every scroll/paint frame — this was the dominant cause
+ * of laggy scrolling, especially on iOS Safari with ~36 .liquid-glass
+ * elements on screen (dashboard cards) plus a permanently fixed, blurred
+ * sidebar sitting over the scrolling <main> the whole time. `will-change`
+ * plus a 3D transform promotes each card to its own GPU compositor layer,
+ * so the blur is computed once and cached rather than recomputed against
+ * the full page on every frame beneath it.
  */
 .liquid-glass {
     background: rgba(255, 255, 255, 0.03);
@@ -103,6 +121,20 @@ body {
     -webkit-backdrop-filter: saturate(180%) blur(20px);
     border: 1px solid rgba(255, 255, 255, 0.08);
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+    will-change: backdrop-filter;
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+}
+
+/* The sidebar is the one .liquid-glass element that's both fixed AND
+   permanently overlaps the scrolling <main> behind it on every frame
+   (dashboard cards only overlap their own static position). Even with
+   layer promotion, its blur source keeps repainting as <main> scrolls
+   underneath it, so it gets a lighter blur radius than the resting
+   cards — still reads as "glass" but is meaningfully cheaper per frame. */
+#sideNav.liquid-glass {
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
 }
 
 /*
@@ -1109,8 +1141,16 @@ video {
   outline: 2px solid transparent;
   outline-offset: 2px;
 }
+/* Was `transition-property: all`, which makes the browser watch every
+   animatable CSS property for changes rather than just the ones that are
+   actually ever touched here. Every real usage in this app only animates
+   background-color/color/opacity/filter (button hovers) or width/margin
+   (the sidebar + main-content shift at the lg breakpoint), so the property
+   list is narrowed to exactly that — same visual result, less work per
+   frame while any of these elements are transitioning. */
 .transition-all {
-  transition-property: all;
+  transition-property: background-color, border-color, color, opacity,
+    filter, box-shadow, width, margin-left, transform;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 0.15s;
 }
@@ -1134,6 +1174,17 @@ video {
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   border: 1px solid hsla(0, 0%, 100%, 0.08);
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  /* See the perf comment on the first .liquid-glass rule earlier in this
+     file — this duplicate declaration is later in source order so it's
+     the one that actually wins the cascade; the compositor-layer hint
+     has to be repeated here too or it gets silently overridden back out. */
+  will-change: backdrop-filter;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+#sideNav.liquid-glass {
+  backdrop-filter: saturate(180%) blur(12px);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
 }
 /* Floating-panel surface for #auth-login, #auth-setup, and #reboot-confirm
    — see the --hg-modal-surface token comment (theme block, further down
@@ -1148,6 +1199,9 @@ video {
   -webkit-backdrop-filter: saturate(180%) blur(20px);
   border: 1px solid hsla(0, 0%, 100%, 0.08);
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 /* Auth overlay's dimmed backdrop (see #auth-overlay in index.html) — a
    softer blur than .liquid-glass's 20px, just enough to obscure the
@@ -1155,6 +1209,9 @@ video {
 .backdrop-blur-xl {
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
@@ -1857,7 +1914,7 @@ body {
 /* ==========================================================================
    Mobile / cross-device pass (macOS Safari/Chrome, iPad, iPhone)
    ==========================================================================
-   Four independent fixes, each targeting a specific real-device symptom
+   Five independent fixes, each targeting a specific real-device symptom
    rather than a general "make it responsive" pass — the layout itself
    (Tailwind-style utility classes, flex/grid) already adapts fine across
    sizes; these are the platform-specific gaps that utility classes alone
@@ -1930,4 +1987,61 @@ body {
 #sideNav,
 main {
   -webkit-overflow-scrolling: touch;
+}
+
+/* 5. Mobile sidebar overlay (below the 768px `md` breakpoint — iPhone and
+   small-screen use only; iPad's existing icon-only mini sidebar and
+   desktop's full sidebar, both `md` and up, are completely unaffected by
+   any rule in this block).
+
+   Below md, #sideNav starts translated fully off-canvas (hidden, not just
+   narrow) instead of the permanent w-20 icon rail it shows from md up —
+   there's no room for even an icon-only rail next to real content on a
+   360-430px-wide phone. #btn-mobile-menu (fixed, top-left, safe-area-aware)
+   toggles a `.hg-sidenav-mobile-open` class on #sideNav to slide it in as a
+   full-width/full-height overlay, with #mobile-nav-scrim dimming <main>
+   behind it. JS in app.js (see initMobileNav()) owns adding/removing that
+   class and the scrim's hidden state together, plus closing on scrim tap,
+   Escape, and after any nav-tab selection.
+
+   Uses transform (not width/display) for the slide so it composites on its
+   own GPU layer instead of triggering layout on every open/close, matching
+   the same perf reasoning as the .liquid-glass will-change fix above. */
+@media (max-width: 767px) {
+  .hg-sidenav-mobile-hidden {
+    width: 100vw;
+    height: 100dvh;
+    top: 0;
+    left: 0;
+    border-radius: 0;
+    transform: translateX(-100%);
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .hg-sidenav-mobile-hidden.hg-sidenav-mobile-open {
+    transform: translateX(0);
+  }
+  /* Full-screen overlay state shows the text labels (normally an lg-and-up
+     thing) and the close button, and stretches the nav list to fill the
+     extra vertical room instead of staying icon-rail-narrow. */
+  .hg-sidenav-mobile-hidden #nav-tabs {
+    align-items: stretch;
+  }
+  .hg-sidenav-mobile-hidden h1,
+  .hg-sidenav-mobile-hidden #nav-tabs span.font-label-md {
+    display: block !important;
+  }
+  .hg-sidenav-mobile-hidden span.material-symbols-outlined.lg\:hidden {
+    display: none !important;
+  }
+  #btn-mobile-nav-close {
+    display: flex !important;
+  }
+}
+/* #mobile-nav-scrim only ever renders below md — the inline .hidden class
+   plus this rule keeps it fully inert (no hit-testing, no paint) at md and
+   up even if JS ever left it toggled open from a narrower viewport. */
+@media (min-width: 768px) {
+  #mobile-nav-scrim {
+    display: none !important;
+  }
 }

@@ -99,6 +99,12 @@ void handleWebSocketMessage(AsyncWebSocketClient *client, void *arg, uint8_t *da
             return;
         }
 
+        if (cmd == "logout")
+        {
+            handleLogoutCommand(client, doc);
+            return;
+        }
+
         // Every remaining command name (save_wifi, save_pins, calibrate_*,
         // factory_reset, reboot, request_vitals, ...) lives in
         // command_handlers.cpp.

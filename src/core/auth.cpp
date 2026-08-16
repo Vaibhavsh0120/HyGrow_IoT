@@ -242,6 +242,32 @@ void handleAuthCommand(AsyncWebSocketClient *client, JsonDocument &doc)
     }
 }
 
+// Handles { command: "logout" } — the Logout button in Settings/sidebar.
+// Unlike simply clearing the client's own localStorage token (which would
+// leave the old token silently valid for any other tab/browser that still
+// has it — this device's single stored session token has no per-client
+// scoping), this reissues the session token the same way
+// handleChangePasswordCommand() does, which invalidates every previously
+// issued token everywhere, then drops every currently-authed WS client
+// (including this one) so every open tab is forced back to the login
+// screen rather than continuing to act on now-stale in-memory state.
+void handleLogoutCommand(AsyncWebSocketClient *client, JsonDocument &doc)
+{
+    (void)doc; // logout takes no fields today; kept for dispatch-signature consistency with the other handlers
+    auth_issue_token();      // invalidate the stored token everywhere — nothing currently in localStorage (this browser or any other) will silently reauth
+    s_authedClients.clear(); // every open tab, including this one, goes back to the login screen on its next command/reconnect
+    broadcastAuthStatus();   // re-sends auth_status to every connection so already-open tabs show the login/setup overlay immediately, not just on next reload
+
+    JsonDocument resp;
+    resp["type"] = "logout_result";
+    resp["ok"] = true;
+    String payload;
+    serializeJson(resp, payload);
+    client->text(payload);
+
+    webLog(0, LOG_INFO, "Client " + String(client->id()) + " logged out.");
+}
+
 // Handles { command: "change_password", current: "...", new_pass: "..." } —
 // Settings > Change Password. Requires the CURRENT password even though this
 // client is already authenticated: a stolen/left-open session token alone

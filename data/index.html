@@ -167,8 +167,35 @@
         </div>
     </div>
 
+    <!-- MOBILE MENU BUTTON — iPhone/small-screen only (hidden at md and up,
+         where the icon-only or full sidebar is already visible on-screen).
+         Fixed and independent of any page's own header markup, since every
+         page-section has a different header layout — a single global button
+         here is more robust than duplicating a trigger into each one.
+         Positioned inside the safe-area inset so it clears the iPhone
+         notch/Dynamic Island rather than sitting under it. -->
+    <button id="btn-mobile-menu" aria-label="Open menu" aria-expanded="false" aria-controls="sideNav"
+        class="liquid-glass md:hidden fixed z-40 w-12 h-12 rounded-2xl flex items-center justify-center text-white"
+        style="top: calc(env(safe-area-inset-top, 0px) + 1rem); left: calc(env(safe-area-inset-left, 0px) + 1rem);">
+        <span class="material-symbols-outlined" aria-hidden="true" id="btn-mobile-menu-icon">menu</span>
+    </button>
+
+    <!-- Backdrop scrim shown behind the sidebar only while it's open as a
+         mobile overlay. Sits above <main> (z-10) but below the auth overlay
+         (z-[100]) so a still-unauthenticated session can never reveal the
+         dashboard sidebar behind it. Tapping it closes the sidebar, same as
+         tapping outside any other overlay in this app. -->
+    <div id="mobile-nav-scrim" class="hidden md:!hidden fixed inset-0 z-40 bg-black/60"></div>
+
     <!-- SIDE NAVIGATION SHELL -->
-    <nav class="liquid-glass rounded-3xl h-[calc(100vh-2rem)] w-20 lg:w-72 flex flex-col fixed left-4 top-4 z-40 py-6 px-2 lg:px-4 transition-all duration-300" id="sideNav">
+    <nav class="liquid-glass rounded-3xl h-[calc(100vh-2rem)] w-20 lg:w-72 flex flex-col fixed left-4 top-4 z-40 py-6 px-2 lg:px-4 transition-all duration-300 hg-sidenav-mobile-hidden" id="sideNav">
+        <!-- Close button — only ever visible in the full-screen mobile
+             overlay state (hg-sidenav-mobile-open), never in the icon-only
+             (iPad) or full desktop sidebar, where there's nothing to
+             "close" since the layout isn't an overlay there. -->
+        <button id="btn-mobile-nav-close" aria-label="Close menu" class="hidden self-end -mt-2 -mr-1 mb-2 w-10 h-10 rounded-xl items-center justify-center text-on-surface-variant hover:text-white hover:bg-white/10">
+            <span class="material-symbols-outlined" aria-hidden="true">close</span>
+        </button>
         <div class="mb-8 flex flex-col gap-2 items-center lg:items-start overflow-hidden">
             <h1 class="text-headline-md font-headline-md font-bold text-primary dark:text-primary tracking-tight hidden lg:block whitespace-nowrap">Web Doctor 🩺</h1>
             <span class="material-symbols-outlined text-[32px] text-primary lg:hidden block">health_and_safety</span>
@@ -506,6 +533,9 @@
         <section class="page-section flex-col gap-8 hidden" id="page-8">
             <header class="flex justify-between items-end pb-4 border-b border-[rgba(255,255,255,0.08)]">
                 <h2 class="font-headline-lg text-headline-lg text-white">System Settings</h2>
+                <button id="btn-logout" class="liquid-glass text-error font-label-md px-4 py-2 rounded-xl border border-error/30 hover:bg-error-container/20 flex items-center gap-2 transition-all">
+                    <span class="material-symbols-outlined text-[20px]">power_off</span> Logout
+                </button>
             </header>
             <!-- Two independent column stacks instead of relying on CSS Grid
                  auto-placement. items-start stops the default align-items:stretch
