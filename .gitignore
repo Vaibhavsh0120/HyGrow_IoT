@@ -8,3 +8,16 @@ build/
 /.vscode
 /.pio
 HyGrow_IoT.ino.cpp
+
+# Firebase — never commit service-account keys, local runtime config,
+# CLI debug logs, or installed Cloud Functions dependencies.
+firebase/functions/node_modules/
+firebase/**/serviceAccountKey.json
+firebase/**/*-firebase-adminsdk-*.json
+firebase/.runtimeconfig.json
+firebase/firebase-debug.log
+firebase/firebase-debug.*.log
+firebase/ui-debug.log
+firebase/.firebase/
+*.env
+.env.local

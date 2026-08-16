@@ -1,12 +1,12 @@
 // ----------------------------------------------------------------------------
-// firebase.cpp — Firebase / Firestore upload (Part 5.3).
+// firebase.cpp — Firebase / Firestore device-state upload (Part 5.3 / Part 6).
 // ----------------------------------------------------------------------------
 // Split out of the original task_network.cpp (see task_network_internal.h
-// for the full map of the split). No functional changes — this is a
-// structural split only.
+// for the full map of the split).
 //
-// Minimal, non-blocking-per-call REST client for pushing sensor readings to
-// Firestore. "Non-blocking" here means: it never runs more often than
+// Minimal, non-blocking-per-call REST client that keeps ONE Firestore
+// document per device — devices/{device_id} — in sync with the device's
+// CURRENT state. "Non-blocking" here means: it never runs more often than
 // currentConfig.interval_fb_ms, each HTTPClient call uses a short timeout, and
 // it never retries in a loop — a slow/failed request just waits for the next
 // cadence tick instead of stalling the network task. It does NOT run on a
@@ -14,13 +14,58 @@
 // time inside networkTaskLoop(), which is an accepted tradeoff for staying
 // within the existing single-loop task structure and library set already in
 // platformio.ini (no separate async-HTTP dependency).
-// ----------------------------------------------------------------------------
+//
+// ---------------------------------------------------------------------------
+// Device-state document contract (see docs/FIRESTORE_ARCHITECTURE.md for the
+// full design writeup — this comment is the short version for anyone editing
+// this file):
+//
+//   devices/{device_id}
+//     deviceId       string    — mirrors currentConfig.device_id
+//     status         string    — "Online", set by every successful upload
+//                                 from THIS device. Never set to "Offline"
+//                                 by the ESP32 — see point 2 below.
+//     lastUpdated    timestamp — Firestore SERVER timestamp (fieldTransforms,
+//                                 not a device-clock value), refreshed on
+//                                 every successful upload.
+//     uptime_s       integer   — device's own millis()/1000, informational.
+//     firmwareVersion string   — compile-time constant, see FIRMWARE_VERSION.
+//     <8 sensor fields>        — one per telemetry value below.
+//
+// Two rules this file exists to enforce:
+//
+//   1. EVERY enabled sensor's field is written on EVERY upload — either a
+//      real doubleValue, or an explicit Firestore nullValue if that sensor
+//      is disabled/unavailable/mid-failure. A field is only left out of the
+//      update mask entirely when the sensor was disabled at compile-time-
+//      never (S_COUNT is fixed at 6, all 8 telemetry fields always exist).
+//      This is the fix for the old behavior, where a disabled sensor's
+//      field was dropped from BOTH the body and the update mask — which
+//      left Firestore holding that sensor's last real value forever, with
+//      nothing downstream able to tell "still reading 6.2" apart from
+//      "hasn't reported since the probe was unplugged three weeks ago".
+//   2. status/lastUpdated always mean "this device (Wi-Fi + Firestore
+//      reachability) is alive", never "every sensor is healthy". A single
+//      failed sensor still uploads successfully (as null) and still marks
+//      the device Online. Offline is exclusively a BACKEND-derived state —
+//      see functions/index.js's checkDeviceHeartbeats — computed from how
+//      stale lastUpdated has become, not something this firmware ever
+//      writes. That split (connectivity vs. sensor health) is deliberate:
+//      see README.md's "Online vs. sensor health" note and
+//      docs/FIRESTORE_ARCHITECTURE.md section 4.
+// ---------------------------------------------------------------------------
 #include "task_network_internal.h"
 #include "task_network.h"
 #include "state.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+
+// Bumped by hand when firmware behavior meaningfully changes. Purely
+// informational for the Firestore document / downstream apps — nothing in
+// this firmware reads it back. Kept here (not config.h) since it is not a
+// runtime-configurable value and has no NVS-backed override.
+#define FIRMWARE_VERSION "1.1.0"
 
 static String s_fbIdToken;
 static uint32_t s_fbTokenExpiryMs = 0; // millis() timestamp after which the cached token is considered stale
@@ -29,7 +74,7 @@ static uint32_t s_fbTokenExpiryMs = 0; // millis() timestamp after which the cac
 // Auto-disable on repeated upload failure
 // ----------------------------------------------------------------------------
 // If Firestore uploads fail FIREBASE_MAX_CONSECUTIVE_FAILURES times in a row
-// (sign-in failures and PATCH failures both count), Firebase Upload is
+// (sign-in failures and commit failures both count), Firebase Upload is
 // switched off automatically and persisted — the same single on/off switch
 // (currentConfig.firebase_enabled) the "Firebase Upload" toggle in Settings
 // controls, so the UI reflects this the moment it happens instead of the
@@ -163,7 +208,7 @@ bool firebaseTestConnection(String &errorOut)
     // is real and this account can actually reach it, not just that the
     // Identity Toolkit login worked in isolation (a valid login against the
     // wrong project would otherwise report a false "ok").
-    String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "sensor_readings";
+    String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "devices";
     String docId = String(currentConfig.device_id).length() > 0 ? String(currentConfig.device_id) : "esp32_device";
 
     WiFiClientSecure fsClient;
@@ -274,7 +319,7 @@ static bool firebaseEnsureIdToken()
     return ok;
 }
 
-// Counts one failed upload attempt (sign-in failure OR PATCH failure both
+// Counts one failed upload attempt (sign-in failure OR commit failure both
 // call this). Once FIREBASE_MAX_CONSECUTIVE_FAILURES is hit in a row,
 // switches currentConfig.firebase_enabled off, persists it, and broadcasts
 // the new config so the Settings > Firebase Upload toggle flips to OFF in
@@ -297,8 +342,13 @@ static void firebaseRegisterFailure()
     }
 }
 
-// Fires one Firestore PATCH with the current sensor snapshot. Called at most
-// once per currentConfig.interval_fb_ms from networkTaskLoop() (task_network.cpp).
+// Fires one Firestore commit with the current device-state snapshot. Called
+// at most once per currentConfig.interval_fb_ms from networkTaskLoop()
+// (task_network.cpp). Every call writes the FULL set of 8 telemetry fields
+// plus deviceId/status/uptime_s/firmwareVersion — a field for a disabled or
+// currently-failed sensor is written as an explicit Firestore null rather
+// than omitted, so the document always reflects current sensor availability
+// (see the file-level comment above for the full contract).
 void firebaseUploadCycle()
 {
     if (!currentConfig.firebase_enabled)
@@ -321,110 +371,162 @@ void firebaseUploadCycle()
     HTTPClient https;
     https.setTimeout(5000);
 
-    String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "sensor_readings";
+    // "devices" is the new default collection (one document per physical
+    // device, keyed by device_id — see docs/FIRESTORE_ARCHITECTURE.md). Still
+    // fully driven by currentConfig.fb_collection, same as before, so an
+    // existing deployment that has already renamed its collection in
+    // Settings keeps working without any firmware-side hardcoding.
+    String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "devices";
     String docId = String(currentConfig.device_id).length() > 0 ? String(currentConfig.device_id) : "esp32_device";
+    String docPath = "projects/" + String(currentConfig.fb_project) +
+                      "/databases/(default)/documents/" + collection + "/" + docId;
 
     // ------------------------------------------------------------------
-    // Per-sensor field gating (fixes a real bug): a field is only written
-    // to the outgoing document -- and only listed in the PATCH updateMask --
-    // if the sensor(s) it comes from are actually enabled. Previously every
-    // field was written unconditionally, so a disabled sensor's last stale
-    // in-memory value (or 0/NaN if it was never read this boot) kept
-    // getting uploaded to Firestore forever, which is misleading downstream
-    // (e.g. a chart that thinks pH is being monitored when the probe was
-    // turned off weeks ago).
+    // Per-sensor availability -> null vs. real value.
     //
-    // vpd_kpa is a derived field (computeVPD() in task_sensor.cpp), computed
-    // only from DHT22's temp_c/humidity -- it has no independent sensor of
-    // its own. It's gated on S_DHT specifically for that reason: if DHT is
-    // off, VPD can't be (re)computed and holds a stale/zero value, so it's
-    // dropped from the payload along with temp_c/humidity. If more sensors
-    // ever feed into VPD's calculation, extend this same condition to also
-    // require those be enabled.
+    // A sensor's field is REAL (doubleValue) only when it is enabled AND
+    // its most recent read this boot succeeded (last_err[i] empty AND at
+    // least one successful read has happened, i.e. last_ok_ms[i] != 0).
+    // Every other case — disabled, never yet read, or currently erroring —
+    // sends an explicit null. This is what actually clears a stale value
+    // out of Firestore the moment a sensor stops being trustworthy, instead
+    // of just no longer refreshing it.
     //
-    // updateMask.fieldPaths is a Firestore QUERY PARAMETER (not a body
-    // field) -- see the REST docs for projects.databases.documents.patch.
-    // Setting it means a field left out of both the mask and the body is
-    // simply not touched on the existing document, rather than silently
-    // frozen at whatever value the last successful upload wrote -- "sensor
-    // off" should read as "no updates being made to that field", not
-    // "value permanently stuck at its last live reading".
-    bool wantTds = currentConfig.sensor_enabled[S_TDS];
-    bool wantDht = currentConfig.sensor_enabled[S_DHT]; // also gates vpd_kpa
-    bool wantWtemp = currentConfig.sensor_enabled[S_WTEMP];
-    bool wantLight = currentConfig.sensor_enabled[S_LIGHT];
-    bool wantPh = currentConfig.sensor_enabled[S_PH];
-    bool wantWl = currentConfig.sensor_enabled[S_WL];
+    // vpd_kpa is derived from DHT22 (computeVPD() in task_sensor.cpp) and
+    // has no reading of its own, so it follows S_DHT's availability exactly
+    // — if DHT22 is unavailable, vpd_kpa can't have been (re)computed this
+    // cycle either, so it goes null right alongside temp_c/humidity.
+    //
+    // ALL 8 fields are listed in updateMask.fieldPaths on every request,
+    // whether the value is a real number or null — that's what makes this a
+    // full, atomic "current state" write instead of a partial patch: the
+    // update mask controls which fields Firestore touches, and every field
+    // in this document is meant to be touched every cycle. (Compare to the
+    // previous version, which left a disabled sensor's field out of the
+    // mask entirely — that meant Firestore silently kept whatever value was
+    // written the last time the sensor was enabled, forever.)
+    auto sensorAvailable = [](SensorID id) -> bool
+    {
+        return currentConfig.sensor_enabled[id] &&
+               currentSensors.last_ok_ms[id] != 0 &&
+               currentSensors.last_err[id][0] == '\0';
+    };
 
-    // updateMask.fieldPaths must appear as one repeated query param per
-    // field -- Firestore does not accept a single comma-joined param here.
-    String maskParams = "&updateMask.fieldPaths=uptime_s";
-    if (wantTds)
-        maskParams += "&updateMask.fieldPaths=tds_ppm";
-    if (wantDht)
-        maskParams += "&updateMask.fieldPaths=temp_c&updateMask.fieldPaths=humidity&updateMask.fieldPaths=vpd_kpa";
-    if (wantWtemp)
-        maskParams += "&updateMask.fieldPaths=water_temp_c";
-    if (wantLight)
-        maskParams += "&updateMask.fieldPaths=lux";
-    if (wantPh)
-        maskParams += "&updateMask.fieldPaths=ph_val";
-    if (wantWl)
-        maskParams += "&updateMask.fieldPaths=wl_percent";
+    bool haveTds = sensorAvailable(S_TDS);
+    bool haveDht = sensorAvailable(S_DHT); // also gates vpd_kpa
+    bool haveWtemp = sensorAvailable(S_WTEMP);
+    bool haveLight = sensorAvailable(S_LIGHT);
+    bool havePh = sensorAvailable(S_PH);
+    bool haveWl = sensorAvailable(S_WL);
 
+    // Uses documents:commit (POST), NOT documents.patch (PATCH). This is a
+    // deliberate choice, not a style preference: the plain PATCH endpoint's
+    // body is only {"fields": {...}} — it has no field-transform mechanism
+    // at all, so a "REQUEST_TIME" server timestamp is NOT achievable through
+    // it (a previous version of this file tried sending a timestampValue
+    // string through PATCH, which Firestore either rejects or stores as a
+    // useless literal — see the removed NOTE this replaced). A genuine
+    // server timestamp is only available via Write.updateTransforms, and
+    // Write is a shape that only the :commit endpoint accepts. commit with
+    // a single Write entry (update + updateMask + updateTransforms) is the
+    // documented way to apply an ordinary field update and a server-value
+    // transform to the same document atomically in one request — see
+    // docs/FIRESTORE_ARCHITECTURE.md section 3 for the full citation trail.
     String url = "https://firestore.googleapis.com/v1/projects/" + String(currentConfig.fb_project) +
-                 "/databases/(default)/documents/" + collection + "/" + docId +
-                 "?key=" + String(currentConfig.fb_api_key) + maskParams;
+                 "/databases/(default)/documents:commit?key=" + String(currentConfig.fb_api_key);
 
     if (!https.begin(client, url))
     {
         currentVitals.firebase_ready = false;
-        strncpy(currentVitals.firebase_last_error, "PATCH: HTTPClient begin() failed", sizeof(currentVitals.firebase_last_error) - 1);
+        strncpy(currentVitals.firebase_last_error, "commit: HTTPClient begin() failed", sizeof(currentVitals.firebase_last_error) - 1);
         return;
     }
     https.addHeader("Content-Type", "application/json");
     https.addHeader("Authorization", "Bearer " + s_fbIdToken);
 
     // Firestore REST documents use a typed-value wrapper for every field.
+    // A field set to {"nullValue": null} is a REAL, explicit null in
+    // Firestore (distinct from the field not existing at all) — exactly
+    // what "sensor unavailable" should mean downstream.
     JsonDocument doc;
-    JsonObject fields = doc["fields"].to<JsonObject>();
+    JsonArray writes = doc["writes"].to<JsonArray>();
+    JsonObject write = writes.add<JsonObject>();
+    JsonArray maskPaths = write["updateMask"]["fieldPaths"].to<JsonArray>();
+    maskPaths.add("deviceId");
+    maskPaths.add("status");
+    maskPaths.add("uptime_s");
+    maskPaths.add("firmwareVersion");
+    maskPaths.add("tds_ppm");
+    maskPaths.add("temp_c");
+    maskPaths.add("humidity");
+    maskPaths.add("vpd_kpa");
+    maskPaths.add("water_temp_c");
+    maskPaths.add("lux");
+    maskPaths.add("ph_val");
+    maskPaths.add("wl_percent");
 
-    if (wantTds)
+    // lastUpdated is deliberately NOT in updateMask.fieldPaths above and NOT
+    // in fields{} below — it is set exclusively via updateTransforms, the
+    // only mechanism that produces a genuine Firestore SERVER timestamp
+    // (setToServerValue: REQUEST_TIME). A plain fields["lastUpdated"] value
+    // here would use whatever the ESP32 thinks the time is, which point 3
+    // of the architecture explicitly forbids relying on for Offline
+    // detection. Firestore applies updateTransforms AFTER update in the
+    // same Write, so this and the fields{} below land atomically together.
+    JsonObject transform = write["updateTransforms"].to<JsonArray>().add<JsonObject>();
+    transform["fieldPath"] = "lastUpdated";
+    transform["setToServerValue"] = "REQUEST_TIME";
+
+    write["update"]["name"] = docPath;
+    JsonObject fields = write["update"]["fields"].to<JsonObject>();
+
+    fields["deviceId"]["stringValue"] = docId;
+    fields["status"]["stringValue"] = "Online"; // connectivity, not sensor health — see file header
+    fields["firmwareVersion"]["stringValue"] = FIRMWARE_VERSION;
+    fields["uptime_s"]["integerValue"] = String(millis() / 1000);
+
+    if (haveTds)
         fields["tds_ppm"]["doubleValue"] = currentSensors.tds_ppm;
-    if (wantDht)
+    else
+        fields["tds_ppm"]["nullValue"] = nullptr;
+
+    if (haveDht)
     {
         fields["temp_c"]["doubleValue"] = currentSensors.temp_c;
         fields["humidity"]["doubleValue"] = currentSensors.humidity;
         fields["vpd_kpa"]["doubleValue"] = currentSensors.vpd_kpa;
     }
-    if (wantWtemp)
-        fields["water_temp_c"]["doubleValue"] = currentSensors.water_temp_c;
-    if (wantLight)
-        fields["lux"]["doubleValue"] = currentSensors.lux;
-    if (wantPh)
-        fields["ph_val"]["doubleValue"] = currentSensors.ph_val;
-    if (wantWl)
-        fields["wl_percent"]["doubleValue"] = currentSensors.wl_percent;
+    else
+    {
+        fields["temp_c"]["nullValue"] = nullptr;
+        fields["humidity"]["nullValue"] = nullptr;
+        fields["vpd_kpa"]["nullValue"] = nullptr;
+    }
 
-    // Always-present bookkeeping field -- not tied to any sensor.
-    //
-    // NOTE: this used to also send fields["server_timestamp"]["timestampValue"]
-    // = "REQUEST_TIME", intending Firestore's server-timestamp sentinel. That
-    // sentinel is only honored via a field TRANSFORM
-    // (fieldTransforms[].setToServerValue in the REST API), not as a plain
-    // field value in a PATCH body -- sending it as a timestampValue string
-    // either gets rejected as an invalid timestamp or stored as a literal,
-    // useless string, on every single upload. Removed rather than fixed
-    // properly with a transform, since uptime_s below (device clock, already
-    // sent) plus currentVitals.firebase_last_ok_ms (millis() of the last
-    // successful upload, tracked device-side below) already cover freshness
-    // without needing a second, server-side timestamp field.
-    fields["uptime_s"]["integerValue"] = String(millis() / 1000);
+    if (haveWtemp)
+        fields["water_temp_c"]["doubleValue"] = currentSensors.water_temp_c;
+    else
+        fields["water_temp_c"]["nullValue"] = nullptr;
+
+    if (haveLight)
+        fields["lux"]["doubleValue"] = currentSensors.lux;
+    else
+        fields["lux"]["nullValue"] = nullptr;
+
+    if (havePh)
+        fields["ph_val"]["doubleValue"] = currentSensors.ph_val;
+    else
+        fields["ph_val"]["nullValue"] = nullptr;
+
+    if (haveWl)
+        fields["wl_percent"]["doubleValue"] = currentSensors.wl_percent;
+    else
+        fields["wl_percent"]["nullValue"] = nullptr;
 
     String payload;
     serializeJson(doc, payload);
 
-    int code = https.PATCH(payload);
+    int code = https.POST(payload);
 
     if (code >= 200 && code < 300)
     {
@@ -436,7 +538,7 @@ void firebaseUploadCycle()
     else
     {
         currentVitals.firebase_ready = false;
-        String err = "Firestore PATCH HTTP " + String(code);
+        String err = "Firestore commit HTTP " + String(code);
         strncpy(currentVitals.firebase_last_error, err.c_str(), sizeof(currentVitals.firebase_last_error) - 1);
         webLog(0, LOG_ERR, "Firebase upload failed: " + err);
         firebaseRegisterFailure();

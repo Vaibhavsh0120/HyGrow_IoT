@@ -1,0 +1,85 @@
+// ============================================================================
+// HyGrow IoT — Firestore Security Rules
+// ============================================================================
+// Implements the access model described in docs/FIRESTORE_ARCHITECTURE.md
+// section 5. Short version:
+//
+//   READ   — public. Any client (the mobile app, the local web dashboard,
+//            or anyone else with this project's Firebase config) can read
+//            current device state. Matches the existing app requirement —
+//            nothing before this change restricted reads either.
+//
+//   WRITE  — only an authenticated Firebase user (the ESP32's own Identity
+//            Toolkit sign-in, src/core/firebase.cpp), and only when the
+//            written document:
+//              1. contains exactly the known device-state fields — no
+//                 extra/unexpected keys can be smuggled in;
+//              2. has `deviceId` matching the document's own path segment,
+//                 so a device can never overwrite another device's document
+//                 under a mismatched id;
+//              3. has `status` written as exactly "Online" — a client write
+//                 can never set "Offline" through this rule. Offline is
+//                 exclusively written by the backend (functions/index.js),
+//                 which uses the Admin SDK and therefore bypasses these
+//                 rules entirely;
+//              4. has `lastUpdated` equal to `request.time` — i.e. it must
+//                 be a genuine Firestore server-value transform
+//                 (setToServerValue: REQUEST_TIME), not a client-supplied
+//                 timestamp. See docs/FIRESTORE_ARCHITECTURE.md section 3
+//                 for why this is the mechanism that makes a spoofed
+//                 lastUpdated practically impossible.
+//
+//   DELETE — denied for every client, unconditionally. Decommissioning a
+//            device document is a Console / Admin-SDK operation.
+//
+// See docs/FIRESTORE_ARCHITECTURE.md section 5.1 for an honest writeup of
+// what this ruleset does NOT close (any authenticated device account can
+// write to any devices/{deviceId} document, not only its own) and the two
+// ways to close that gap if a real multi-tenant threat model applies.
+// ============================================================================
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // The complete set of fields firebaseUploadCycle() (src/core/firebase.cpp)
+    // ever writes. Kept as a single list so the "no extra fields" and "all
+    // fields present" checks below can't drift apart from each other.
+    function deviceStateFields() {
+      return [
+        'deviceId', 'status', 'lastUpdated', 'uptime_s', 'firmwareVersion',
+        'temp_c', 'humidity', 'vpd_kpa', 'water_temp_c', 'tds_ppm',
+        'lux', 'ph_val', 'wl_percent'
+      ];
+    }
+
+    // All five conditions from docs/FIRESTORE_ARCHITECTURE.md section 5
+    // must hold for a client create/update to be accepted.
+    function isValidDeviceWrite(deviceId) {
+      return request.auth != null
+        && request.resource.data.keys().hasOnly(deviceStateFields())
+        && request.resource.data.keys().hasAll(deviceStateFields())
+        && request.resource.data.deviceId == deviceId
+        && request.resource.data.status == 'Online'
+        && request.resource.data.lastUpdated == request.time;
+    }
+
+    // devices/{deviceId} — one current-state document per physical device.
+    // hygrow_001, hygrow_002, hygrow_003, ... all coexist under this same
+    // match block; {deviceId} is bound per-request from the actual path.
+    match /devices/{deviceId} {
+      allow read: if true;
+      allow create, update: if isValidDeviceWrite(deviceId);
+      allow delete: if false;
+    }
+
+    // Default-deny everything else. Firestore denies unmatched paths by
+    // default once any rules file is deployed, but this is written out
+    // explicitly so the intent survives even if another top-level
+    // collection is added later without its own rules being written first.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

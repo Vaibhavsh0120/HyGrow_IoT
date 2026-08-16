@@ -50,7 +50,12 @@
 #define FALLBACK_FIREBASE_USER_PASSWORD "YOUR_SECURE_PASSWORD"
 
 // --- Firestore Default Collection ---
-#define FALLBACK_FIRESTORE_COLLECTION "sensor_readings"
+// One document per device lives at <collection>/<device id below> and holds
+// that device's CURRENT state (see docs/FIRESTORE_ARCHITECTURE.md) — this is
+// NOT a log of historical readings, so "devices" reads more accurately than
+// the old default ("sensor_readings"). Change this only if you already have
+// an existing deployment using a different collection name.
+#define FALLBACK_FIRESTORE_COLLECTION "devices"
 
 // --- Device Identity ---
 // Used to separate data if you have multiple ESP32s running this firmware
