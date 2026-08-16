@@ -14,26 +14,42 @@
  *
  * Only two font families are ever actually rendered (see the `!important`
  * rules further down that route every font-* utility class to one of
- * them): 'Outfit' for headings/labels/body text, and 'JetBrains Mono' for
+ * them): 'Inter' for headings/labels/body text, and 'JetBrains Mono' for
  * telemetry numbers, vitals, and the terminal. 'Material Symbols Outlined'
- * is the icon font. All four .woff2 files live in data/fonts/ and ship as
+ * is the icon font. All six .woff2 files live in data/fonts/ and ship as
  * part of the LittleFS image, so they're on the device from first boot —
  * nothing to download, ever.
  */
 @font-face {
-  font-family: 'Outfit';
+  font-family: 'Inter';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url('../fonts/Outfit-Regular.woff2') format('woff2');
+  src: url('../fonts/Inter-Regular.woff2') format('woff2');
 }
 
 @font-face {
-  font-family: 'Outfit';
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../fonts/Inter-Medium.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/Inter-SemiBold.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
   font-style: normal;
   font-weight: 700;
   font-display: swap;
-  src: url('../fonts/Outfit-Bold.woff2') format('woff2');
+  src: url('../fonts/Inter-Bold.woff2') format('woff2');
 }
 
 @font-face {
@@ -48,7 +64,7 @@
   font-family: 'Material Symbols Outlined';
   font-style: normal;
   font-weight: 100 700;
-  /* This file is a hand-subsetted 20KB font containing only the 21 glyphs
+  /* This file is a hand-subsetted 21KB font containing only the 26 glyphs
      this app actually uses (subset from the full ~4MB Material Symbols
      set). At this size font-display: block's ~3s invisible-text window is
      never actually reached on LittleFS, but swap is used anyway to match
@@ -77,20 +93,20 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* Headings, dashboard text handles, menu tabs, and body copy use Outfit.
+/* Headings, dashboard text handles, menu tabs, and body copy use Inter.
    This overrides the Tailwind-generated font-family declarations further
    below in this file (which still say Space Grotesk / Inter from the
-   original design source) — Outfit and JetBrains Mono are the only two
+   original design source) — Inter and JetBrains Mono are the only two
    families actually shipped, so every font-* utility class is routed to
    one of them here regardless of what the compiled Tailwind output says. */
 [class*="font-headline"],
 [class*="font-label"],
 body {
-  font-family: 'Outfit', sans-serif !important;
+  font-family: 'Inter', sans-serif !important;
 }
 
 [class*="font-body"] {
-  font-family: 'Outfit', sans-serif !important;
+  font-family: 'Inter', sans-serif !important;
   font-weight: 400;
 }
 
@@ -102,39 +118,32 @@ body {
 }
 
 /*
- * Liquid Glass Effect
- * High-performance blurred UI for cards and navigation
+ * Card surface
+ * Flat, solid SaaS-dashboard card — no blur anywhere in this app.
  *
- * Perf note: backdrop-filter: blur() is expensive because, without a
- * compositing hint, the browser can end up re-sampling everything behind
- * the element on every scroll/paint frame — this was the dominant cause
- * of laggy scrolling, especially on iOS Safari with ~36 .liquid-glass
- * elements on screen (dashboard cards) plus a permanently fixed, blurred
- * sidebar sitting over the scrolling <main> the whole time. `will-change`
- * plus a 3D transform promotes each card to its own GPU compositor layer,
- * so the blur is computed once and cached rather than recomputed against
- * the full page on every frame beneath it.
+ * This used to be a translucent "liquid glass" surface with
+ * backdrop-filter: blur(). That's gone: no blur to compute, no
+ * compositor-layer juggling (will-change/translateZ/contain), no risk of
+ * jank from it on any device. What's left is a plain solid background
+ * (--hg-surface, set per-theme further down this file), a hairline
+ * border, and a soft shadow for depth. The .liquid-glass class name is
+ * kept as-is throughout index.html/app.js to avoid touching 38+ markup
+ * call sites for a rename that changes nothing functionally.
  */
 .liquid-glass {
-    background: rgba(255, 255, 255, 0.03);
-    backdrop-filter: saturate(180%) blur(20px);
-    -webkit-backdrop-filter: saturate(180%) blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-    will-change: backdrop-filter;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
+    background: var(--hg-surface, #17181c);
+    border: 1px solid var(--hg-surface-border, rgba(255, 255, 255, 0.08));
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.16), 0 1px 3px 0 rgba(0, 0, 0, 0.08);
 }
 
-/* The sidebar is the one .liquid-glass element that's both fixed AND
-   permanently overlaps the scrolling <main> behind it on every frame
-   (dashboard cards only overlap their own static position). Even with
-   layer promotion, its blur source keeps repainting as <main> scrolls
-   underneath it, so it gets a lighter blur radius than the resting
-   cards — still reads as "glass" but is meaningfully cheaper per frame. */
+/* The sidebar is its own fixed panel, visually distinguished from cards
+   by a slightly different shade and only a right-side border (it's not
+   a "card" sitting on the page, it's the page's edge). */
 #sideNav.liquid-glass {
-    backdrop-filter: saturate(180%) blur(12px);
-    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    background: var(--hg-sidebar-bg, #111216);
+    border: none;
+    border-right: 1px solid var(--hg-surface-border, rgba(255, 255, 255, 0.08));
+    box-shadow: none;
 }
 
 /*
@@ -604,6 +613,9 @@ video {
 }
 .ml-3 {
   margin-left: 0.75rem;
+}
+.ml-0 {
+  margin-left: 0px;
 }
 .ml-\[96px\] {
   margin-left: 96px;
@@ -1169,49 +1181,36 @@ video {
   transition-duration: 0.3s;
 }
 .liquid-glass {
-  background: hsla(0, 0%, 100%, 0.03);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  border: 1px solid hsla(0, 0%, 100%, 0.08);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-  /* See the perf comment on the first .liquid-glass rule earlier in this
-     file — this duplicate declaration is later in source order so it's
-     the one that actually wins the cascade; the compositor-layer hint
-     has to be repeated here too or it gets silently overridden back out. */
-  will-change: backdrop-filter;
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
+  background: var(--hg-surface, #17181c);
+  border: 1px solid var(--hg-surface-border, rgba(255, 255, 255, 0.08));
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.16), 0 1px 3px 0 rgba(0, 0, 0, 0.08);
+  /* This duplicate declaration is later in source order than the first
+     .liquid-glass rule earlier in this file, so it's the one that
+     actually wins the cascade — kept in sync with it rather than
+     removed, same as before this was a flat surface instead of glass. */
 }
 #sideNav.liquid-glass {
-  backdrop-filter: saturate(180%) blur(12px);
-  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  background: var(--hg-sidebar-bg, #111216);
+  border: none;
+  border-right: 1px solid var(--hg-surface-border, rgba(255, 255, 255, 0.08));
+  box-shadow: none;
 }
 /* Floating-panel surface for #auth-login, #auth-setup, and #reboot-confirm
-   — see the --hg-modal-surface token comment (theme block, further down
-   this file) for why these three need a near-opaque background instead of
-   .liquid-glass's normal 3-5% opacity. Falls back to a dark opaque value
-   here so the panel still reads correctly for the brief instant before the
-   anti-flash theme script (index.html <head>) sets html.dark/html.light —
-   the theme block below overrides this with the correct value either way. */
+   — solid background (falls back to a dark value here for the brief
+   instant before the anti-flash theme script in index.html's <head> sets
+   html.dark/html.light; the theme block further down this file overrides
+   with the correct value either way), no blur. */
 .hg-modal-surface {
-  background: var(--hg-modal-surface, rgba(28, 30, 36, 0.92));
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  background: var(--hg-modal-surface, #1c1e24);
   border: 1px solid hsla(0, 0%, 100%, 0.08);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-  will-change: backdrop-filter;
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
+  box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.35);
 }
-/* Auth overlay's dimmed backdrop (see #auth-overlay in index.html) — a
-   softer blur than .liquid-glass's 20px, just enough to obscure the
-   dashboard behind it without a fully opaque background. */
+/* #auth-overlay used to combine this class with bg-black/80 for a
+   blurred + dimmed scrim. The dimming still comes from bg-black/80
+   (themed further down this file); this class is now a no-op kept only
+   so the existing class list on #auth-overlay in index.html doesn't
+   need editing. */
 .backdrop-blur-xl {
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  will-change: backdrop-filter;
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
 }
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
@@ -1423,6 +1422,9 @@ canvas {
   }
 }
 @media (min-width: 768px) {
+  .md\:ml-\[96px\] {
+    margin-left: 96px;
+  }
   .md\:right-8 {
     right: 2rem;
   }
@@ -1553,8 +1555,9 @@ canvas {
 
 :root,
 html.dark {
-  --hg-bg: #000000;
-  --hg-surface: rgba(255, 255, 255, 0.03);
+  --hg-bg: #0a0a0c;
+  --hg-surface: #17181c;
+  --hg-sidebar-bg: #111216;
   --hg-surface-border: rgba(255, 255, 255, 0.08);
   --hg-surface-alt-5: rgba(255, 255, 255, 0.05);
   --hg-surface-alt-10: rgba(255, 255, 255, 0.1);
@@ -1575,20 +1578,18 @@ html.dark {
   --hg-error: rgb(255, 180, 171);
   --hg-error-container-20: rgba(147, 0, 10, 0.2);
   --hg-error-container-40: rgba(147, 0, 10, 0.4);
-  /* Floating-panel surface (login, first-run setup, reboot-confirm) — these
-     panels sit on top of #auth-overlay's dark blurred scrim (.bg-black/80),
-     not directly on the page background the way dashboard cards do. Regular
-     .liquid-glass is only ~3-5% opaque, which is correct for a card resting
-     on the page itself, but it lets that scrim show straight through and
-     muddies text contrast for anything modal. This token is deliberately
-     near-opaque so these three panels read cleanly regardless of what's
-     blurred behind them. See .hg-modal-surface below. */
-  --hg-modal-surface: rgba(28, 30, 36, 0.92);
+  /* Floating-panel surface (login, first-run setup, reboot-confirm) — same
+     solid card surface as everything else now that .liquid-glass has no
+     blur to differentiate it with; kept as a separate token since these
+     three panels sit on top of #auth-overlay's dimmed scrim rather than
+     directly on the page background. See .hg-modal-surface below. */
+  --hg-modal-surface: #1c1e24;
 }
 
 html.light {
   --hg-bg: #f4f5f7;
-  --hg-surface: rgba(0, 0, 0, 0.035);
+  --hg-surface: #ffffff;
+  --hg-sidebar-bg: #ffffff;
   --hg-surface-border: rgba(0, 0, 0, 0.08);
   --hg-surface-alt-5: rgba(0, 0, 0, 0.04);
   --hg-surface-alt-10: rgba(0, 0, 0, 0.07);
@@ -1609,11 +1610,8 @@ html.light {
   --hg-error: rgb(186, 26, 26);
   --hg-error-container-20: rgba(255, 218, 214, 0.6);
   --hg-error-container-40: rgba(255, 180, 171, 0.5);
-  /* See the dark-theme --hg-modal-surface definition above for why this
-     exists separately from --hg-surface. This is the bug fix for the
-     light-mode login/setup screen: a near-opaque light panel instead of a
-     3.5%-opaque one letting the dark auth-overlay scrim bleed through. */
-  --hg-modal-surface: rgba(250, 250, 251, 0.96);
+  /* See the dark-theme --hg-modal-surface definition above. */
+  --hg-modal-surface: #fbfbfc;
 }
 
 /* Page background + base text color */
@@ -1624,15 +1622,19 @@ body {
   color: var(--hg-on-background);
 }
 
-/* Glass card surface */
+/* Flat SaaS-dashboard card surface — solid background, hairline border,
+   soft shadow (see the base .liquid-glass rule earlier in this file for
+   the shadow/border/radius). No backdrop-filter anywhere in this app now:
+   nothing to composite or re-sample on scroll, and cards read cleanly at
+   a glance instead of depending on whatever happens to sit behind them. */
 .liquid-glass {
   background: var(--hg-surface);
   border-color: var(--hg-surface-border);
 }
 
-/* Floating-panel surface (login, setup, reboot-confirm) — near-opaque in
-   both themes, unlike .liquid-glass above. See the --hg-modal-surface
-   token comment (dark theme block) for the full explanation. */
+/* Floating-panel surface (login, setup, reboot-confirm) — same solid
+   surface as .liquid-glass, kept as its own class since these panels sit
+   above the dimmed #auth-overlay scrim rather than directly on the page. */
 .hg-modal-surface {
   background: var(--hg-modal-surface);
   border-color: var(--hg-surface-border);
@@ -1914,7 +1916,7 @@ body {
 /* ==========================================================================
    Mobile / cross-device pass (macOS Safari/Chrome, iPad, iPhone)
    ==========================================================================
-   Five independent fixes, each targeting a specific real-device symptom
+   Six independent fixes, each targeting a specific real-device symptom
    rather than a general "make it responsive" pass — the layout itself
    (Tailwind-style utility classes, flex/grid) already adapts fine across
    sizes; these are the platform-specific gaps that utility classes alone
@@ -2004,9 +2006,9 @@ main {
    class and the scrim's hidden state together, plus closing on scrim tap,
    Escape, and after any nav-tab selection.
 
-   Uses transform (not width/display) for the slide so it composites on its
-   own GPU layer instead of triggering layout on every open/close, matching
-   the same perf reasoning as the .liquid-glass will-change fix above. */
+   Uses transform (not width/display) for the slide so it composites on
+   its own GPU layer and animates smoothly instead of triggering a full
+   layout recalculation on every open/close. */
 @media (max-width: 767px) {
   .hg-sidenav-mobile-hidden {
     width: 100vw;
@@ -2044,4 +2046,19 @@ main {
   #mobile-nav-scrim {
     display: none !important;
   }
+}
+
+/* 6. Large Mac displays — without a cap, <main>'s content grows to fill
+   the full viewport width, so on a 1920px+ display the telemetry grid's
+   4 columns each get very wide and the cards stretch to match, which
+   reads as unpolished rather than "wide". Capping content width and
+   centering it in the remaining space keeps card proportions consistent
+   from a 1024px iPad up through any desktop size, the same way most
+   SaaS dashboards constrain their content column. No effect below this
+   width — iPad and iPhone never approach it. */
+.page-section {
+  max-width: 1600px;
+  margin-left: auto;
+  margin-right: auto;
+  width: 100%;
 }

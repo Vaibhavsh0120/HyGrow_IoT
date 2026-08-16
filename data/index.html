@@ -32,7 +32,7 @@
          can depend on an external URL. SVG favicons are supported by every
          modern browser; no separate .ico fallback is bundled since this
          dashboard already assumes a reasonably current browser (it also
-         relies on CSS custom properties, backdrop-filter, etc.). -->
+         relies on CSS custom properties for theming). -->
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
 
     <!-- Apply the saved theme before first paint to avoid a flash of the
@@ -206,7 +206,7 @@
     </nav>
 
     <!-- MAIN CANVAS -->
-    <main class="ml-[96px] lg:ml-[320px] flex-1 h-screen overflow-y-auto p-4 md:p-8 relative z-10 transition-all duration-300">
+    <main class="ml-0 md:ml-[96px] lg:ml-[320px] flex-1 h-screen overflow-y-auto p-4 md:p-8 relative z-10 transition-all duration-300">
 
         <!-- PAGE 0: Dashboard & Vitals -->
         <section class="page-section flex flex-col gap-8" id="page-0">
