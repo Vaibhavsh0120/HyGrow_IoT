@@ -131,7 +131,7 @@ body {
  * call sites for a rename that changes nothing functionally.
  */
 .liquid-glass {
-    background: var(--hg-surface, #17181c);
+    background: var(--hg-surface, #141414);
     border: 1px solid var(--hg-surface-border, rgba(255, 255, 255, 0.08));
     box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.16), 0 1px 3px 0 rgba(0, 0, 0, 0.08);
 }
@@ -140,7 +140,7 @@ body {
    by a slightly different shade and only a right-side border (it's not
    a "card" sitting on the page, it's the page's edge). */
 #sideNav.liquid-glass {
-    background: var(--hg-sidebar-bg, #111216);
+    background: var(--hg-sidebar-bg, #0a0a0a);
     border: none;
     border-right: 1px solid var(--hg-surface-border, rgba(255, 255, 255, 0.08));
     box-shadow: none;
@@ -1181,7 +1181,7 @@ video {
   transition-duration: 0.3s;
 }
 .liquid-glass {
-  background: var(--hg-surface, #17181c);
+  background: var(--hg-surface, #141414);
   border: 1px solid var(--hg-surface-border, rgba(255, 255, 255, 0.08));
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.16), 0 1px 3px 0 rgba(0, 0, 0, 0.08);
   /* This duplicate declaration is later in source order than the first
@@ -1190,7 +1190,7 @@ video {
      removed, same as before this was a flat surface instead of glass. */
 }
 #sideNav.liquid-glass {
-  background: var(--hg-sidebar-bg, #111216);
+  background: var(--hg-sidebar-bg, #0a0a0a);
   border: none;
   border-right: 1px solid var(--hg-surface-border, rgba(255, 255, 255, 0.08));
   box-shadow: none;
@@ -1201,7 +1201,7 @@ video {
    html.dark/html.light; the theme block further down this file overrides
    with the correct value either way), no blur. */
 .hg-modal-surface {
-  background: var(--hg-modal-surface, #1c1e24);
+  background: var(--hg-modal-surface, #1b1b1b);
   border: 1px solid hsla(0, 0%, 100%, 0.08);
   box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.35);
 }
@@ -1331,14 +1331,14 @@ canvas {
 }
 .focus\:ring-primary:focus {
   --tw-ring-opacity: 1;
-  --tw-ring-color: rgb(175 198 255/var(--tw-ring-opacity, 1));
+  --tw-ring-color: var(--hg-primary);
 }
 .group:hover .group-hover\:opacity-100 {
   opacity: 1;
 }
 .peer:checked ~ .peer-checked\:bg-primary-container {
   --tw-bg-opacity: 1;
-  background-color: rgb(84 141 255 / var(--tw-bg-opacity, 1));
+  background-color: var(--hg-primary-container);
 }
 .after\:content-\[\'\'\]:after {
   content: '';
@@ -1408,7 +1408,7 @@ canvas {
 }
 .dark\:text-primary:is(.dark *) {
   --tw-text-opacity: 1;
-  color: rgb(175 198 255 / var(--tw-text-opacity, 1));
+  color: var(--hg-primary);
 }
 @media (min-width: 640px) {
   .sm\:inline {
@@ -1553,28 +1553,57 @@ canvas {
    listener in app.js). Dark is the default/original look of this project.
    ========================================================================== */
 
+/* ============================================================================
+   Color tokens — monochrome palette (Part 6). Every token below is drawn
+   from a single black-to-white greyscale ramp: black #000000, eerie-black
+   #1b1b1b, chinese-black #141414, night-rider #2e2e2e (dark surfaces), and
+   chinese-white #e1e1e1, anti-flash-white #f3f3f3, white #ffffff (light
+   surfaces). --hg-primary — previously a blue accent used for focus rings,
+   active nav state, links, and primary buttons — is now pulled from this
+   same ramp instead of a separate hue, so there is no accent color left in
+   the neutral chrome of the app.
+
+   TWO deliberate exceptions survive as functional (not decorative) color:
+   --hg-secondary (green) and --hg-error (red). Both are load-bearing status
+   signal, not styling — the sensor health dots (setDashDotStatus() in
+   app.js: green=live, red=failing, grey=disabled), every form-validation
+   and danger-zone message (role="alert" throughout index.html), and the
+   pinout Enabled/Disabled state all depend on being able to tell "good" from
+   "bad" at a glance. Making those monochrome too would mean a passing
+   Firebase test and a failed one render identically, which is a worse
+   outcome than "not fully monochrome" — so they're kept as the one
+   intentional splash of meaningful color in an otherwise grayscale UI.
+   ============================================================================ */
 :root,
 html.dark {
-  --hg-bg: #0a0a0c;
-  --hg-surface: #17181c;
-  --hg-sidebar-bg: #111216;
-  --hg-surface-border: rgba(255, 255, 255, 0.08);
+  --hg-bg: #000000;
+  --hg-surface: #141414;
+  --hg-sidebar-bg: #0a0a0a;
+  --hg-surface-border: rgba(255, 255, 255, 0.09);
   --hg-surface-alt-5: rgba(255, 255, 255, 0.05);
   --hg-surface-alt-10: rgba(255, 255, 255, 0.1);
   --hg-surface-alt-20: rgba(255, 255, 255, 0.2);
   --hg-surface-alt-30: rgba(255, 255, 255, 0.3);
   --hg-input-bg: rgba(0, 0, 0, 0.5);
-  --hg-on-background: rgb(226, 226, 226);
-  --hg-on-surface-variant: rgb(194, 198, 215);
-  --hg-white: rgb(255, 255, 255);
+  --hg-on-background: #e1e1e1;
+  --hg-on-surface-variant: #a3a3a3;
+  --hg-white: #ffffff;
   --hg-white-50: rgba(255, 255, 255, 0.5);
-  --hg-primary: rgb(175, 198, 255);
-  --hg-primary-container: rgb(84, 141, 255);
-  --hg-on-primary-container: rgb(0, 39, 96);
+  /* Primary accent — was blue, now the same neutral white/grey ramp as
+     everything else (Part 6). Kept as its own token (not just reused
+     --hg-white) since focus rings/active-nav still need a slightly dimmer
+     value than pure white to read as "accent" rather than "text". */
+  --hg-primary: #e1e1e1;
+  --hg-primary-container: #2e2e2e;
+  --hg-on-primary-container: #ffffff;
+  /* Functional exception (see block comment above) — sensor health "live"/
+     "healthy" signal. Left untouched by the monochrome pass. */
   --hg-secondary: rgb(78, 222, 163);
   --hg-secondary-container: rgb(0, 165, 114);
   --hg-secondary-10: rgba(78, 222, 163, 0.1);
   --hg-on-secondary-container: rgb(0, 49, 31);
+  /* Functional exception (see block comment above) — errors, failed
+     readings, danger-zone actions. Left untouched by the monochrome pass. */
   --hg-error: rgb(255, 180, 171);
   --hg-error-container-20: rgba(147, 0, 10, 0.2);
   --hg-error-container-40: rgba(147, 0, 10, 0.4);
@@ -1583,11 +1612,11 @@ html.dark {
      blur to differentiate it with; kept as a separate token since these
      three panels sit on top of #auth-overlay's dimmed scrim rather than
      directly on the page background. See .hg-modal-surface below. */
-  --hg-modal-surface: #1c1e24;
+  --hg-modal-surface: #1b1b1b;
 }
 
 html.light {
-  --hg-bg: #f4f5f7;
+  --hg-bg: #f3f3f3;
   --hg-surface: #ffffff;
   --hg-sidebar-bg: #ffffff;
   --hg-surface-border: rgba(0, 0, 0, 0.08);
@@ -1596,17 +1625,22 @@ html.light {
   --hg-surface-alt-20: rgba(0, 0, 0, 0.12);
   --hg-surface-alt-30: rgba(0, 0, 0, 0.18);
   --hg-input-bg: rgba(255, 255, 255, 0.7);
-  --hg-on-background: rgb(30, 32, 38);
-  --hg-on-surface-variant: rgb(90, 95, 112);
-  --hg-white: rgb(20, 21, 26);
-  --hg-white-50: rgba(20, 21, 26, 0.55);
-  --hg-primary: rgb(46, 92, 214);
-  --hg-primary-container: rgb(84, 141, 255);
-  --hg-on-primary-container: rgb(255, 255, 255);
+  --hg-on-background: #1b1b1b;
+  --hg-on-surface-variant: #5a5a5a;
+  --hg-white: #141414;
+  --hg-white-50: rgba(20, 20, 20, 0.55);
+  /* Primary accent — was blue, now the same neutral black/grey ramp as
+     everything else (Part 6), mirroring the dark-theme token above. */
+  --hg-primary: #1b1b1b;
+  --hg-primary-container: #2e2e2e;
+  --hg-on-primary-container: #ffffff;
+  /* Functional exception (see block comment above dark theme) — sensor
+     health "live"/"healthy" signal. Left untouched by the monochrome pass. */
   --hg-secondary: rgb(0, 140, 96);
   --hg-secondary-container: rgb(0, 165, 114);
   --hg-secondary-10: rgba(0, 140, 96, 0.1);
   --hg-on-secondary-container: rgb(255, 255, 255);
+  /* Functional exception — errors, failed readings, danger-zone actions. */
   --hg-error: rgb(186, 26, 26);
   --hg-error-container-20: rgba(255, 218, 214, 0.6);
   --hg-error-container-40: rgba(255, 180, 171, 0.5);
@@ -1760,15 +1794,27 @@ body {
 /* ============================================================================
    hg-toggle — the ONE on/off switch component for this project.
    ============================================================================
-   Every sensor-enabled toggle (Settings pinout cards, the per-sensor detail
-   page's "Enable Power" switch) and every feature flag (Demo Mode, Firebase
-   Upload) uses this exact same markup/class, so on/off always looks and
-   behaves identically everywhere in the app: OFF = red track, ON = green
-   track, matching --hg-error / --hg-secondary respectively (the same red/
-   green already used for status elsewhere in this theme). This intentionally
-   does NOT reuse .peer-checked\:bg-primary-container (blue) — that class
-   stays reserved for the unrelated Dashboard Theme control and anything
-   else that isn't an on/off switch.
+   Restyled (Part 6) after uiverse.io/KINGFRESS/gentle-chicken-96 — a plain
+   grayscale slider with a layered "eclipse" thumb (::before/::after rings),
+   no red/green on/off coloring. This is a deliberate change from the
+   previous version of this component, which used --hg-error/--hg-secondary
+   (red/green) to double as an at-a-glance status indicator; that meaning is
+   INTENTIONALLY dropped here per Part 6 — every hg-toggle now looks and
+   behaves the same everywhere (Settings pinout cards, per-sensor "Enable
+   Power", Demo Mode, Firebase Upload, Dashboard Theme), track color no
+   longer varies with checked state at all, only the thumb travels and its
+   inner ring fades. If a future feature genuinely needs an at-a-glance
+   red/red-green status signal again, that belongs on a separate status
+   dot (see setDashDotStatus() in app.js, which already has its own
+   independent green/red/grey dot unrelated to this switch) — not back on
+   this toggle.
+
+   Reuses the existing hg-toggle-track markup/element (no HTML changes
+   needed anywhere this component is already used) but restructures its
+   internals with a ::before (thumb) and an extra inner ::after (inset ring)
+   to match the Uiverse reference's layered look. Colors pull from the
+   monochrome CSS vars so both dark and light theme automatically work
+   without a separate light-mode override block.
 
    Structure (see the sensor cards / feature flag cards in index.html):
      <label class="hg-toggle">
@@ -1787,13 +1833,16 @@ body {
   width: 2.75rem;   /* 44px, matches the previous w-11 feature-flag toggles */
   height: 1.5rem;    /* 24px, matches the previous h-6 */
   border-radius: 9999px;
-  background-color: var(--hg-error);
-  opacity: 0.55;
-  transition: background-color 150ms ease, opacity 150ms ease;
+  background-color: var(--hg-surface-alt-20);
+  transition: background-color 150ms ease;
   position: relative;
   flex-shrink: 0;
 }
-.hg-toggle-track::after {
+/* Thumb — the circle that travels left/right. Uses the Uiverse reference's
+   layered look: an outer thumb (::before) plus an inset ring (::after)
+   inside .hg-toggle-track that fades out entirely once checked, echoing
+   the reference's "circle::after shrinks to nothing when checked" effect. */
+.hg-toggle-track::before {
   content: '';
   position: absolute;
   top: 2px;
@@ -1802,16 +1851,31 @@ body {
   height: 1.25rem;
   border-radius: 9999px;
   background-color: var(--hg-white);
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
   transition: transform 150ms ease;
+  z-index: 1;
+}
+.hg-toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 9999px;
+  background-color: var(--hg-surface-alt-30);
+  opacity: 1;
+  transition: transform 150ms ease, opacity 150ms ease;
 }
 .hg-toggle input:checked ~ .hg-toggle-track {
-  background-color: var(--hg-secondary);
-  opacity: 1;
+  background-color: var(--hg-surface-alt-30);
+}
+.hg-toggle input:checked ~ .hg-toggle-track::before {
+  transform: translateX(1.25rem);
 }
 .hg-toggle input:checked ~ .hg-toggle-track::after {
-  transform: translateX(100%);
-  border-color: var(--hg-white);
+  transform: translateX(1.25rem);
+  opacity: 0;
 }
 .hg-toggle input:focus-visible ~ .hg-toggle-track {
   outline: 2px solid var(--hg-primary);
@@ -1824,9 +1888,21 @@ body {
   width: 2.25rem; /* 36px */
   height: 1.25rem; /* 20px */
 }
-.hg-toggle-sm .hg-toggle-track::after {
+.hg-toggle-sm .hg-toggle-track::before {
   width: 1rem;
   height: 1rem;
+}
+.hg-toggle-sm .hg-toggle-track::after {
+  top: 5px;
+  left: 5px;
+  width: 0.625rem;
+  height: 0.625rem;
+}
+.hg-toggle-sm input:checked ~ .hg-toggle-track::before {
+  transform: translateX(1rem);
+}
+.hg-toggle-sm input:checked ~ .hg-toggle-track::after {
+  transform: translateX(1rem);
 }
 
 /* ============================================================================
