@@ -157,7 +157,7 @@ function initNavigation() {
         li.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
         li.setAttribute('aria-label', label);
         li.innerHTML = `
-            <span class="material-symbols-outlined" aria-hidden="true">${tabsData.icons[index]}</span>
+            <span class="material-symbols-outlined" aria-hidden="true" data-icon="${tabsData.icons[index]}"></span>
             <span class="font-label-md text-nav-label whitespace-nowrap">${label}</span>
         `;
         li.addEventListener('click', () => switchTab(index, li));
@@ -242,7 +242,7 @@ function initBottomNav() {
         // tap target without the label wrapping on narrow iPhone widths.
         btn.className = `flex-1 flex flex-col items-center justify-center gap-1 py-2 transition-colors duration-300 ${index === 0 ? 'text-white' : 'text-on-surface-variant'}`;
         btn.innerHTML = `
-            <span class="material-symbols-outlined" aria-hidden="true">${icon}</span>
+            <span class="material-symbols-outlined" aria-hidden="true" data-icon="${icon}"></span>
             <span class="font-label-sm text-label-sm">${label}</span>
         `;
         // switchTab's own element lookup falls back to #nav-tabs's children
@@ -421,7 +421,7 @@ function switchTab(index, element) {
         sensorPage.classList.remove('hidden');
         sensorPage.classList.add('flex');
         document.getElementById('sensor-name').innerText = tabsData.labels[index] + " Sensor";
-        document.getElementById('sensor-icon').innerText = tabsData.icons[index];
+        document.getElementById('sensor-icon').setAttribute('data-icon', tabsData.icons[index]);
 
         let pin = tabsData.gpios[index];
         // Special display case for I2C Light sensor. The pin is always shown
@@ -630,7 +630,7 @@ function showAlertModal(message, isError) {
     if (!modal) { return; } // defensive fallback — should never happen
     if (text) text.innerText = message;
     if (icon) {
-        icon.innerText = isError ? 'error' : 'info';
+        icon.setAttribute('data-icon', isError ? 'error' : 'info');
         icon.classList.toggle('text-error', !!isError);
         icon.classList.toggle('text-primary', !isError);
     }
@@ -783,11 +783,12 @@ function handleChangePasswordResult(msg) {
             btn.innerText = 'Password Updated!';
             setTimeout(() => { btn.innerText = original; }, 2000);
         }
-        // cfg-admin-pass-display is NOT cleared here — the device sends a
-        // "config" frame (broadcastConfig(), auth.cpp) before this
-        // change_password_result frame, so by the time this handler runs the
-        // field already holds the NEW live password via updateConfigForm().
-        // Clearing it here would blank out a value that's already correct.
+        // cfg-admin-pass-display is intentionally NOT cleared here — it's
+        // read-only and will refresh itself with the new password via the
+        // "config" frame the server broadcasts right after a successful
+        // change (see broadcastConfig() in handleChangePasswordCommand(),
+        // auth.cpp), so clearing it would just show a blank field for a
+        // moment for no reason.
         ['cfg-pass-new', 'cfg-pass-confirm'].forEach((id) => {
             const el = document.getElementById(id);
             if (el) el.value = '';
@@ -1434,13 +1435,7 @@ function updateConfigForm(msg) {
     // leaving it unchanged server-side, so save_wifi (command_handlers.cpp)
     // must treat "unchanged from msg.wifi_pass" the same as blank. cfg-fb-pass
     // gets the same treatment for consistency with cfg-fb-api just above.
-    // cfg-admin-pass-display doubles as the Change Password card's "Current
-    // Password" field (see index.html) — pre-filling it here with the
-    // device's live password means an untouched Update Password click
-    // submits the correct current password automatically, same pattern as
-    // wifi/ap/fb pass above. It's also what makes the field refresh right
-    // after a successful change (see broadcastConfig() call added to
-    // handleChangePasswordCommand(), auth.cpp).
+    // cfg-admin-pass-display is read-only and never submitted anywhere.
     if(document.getElementById('cfg-wifi-pass')) document.getElementById('cfg-wifi-pass').value = msg.wifi_pass || "";
     if(document.getElementById('cfg-ap-pass')) document.getElementById('cfg-ap-pass').value = msg.ap_pass || "";
     if(document.getElementById('cfg-fb-pass')) document.getElementById('cfg-fb-pass').value = msg.fb_pass || "";
@@ -1734,7 +1729,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const icon = btn.querySelector('.material-symbols-outlined');
             const revealed = input.type === 'text';
             input.type = revealed ? 'password' : 'text';
-            if (icon) icon.textContent = revealed ? 'visibility' : 'visibility_off';
+            if (icon) icon.setAttribute('data-icon', revealed ? 'visibility' : 'visibility_off');
             btn.setAttribute('aria-label', (revealed ? 'Show ' : 'Hide ') + (btn.getAttribute('aria-label') || '').replace(/^(Show|Hide) /, ''));
         });
     });
@@ -1888,6 +1883,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnChangePassword = document.getElementById('btn-change-password');
     if (btnChangePassword) {
         btnChangePassword.addEventListener('click', () => {
+            // cfg-pass-current (a separate typed re-entry field) was
+            // removed as redundant: cfg-admin-pass-display already shows
+            // the device's live current password, so its value is the
+            // "current" field sent to the server — no separate typed
+            // field needed. See the comment on that field in index.html.
             const current = document.getElementById('cfg-admin-pass-display').value;
             const next = document.getElementById('cfg-pass-new').value;
             const confirmNext = document.getElementById('cfg-pass-confirm').value;
@@ -2529,13 +2529,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const original = btnTermExport.innerHTML;
         try {
             await navigator.clipboard.writeText(lines);
-            btnTermExport.innerHTML = '<span class="material-symbols-outlined text-[18px]">check</span> Copied';
+            btnTermExport.innerHTML = '<span class="material-symbols-outlined text-[18px]" data-icon="check"></span> Copied';
         } catch (e) {
             // Clipboard API can fail (permissions, insecure context, etc.) —
             // fails visibly rather than silently, same spirit as the
             // "Not connected to the device right now." alert used elsewhere
             // in this file for other unavailable actions.
-            btnTermExport.innerHTML = '<span class="material-symbols-outlined text-[18px]">error</span> Copy failed';
+            btnTermExport.innerHTML = '<span class="material-symbols-outlined text-[18px]" data-icon="error"></span> Copy failed';
         }
         setTimeout(() => { btnTermExport.innerHTML = original; }, 2000);
     });

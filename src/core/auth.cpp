@@ -317,13 +317,18 @@ void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc
         s_authedClients.clear();
         wsMarkClientAuthed(client->id());
         broadcastAuthStatus(); // pushes every OTHER open tab back to the login/setup overlay immediately, not just on its next reconnect
-        // wsTextAllAuthed() (used inside broadcastConfig()) checks
-        // s_authedClients live at send time, and only this client was
-        // just re-added to it above, so this immediately refreshes THIS
-        // client's Settings > Change Password > "Current Password (on
-        // device)" field with the new password — without it, that
-        // read-only display would keep showing the now-stale old
-        // password until the next unrelated config broadcast.
+        // The Settings page's "Current Password" field (cfg-admin-pass-display
+        // in index.html) is the client's only source of truth for the
+        // password it will send as `current` on the NEXT change attempt —
+        // there is no separate typed re-entry field anymore. Without
+        // refreshing it here, it would keep showing the password that was
+        // JUST replaced, and a second change attempt right after this one
+        // would send that stale value and get correctly rejected as wrong.
+        // broadcastConfig() re-sends admin_pass (state.cpp) in a fresh
+        // "config" frame; by this point s_authedClients contains ONLY this
+        // client (cleared + re-added just above), so wsTextAllAuthed() —
+        // which checks auth status live at send time — delivers it to this
+        // client alone, not to the other tabs that were just logged out.
         broadcastConfig();
         resp["ok"] = true;
         resp["token"] = freshToken;

@@ -22,17 +22,11 @@
          only ever be reachable over its own SoftAP with no internet
          uplink, so like the fonts/favicon below, nothing here can depend
          on an external URL. theme-color matches the manifest's
-         background_color/theme_color AND the app's actual page background
-         (#000000 — see bg-[#000000] on <body> below and --hg-bg in
-         style.css), NOT --hg-surface (#141414, the lighter card/nav
-         background). These three previously disagreed (#0b0d10 here vs.
-         #000000 on <body>), which on a real device shows as a visible
-         seam of mismatched color in the system-chrome area behind a
-         fixed bottom-0 element (e.g. #bottomNav) — the safe-area inset
-         itself is filled by the OS using this color, not by any of the
-         page's own CSS, so it has to match the page background exactly. -->
+         background_color/theme_color and the app's own dark surface
+         (#0b0d10, see --hg-surface/style.css), so the OS status bar / task
+         switcher chrome around the installed app doesn't clash with it. -->
     <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#000000">
+    <meta name="theme-color" content="#0b0d10">
 
     <!-- Home-screen "Add to Home Screen" behavior on iOS/iPadOS — without
          these, a saved HyGrow shortcut opens inside Safari's chrome (address
@@ -133,7 +127,7 @@
         <!-- 2. First-time "Set Password" modal -->
         <div id="auth-setup" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
-                <span class="material-symbols-outlined text-primary text-[40px]">health_and_safety</span>
+                <span class="material-symbols-outlined text-primary text-[40px]" data-icon="health_and_safety"></span>
                 <h2 class="font-headline-md text-headline-md text-white">Welcome to Web Doctor</h2>
                 <p class="font-body-md text-body-md text-on-surface-variant">This device is unconfigured. Set an admin password to secure it.</p>
             </div>
@@ -142,7 +136,7 @@
                 <div class="hg-secret-field">
                     <input id="auth-setup-pass" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                     <button type="button" class="hg-secret-toggle" data-reveal-target="auth-setup-pass" aria-label="Show Password">
-                        <span class="material-symbols-outlined">visibility</span>
+                        <span class="material-symbols-outlined" data-icon="visibility"></span>
                     </button>
                 </div>
             </div>
@@ -151,7 +145,7 @@
                 <div class="hg-secret-field">
                     <input id="auth-setup-pass-confirm" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                     <button type="button" class="hg-secret-toggle" data-reveal-target="auth-setup-pass-confirm" aria-label="Show Password">
-                        <span class="material-symbols-outlined">visibility</span>
+                        <span class="material-symbols-outlined" data-icon="visibility"></span>
                     </button>
                 </div>
             </div>
@@ -162,7 +156,7 @@
         <!-- 3. Returning "Login" modal -->
         <div id="auth-login" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
-                <span class="material-symbols-outlined text-primary text-[40px]">lock</span>
+                <span class="material-symbols-outlined text-primary text-[40px]" data-icon="lock"></span>
                 <h2 class="font-headline-md text-headline-md text-white">Admin Login</h2>
                 <p class="font-body-md text-body-md text-on-surface-variant">Enter the admin password to access this device.</p>
             </div>
@@ -171,7 +165,7 @@
                 <div class="hg-secret-field">
                     <input id="auth-login-pass" maxlength="64" autocomplete="current-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                     <button type="button" class="hg-secret-toggle" data-reveal-target="auth-login-pass" aria-label="Show Password">
-                        <span class="material-symbols-outlined">visibility</span>
+                        <span class="material-symbols-outlined" data-icon="visibility"></span>
                     </button>
                 </div>
             </div>
@@ -194,7 +188,7 @@
              independently of showAuthPanel() — see confirmReboot() in app.js. -->
         <div id="reboot-confirm" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
-                <span class="material-symbols-outlined text-primary text-[40px]">restart_alt</span>
+                <span class="material-symbols-outlined text-primary text-[40px]" data-icon="restart_alt"></span>
                 <h2 class="font-headline-md text-headline-md text-white">Reboot Required</h2>
                 <p id="reboot-confirm-text" class="font-body-md text-body-md text-on-surface-variant">The ESP32 must reboot to safely apply this change. Reboot now?</p>
             </div>
@@ -213,7 +207,7 @@
              app.js. -->
         <div id="alert-modal" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
-                <span id="alert-modal-icon" class="material-symbols-outlined text-primary text-[40px]">info</span>
+                <span id="alert-modal-icon" class="material-symbols-outlined text-primary text-[40px]" data-icon="info"></span>
                 <h2 id="alert-modal-title" class="font-headline-md text-headline-md text-white">Notice</h2>
                 <p id="alert-modal-text" class="font-body-md text-body-md text-on-surface-variant"></p>
             </div>
@@ -228,7 +222,7 @@
              confirmModal()/closeConfirmModal() in app.js. -->
         <div id="confirm-modal" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
-                <span id="confirm-modal-icon" class="material-symbols-outlined text-primary text-[40px]">help</span>
+                <span id="confirm-modal-icon" class="material-symbols-outlined text-primary text-[40px]" data-icon="help"></span>
                 <h2 id="confirm-modal-title" class="font-headline-md text-headline-md text-white">Are you sure?</h2>
                 <p id="confirm-modal-text" class="font-body-md text-body-md text-on-surface-variant"></p>
             </div>
@@ -245,7 +239,7 @@
              promptModal()/closePromptModal() in app.js. -->
         <div id="prompt-modal" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
-                <span id="prompt-modal-icon" class="material-symbols-outlined text-error text-[40px]">warning</span>
+                <span id="prompt-modal-icon" class="material-symbols-outlined text-error text-[40px]" data-icon="warning"></span>
                 <h2 id="prompt-modal-title" class="font-headline-md text-headline-md text-white">Confirm Action</h2>
                 <p id="prompt-modal-text" class="font-body-md text-body-md text-on-surface-variant"></p>
             </div>
@@ -271,7 +265,7 @@
     <button id="btn-mobile-menu" aria-label="Open menu" aria-expanded="false" aria-controls="sideNav"
         class="liquid-glass hidden fixed z-40 w-12 h-12 rounded-2xl items-center justify-center text-white"
         style="top: calc(env(safe-area-inset-top, 0px) + 1rem); left: calc(env(safe-area-inset-left, 0px) + 1rem);">
-        <span class="material-symbols-outlined" aria-hidden="true" id="btn-mobile-menu-icon">menu</span>
+        <span class="material-symbols-outlined" aria-hidden="true" id="btn-mobile-menu-icon" data-icon="menu"></span>
     </button>
 
     <!-- SIDE NAVIGATION SHELL — lg and up only (breakpoint moved from md to
@@ -363,13 +357,13 @@
                 </div>
                 <div class="flex flex-wrap items-center gap-3 md:gap-4">
                     <button id="btn-export-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
-                        <span class="material-symbols-outlined text-[20px]">download</span> Export CSV
+                        <span class="material-symbols-outlined text-[20px]" data-icon="download"></span> Export CSV
                     </button>
                     <!-- Demo Mode badge (Part 1.6) — hidden unless demo_mode is
                          on, so simulated readings are never mistaken for real
                          sensor data. -->
                     <div class="hidden items-center gap-2 liquid-glass px-4 py-2 rounded-2xl border border-secondary/40 bg-secondary/10" id="demo-mode-badge">
-                        <span class="material-symbols-outlined text-[18px] text-secondary">science</span>
+                        <span class="material-symbols-outlined text-[18px] text-secondary" data-icon="science"></span>
                         <span class="font-label-sm text-label-sm text-secondary font-bold tracking-widest">DEMO MODE</span>
                     </div>
                     <div class="flex items-center gap-2 liquid-glass px-4 py-2 rounded-2xl justify-center">
@@ -383,7 +377,7 @@
             <div class="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
                 <div class="liquid-glass rounded-3xl p-5 md:p-6 flex flex-col gap-2 relative overflow-hidden group">
                     <div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">wifi</span> <span class="hidden sm:inline">Uplink Status</span></span>
+                    <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-1"><span class="material-symbols-outlined text-[16px]" data-icon="wifi"></span> <span class="hidden sm:inline">Uplink Status</span></span>
                     <div class="font-data-num text-[16px] md:text-data-num text-white" id="dash-rssi">-- dBm</div>
                     <!-- Fix (gap #2): the device already broadcasts wifi_status
                          ("connected" | "ap_mode") in every vitals frame, but
@@ -392,18 +386,18 @@
                          dashboard. updateVitals() in app.js toggles both the
                          text and the warning color. -->
                     <div class="font-label-sm text-label-sm hidden items-center gap-1" id="dash-wifi-mode" aria-live="polite">
-                        <span class="material-symbols-outlined text-[14px]">warning</span>
+                        <span class="material-symbols-outlined text-[14px]" data-icon="warning"></span>
                         <span id="dash-wifi-mode-text">Setup network</span>
                     </div>
                 </div>
                 <div class="liquid-glass rounded-3xl p-5 md:p-6 flex flex-col gap-2 relative overflow-hidden group">
                     <div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">memory</span> <span class="hidden sm:inline">Heap Free</span></span>
+                    <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-1"><span class="material-symbols-outlined text-[16px]" data-icon="memory"></span> <span class="hidden sm:inline">Heap Free</span></span>
                     <div class="font-data-num text-[16px] md:text-data-num text-white" id="dash-heap">-- KB</div>
                 </div>
                 <div class="liquid-glass rounded-3xl p-5 md:p-6 flex flex-col gap-2 relative overflow-hidden group col-span-2 md:col-span-1">
                     <div class="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">schedule</span> Uptime</span>
+                    <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest flex items-center gap-1"><span class="material-symbols-outlined text-[16px]" data-icon="schedule"></span> Uptime</span>
                     <div class="font-data-num text-[16px] md:text-data-num text-white" id="dash-uptime">--</div>
                 </div>
             </div>
@@ -416,7 +410,7 @@
             <div class="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-6 md:gap-8">
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="1">
                     <div class="flex justify-between items-center">
-                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">water_drop</span> TDS</span>
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="water_drop"></span> TDS</span>
                         <span class="flex items-center gap-1">
                             <!-- Only shown while TDS itself is live but its
                                  temperature compensation fell back to a
@@ -426,7 +420,7 @@
                                  tds_fake_wt_comp (updateTelemetry() below).
                                  Hidden by default; toggled in JS, never CSS,
                                  same pattern as #demo-mode-badge. -->
-                            <span id="dash-tds-fakewt-badge" class="hidden material-symbols-outlined text-[16px] text-secondary" title="Compensated using a placeholder water temperature — Water Temp is in demo mode">science</span>
+                            <span id="dash-tds-fakewt-badge" class="hidden material-symbols-outlined text-[16px] text-secondary" title="Compensated using a placeholder water temperature — Water Temp is in demo mode" data-icon="science"></span>
                             <span id="dash-dot-tds" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                         </span>
                     </div>
@@ -436,7 +430,7 @@
                 </div>
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="6">
                     <div class="flex justify-between items-center">
-                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">science</span> pH Level</span>
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="science"></span> pH Level</span>
                         <span id="dash-dot-ph" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
@@ -445,7 +439,7 @@
                 </div>
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="2">
                     <div class="flex justify-between items-center">
-                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">thermostat</span> Air Temp</span>
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="thermostat"></span> Air Temp</span>
                         <span id="dash-dot-atemp" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
@@ -454,7 +448,7 @@
                 </div>
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="2">
                     <div class="flex justify-between items-center">
-                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">cloud</span> Humidity</span>
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="cloud"></span> Humidity</span>
                         <span id="dash-dot-hum" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
@@ -463,7 +457,7 @@
                 </div>
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="3">
                     <div class="flex justify-between items-center">
-                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">device_thermostat</span> Water Temp</span>
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="device_thermostat"></span> Water Temp</span>
                         <span id="dash-dot-wtemp" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
@@ -472,7 +466,7 @@
                 </div>
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="4">
                     <div class="flex justify-between items-center">
-                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">light_mode</span> Light</span>
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="light_mode"></span> Light</span>
                         <span id="dash-dot-lux" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
@@ -481,7 +475,7 @@
                 </div>
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="5">
                     <div class="flex justify-between items-center">
-                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">waves</span> Tank Level</span>
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="waves"></span> Tank Level</span>
                         <span id="dash-dot-wl" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
@@ -490,7 +484,7 @@
                 </div>
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group">
                     <div class="flex justify-between items-center">
-                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">air</span> VPD</span>
+                        <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="air"></span> VPD</span>
                         <span id="dash-dot-vpd" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
                     </div>
                     <div class="flex-1 flex items-end">
@@ -505,14 +499,14 @@
             <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[rgba(255,255,255,0.08)] pb-4">
                 <div>
                     <h2 class="font-headline-lg text-headline-lg text-white flex items-center gap-4">
-                        <span class="material-symbols-outlined text-[32px]" id="sensor-icon">sensors</span>
+                        <span class="material-symbols-outlined text-[32px]" id="sensor-icon" data-icon="sensors"></span>
                         <span id="sensor-name">Sensor Details</span>
                     </h2>
                     <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">GPIO PIN: <span class="text-primary" id="sensor-pin">--</span></p>
                 </div>
                 <div class="flex flex-wrap items-center gap-4">
                     <button id="btn-export-sensor-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
-                        <span class="material-symbols-outlined text-[20px]">download</span> Export CSV
+                        <span class="material-symbols-outlined text-[20px]" data-icon="download"></span> Export CSV
                     </button>
                     <div class="flex items-center">
                         <label class="hg-toggle">
@@ -533,7 +527,7 @@
                 </div>
             </header>
             <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center justify-between gap-2 shadow-lg" id="sensor-error" role="alert">
-                <span class="flex items-center gap-2"><span class="material-symbols-outlined">warning</span> <span id="sensor-error-text">Sensor reading offline or disabled.</span></span>
+                <span class="flex items-center gap-2"><span class="material-symbols-outlined" data-icon="warning"></span> <span id="sensor-error-text">Sensor reading offline or disabled.</span></span>
                 <button id="btn-reset-current-sensor" class="text-error underline underline-offset-2 text-label-md whitespace-nowrap">Reset to default &amp; reboot</button>
             </div>
             <div class="flex-1 liquid-glass rounded-3xl p-6 md:p-8 flex flex-col relative min-h-[400px]">
@@ -552,7 +546,7 @@
             <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-[rgba(255,255,255,0.08)] pb-4">
                 <div>
                     <h2 class="font-headline-lg text-headline-lg text-white flex items-center gap-4">
-                        <span class="material-symbols-outlined text-[32px]">thermostat</span>
+                        <span class="material-symbols-outlined text-[32px]" data-icon="thermostat"></span>
                         <span>Air Temp &amp; Humidity</span>
                     </h2>
                     <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">GPIO PIN: <span class="text-primary" id="dual-sensor-pin">--</span></p>
@@ -601,7 +595,7 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <!-- TDS Calibration -->
                 <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
-                    <h3 class="font-headline-md text-headline-md text-white flex items-center gap-2"><span class="material-symbols-outlined">water_drop</span> TDS Sensor</h3>
+                    <h3 class="font-headline-md text-headline-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="water_drop"></span> TDS Sensor</h3>
                     <!-- Shown instead of the calibration controls when the TDS
                          sensor is disabled -- it never gets its currentSensors
                          value touched by the firmware while off, so cal-tds-raw
@@ -609,7 +603,7 @@
                          with nothing on this page to say why. Toggled in
                          app.js's updateCalibrationGating(). -->
                     <div id="cal-tds-disabled-banner" class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" role="alert">
-                        <span class="material-symbols-outlined" aria-hidden="true">power_off</span>
+                        <span class="material-symbols-outlined" aria-hidden="true" data-icon="power_off"></span>
                         <span>TDS sensor is disabled. Enable it in Settings before calibrating.</span>
                     </div>
                     <div id="cal-tds-controls" class="flex flex-col gap-6">
@@ -641,7 +635,7 @@
                      beforeunload handler (wired in app.js) warns if the user
                      tries to leave mid-calibration. -->
                 <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6" id="ph-wizard-card">
-                    <h3 class="font-headline-md text-headline-md text-white flex items-center gap-2"><span class="material-symbols-outlined">science</span> pH Sensor Calibration Wizard</h3>
+                    <h3 class="font-headline-md text-headline-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="science"></span> pH Sensor Calibration Wizard</h3>
 
                     <!-- Shown instead of the wizard when the pH sensor is
                          disabled (it ships OFF by default). Without this,
@@ -652,7 +646,7 @@
                          calibration with no warning anywhere on this page.
                          Toggled in app.js's updateCalibrationGating(). -->
                     <div id="cal-ph-disabled-banner" class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" role="alert">
-                        <span class="material-symbols-outlined" aria-hidden="true">power_off</span>
+                        <span class="material-symbols-outlined" aria-hidden="true" data-icon="power_off"></span>
                         <span>pH sensor is disabled. Enable it in Settings before calibrating.</span>
                     </div>
 
@@ -713,7 +707,7 @@
             <header class="flex justify-between items-end pb-4 border-b border-[rgba(255,255,255,0.08)]">
                 <h2 class="font-headline-lg text-headline-lg text-white">System Settings</h2>
                 <button id="btn-logout" class="liquid-glass text-error font-label-md px-4 py-2 rounded-xl border border-error/30 hover:bg-error-container/20 flex items-center gap-2 transition-all">
-                    <span class="material-symbols-outlined text-[20px]">power_off</span> Logout
+                    <span class="material-symbols-outlined text-[20px]" data-icon="power_off"></span> Logout
                 </button>
             </header>
             <!-- Settings redesign (chunk 4b). Replaces the old "two tall flex
@@ -776,7 +770,7 @@
                             <div class="hg-secret-field">
                                 <input id="cfg-wifi-pass" maxlength="64" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-wifi-pass" aria-label="Show Wi-Fi Password">
-                                    <span class="material-symbols-outlined">visibility</span>
+                                    <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
                         </div>
@@ -785,7 +779,7 @@
                             <div class="hg-secret-field">
                                 <input id="cfg-ap-pass" maxlength="64" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-ap-pass" aria-label="Show SoftAP Recovery Password">
-                                    <span class="material-symbols-outlined">visibility</span>
+                                    <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
                             <p class="font-label-sm text-label-sm text-on-surface-variant">Password for the "HyGrow-Setup" recovery network the device falls back to if Wi-Fi fails. Minimum 8 characters. Leave blank to keep the current one.</p>
@@ -803,27 +797,28 @@
                     <!-- Change Password card (single-owner admin auth). Requires
                          the CURRENT password server-side even though this
                          session is already authenticated — see
-                         handleChangePasswordCommand() in auth.cpp. The
-                         "Current Password" field below is the SAME field used
-                         both to display the device's live admin password
-                         (populated from msg.admin_pass in updateConfigForm())
-                         and to authorize the change — it's writable, and its
-                         value at submit time is sent as `current`. There used
-                         to be a second, separate read-only display field here
-                         plus this typed one; since the display field already
-                         always mirrors the live password, having the user
-                         retype it added friction with no security benefit
-                         (the server independently re-verifies `current`
-                         either way), so they were merged into one field. -->
+                         handleChangePasswordCommand() in task_network.cpp.
+
+                         cfg-admin-pass-display is the ONLY "current password"
+                         field now — read-only, shows the device's actual live
+                         admin password (msg.admin_pass, updateConfigForm()).
+                         There used to be a second, typed cfg-pass-current
+                         field the user re-entered manually to authorize a
+                         change, which was redundant (the live value is
+                         already shown right above it) and has been removed;
+                         the submit handler below now reads the "current"
+                         value straight from cfg-admin-pass-display itself
+                         (see handleChangePassword() in app.js). Never written
+                         back to the device by this field. -->
                     <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Change Password</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Update the admin password used to access this device's dashboard.</p>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-admin-pass-display">Current Password</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-admin-pass-display" maxlength="64" autocomplete="current-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" type="password"/>
+                                <input id="cfg-admin-pass-display" maxlength="64" readonly autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-on-surface-variant outline-none font-body-md" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-admin-pass-display" aria-label="Show Current Password">
-                                    <span class="material-symbols-outlined">visibility</span>
+                                    <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
                         </div>
@@ -832,7 +827,7 @@
                             <div class="hg-secret-field">
                                 <input id="cfg-pass-new" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-new" aria-label="Show New Password">
-                                    <span class="material-symbols-outlined">visibility</span>
+                                    <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
                         </div>
@@ -841,7 +836,7 @@
                             <div class="hg-secret-field">
                                 <input id="cfg-pass-confirm" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-confirm" aria-label="Show Confirm New Password">
-                                    <span class="material-symbols-outlined">visibility</span>
+                                    <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
                         </div>
@@ -974,7 +969,7 @@
                             <div class="hg-secret-field">
                                 <input id="cfg-fb-api" maxlength="127" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="AIzaSy..." type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-fb-api" aria-label="Show Web API Key">
-                                    <span class="material-symbols-outlined">visibility</span>
+                                    <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
                         </div>
@@ -987,7 +982,7 @@
                             <div class="hg-secret-field">
                                 <input id="cfg-fb-pass" maxlength="63" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-fb-pass" aria-label="Show Firebase Password">
-                                    <span class="material-symbols-outlined">visibility</span>
+                                    <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
                             <!-- Unlike the Web API Key above, this field is
@@ -1048,7 +1043,7 @@
                          a forbidden/duplicate value. Styled consistently with the
                          existing #sensor-error banner (border-error/text-error). -->
                     <div class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" id="pin-validation-error" role="alert">
-                        <span class="material-symbols-outlined">warning</span>
+                        <span class="material-symbols-outlined" data-icon="warning"></span>
                         <span id="pin-validation-error-text">GPIO 19 and 20 are reserved for USB on this board and can't be used for a sensor. Change that pin and try again.</span>
                     </div>
                     <!-- Shown only while Demo Mode is on — every pin field below is
@@ -1072,9 +1067,9 @@
                          response to a user's own toggle, never asynchronously behind
                          their back. -->
                     <button type="button" class="hidden w-full text-left liquid-glass border-l-4 border-secondary/60 p-4 rounded-2xl text-on-surface-variant font-body-md flex items-center gap-2 shadow-lg cursor-pointer hover:bg-white/5 transition-colors" id="pinout-demo-lock">
-                        <span class="material-symbols-outlined text-secondary">science</span>
+                        <span class="material-symbols-outlined text-secondary" data-icon="science"></span>
                         <span>Demo Mode is on — every sensor pin below is simulated and locked. Turn off Demo Mode in <span class="underline">Feature Flags</span> to edit real pin assignments.</span>
-                        <span class="material-symbols-outlined text-[18px] ml-auto shrink-0">chevron_right</span>
+                        <span class="material-symbols-outlined text-[18px] ml-auto shrink-0" data-icon="chevron_right"></span>
                     </button>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
@@ -1221,14 +1216,14 @@
                 <div class="flex flex-col gap-4">
                     <h3 class="font-label-sm text-label-sm text-error uppercase tracking-widest">System</h3>
                 <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6 items-start border border-error/30">
-                    <h3 class="font-headline-md text-headline-md text-error flex items-center gap-2"><span class="material-symbols-outlined">warning</span> Memory &amp; Power</h3>
+                    <h3 class="font-headline-md text-headline-md text-error flex items-center gap-2"><span class="material-symbols-outlined" data-icon="warning"></span> Memory &amp; Power</h3>
                     <p class="text-on-surface-variant text-body-md mb-2">Perform hard system resets. Use with caution.</p>
                     <div class="flex flex-col sm:flex-row gap-4 w-full">
                         <button id="btn-reboot" class="flex-1 bg-white/5 border border-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/10 transition-all flex items-center justify-center gap-2">
-                            <span class="material-symbols-outlined text-[20px]">restart_alt</span> Reboot Device
+                            <span class="material-symbols-outlined text-[20px]" data-icon="restart_alt"></span> Reboot Device
                         </button>
                         <button id="btn-factory-reset" class="flex-1 bg-error-container/20 border border-error/50 text-error font-label-md py-3 rounded-xl hover:bg-error-container/40 transition-all flex items-center justify-center gap-2">
-                            <span class="material-symbols-outlined text-[20px]">delete_forever</span> Factory Reset
+                            <span class="material-symbols-outlined text-[20px]" data-icon="delete_forever"></span> Factory Reset
                         </button>
                     </div>
                 </div>
@@ -1248,7 +1243,7 @@
                          timestamps today), one [CORE n] tag + message per
                          line. See btn-term-export wiring in app.js. -->
                     <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors flex items-center gap-1" id="btn-term-export">
-                        <span class="material-symbols-outlined text-[18px]">content_copy</span> Copy
+                        <span class="material-symbols-outlined text-[18px]" data-icon="content_copy"></span> Copy
                     </button>
                     <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors" id="btn-term-pause">Pause</button>
                     <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors" id="btn-term-clear">Clear</button>
@@ -1265,7 +1260,7 @@
                      place in the log out from under them mid-read. Tapping it
                      jumps to the bottom and re-arms autoscroll. -->
                 <button id="btn-term-jump-latest" class="hidden absolute bottom-4 left-1/2 -translate-x-1/2 liquid-glass text-white font-label-sm text-label-sm px-4 py-2 rounded-full shadow-lg items-center gap-1 hover:bg-white/10 transition-colors z-10">
-                    <span class="material-symbols-outlined text-[16px]">arrow_downward</span> New logs
+                    <span class="material-symbols-outlined text-[16px]" data-icon="arrow_downward"></span> New logs
                 </button>
             </div>
         </section>
