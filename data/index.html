@@ -22,11 +22,17 @@
          only ever be reachable over its own SoftAP with no internet
          uplink, so like the fonts/favicon below, nothing here can depend
          on an external URL. theme-color matches the manifest's
-         background_color/theme_color and the app's own dark surface
-         (#0b0d10, see --hg-surface/style.css), so the OS status bar / task
-         switcher chrome around the installed app doesn't clash with it. -->
+         background_color/theme_color AND the app's actual page background
+         (#000000 — see bg-[#000000] on <body> below and --hg-bg in
+         style.css), NOT --hg-surface (#141414, the lighter card/nav
+         background). These three previously disagreed (#0b0d10 here vs.
+         #000000 on <body>), which on a real device shows as a visible
+         seam of mismatched color in the system-chrome area behind a
+         fixed bottom-0 element (e.g. #bottomNav) — the safe-area inset
+         itself is filled by the OS using this color, not by any of the
+         page's own CSS, so it has to match the page background exactly. -->
     <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#0b0d10">
+    <meta name="theme-color" content="#000000">
 
     <!-- Home-screen "Add to Home Screen" behavior on iOS/iPadOS — without
          these, a saved HyGrow shortcut opens inside Safari's chrome (address
@@ -797,28 +803,26 @@
                     <!-- Change Password card (single-owner admin auth). Requires
                          the CURRENT password server-side even though this
                          session is already authenticated — see
-                         handleChangePasswordCommand() in task_network.cpp. -->
+                         handleChangePasswordCommand() in auth.cpp. The
+                         "Current Password" field below is the SAME field used
+                         both to display the device's live admin password
+                         (populated from msg.admin_pass in updateConfigForm())
+                         and to authorize the change — it's writable, and its
+                         value at submit time is sent as `current`. There used
+                         to be a second, separate read-only display field here
+                         plus this typed one; since the display field already
+                         always mirrors the live password, having the user
+                         retype it added friction with no security benefit
+                         (the server independently re-verifies `current`
+                         either way), so they were merged into one field. -->
                     <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Change Password</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Update the admin password used to access this device's dashboard.</p>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant" for="cfg-admin-pass-display">Current Password (on device)</label>
-                            <!-- Read-only — shows the device's actual live admin password
-                                 (msg.admin_pass, updateConfigForm()), separate from
-                                 cfg-pass-current below which is the field you TYPE INTO to
-                                 authorize a change. Never written back to the device. -->
+                            <label class="font-label-md text-on-surface-variant" for="cfg-admin-pass-display">Current Password</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-admin-pass-display" maxlength="64" readonly autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-on-surface-variant outline-none font-body-md" type="password"/>
-                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-admin-pass-display" aria-label="Show Current Admin Password">
-                                    <span class="material-symbols-outlined">visibility</span>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant" for="cfg-pass-current">Current Password</label>
-                            <div class="hg-secret-field">
-                                <input id="cfg-pass-current" maxlength="64" autocomplete="current-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
-                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-current" aria-label="Show Current Password">
+                                <input id="cfg-admin-pass-display" maxlength="64" autocomplete="current-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" type="password"/>
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-admin-pass-display" aria-label="Show Current Password">
                                     <span class="material-symbols-outlined">visibility</span>
                                 </button>
                             </div>

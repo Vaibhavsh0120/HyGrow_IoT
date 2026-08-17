@@ -783,7 +783,12 @@ function handleChangePasswordResult(msg) {
             btn.innerText = 'Password Updated!';
             setTimeout(() => { btn.innerText = original; }, 2000);
         }
-        ['cfg-pass-current', 'cfg-pass-new', 'cfg-pass-confirm'].forEach((id) => {
+        // cfg-admin-pass-display is NOT cleared here — the device sends a
+        // "config" frame (broadcastConfig(), auth.cpp) before this
+        // change_password_result frame, so by the time this handler runs the
+        // field already holds the NEW live password via updateConfigForm().
+        // Clearing it here would blank out a value that's already correct.
+        ['cfg-pass-new', 'cfg-pass-confirm'].forEach((id) => {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
@@ -1429,7 +1434,13 @@ function updateConfigForm(msg) {
     // leaving it unchanged server-side, so save_wifi (command_handlers.cpp)
     // must treat "unchanged from msg.wifi_pass" the same as blank. cfg-fb-pass
     // gets the same treatment for consistency with cfg-fb-api just above.
-    // cfg-admin-pass-display is read-only and never submitted anywhere.
+    // cfg-admin-pass-display doubles as the Change Password card's "Current
+    // Password" field (see index.html) — pre-filling it here with the
+    // device's live password means an untouched Update Password click
+    // submits the correct current password automatically, same pattern as
+    // wifi/ap/fb pass above. It's also what makes the field refresh right
+    // after a successful change (see broadcastConfig() call added to
+    // handleChangePasswordCommand(), auth.cpp).
     if(document.getElementById('cfg-wifi-pass')) document.getElementById('cfg-wifi-pass').value = msg.wifi_pass || "";
     if(document.getElementById('cfg-ap-pass')) document.getElementById('cfg-ap-pass').value = msg.ap_pass || "";
     if(document.getElementById('cfg-fb-pass')) document.getElementById('cfg-fb-pass').value = msg.fb_pass || "";
@@ -1877,7 +1888,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnChangePassword = document.getElementById('btn-change-password');
     if (btnChangePassword) {
         btnChangePassword.addEventListener('click', () => {
-            const current = document.getElementById('cfg-pass-current').value;
+            const current = document.getElementById('cfg-admin-pass-display').value;
             const next = document.getElementById('cfg-pass-new').value;
             const confirmNext = document.getElementById('cfg-pass-confirm').value;
             const err = document.getElementById('cfg-pass-error');

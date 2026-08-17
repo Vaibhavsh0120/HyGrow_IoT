@@ -317,6 +317,14 @@ void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc
         s_authedClients.clear();
         wsMarkClientAuthed(client->id());
         broadcastAuthStatus(); // pushes every OTHER open tab back to the login/setup overlay immediately, not just on its next reconnect
+        // wsTextAllAuthed() (used inside broadcastConfig()) checks
+        // s_authedClients live at send time, and only this client was
+        // just re-added to it above, so this immediately refreshes THIS
+        // client's Settings > Change Password > "Current Password (on
+        // device)" field with the new password — without it, that
+        // read-only display would keep showing the now-stale old
+        // password until the next unrelated config broadcast.
+        broadcastConfig();
         resp["ok"] = true;
         resp["token"] = freshToken;
         webLog(0, LOG_INFO, "Admin password changed by client " + String(client->id()) + "; all other sessions invalidated.");
