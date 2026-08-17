@@ -94,6 +94,19 @@ struct SensorState
   float wl_percent;
   float vpd_kpa;
 
+  // True whenever the most recent real TDS reading (S_TDS enabled, not
+  // itself in demo mode) was temperature-compensated against a neutral
+  // 25.0°C placeholder instead of a real water_temp_c reading, because
+  // Water Temp (S_WTEMP) was independently in demo mode at read time — see
+  // the readAll() TDS block in task_sensor.cpp. Lets the frontend show a
+  // "using placeholder water temp" note on the TDS card instead of the
+  // reading silently looking fully live. Meaningless/stale whenever TDS
+  // itself is disabled or in demo mode (readAllDemo()'s simulated TDS
+  // never touches this flag either way, so it just holds whatever it was
+  // last set to — the frontend only surfaces it while dash-dot-tds shows
+  // "live", i.e. TDS is enabled and not itself simulated).
+  bool tds_comp_using_fake_water_temp;
+
   // Per-sensor last-good timestamp (millis); 0 = never
   uint32_t last_ok_ms[S_COUNT];
   // Per-sensor last error string ("" = ok)

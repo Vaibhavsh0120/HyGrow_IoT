@@ -10,7 +10,7 @@
 //     since a hand-crafted WS message can skip the browser entirely
 //   - handleDeviceCommand(): every command name other than "auth"/
 //     "change_password" (those live in auth.cpp) — save_wifi, save_firebase,
-//     save_pins, calibrate_ph, calibrate_tds, save_features,
+//     save_pins, calibrate_ph, calibrate_tds, save_features, save_sensor_demo,
 //     save_sensor_enabled, save_intervals, reset_sensor_pin, test_firebase, factory_reset,
 //     reboot, request_vitals
 //
@@ -546,6 +546,231 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
         // false) when demoModeChanged is false, so an older client that
         // doesn't look for it is unaffected either way.
         sendCmdAck(client, cmd, true, "", demoModeChanged);
+    }
+    else if (cmd == "save_sensor_demo")
+    {
+        // Per-sensor equivalent of save_features's demo_mode branch above,
+        // but deliberately NOT gated on currentConfig.demo_mode (the global
+        // flag) — that lock exists on save_pins/reset_sensor_pin because
+        // those write real GPIO numbers straight into pin_* while Demo Mode
+        // owns that field for every sensor at once; this command never does
+        // that. It only ever swaps ONE sensor's pin field between its own
+        // real_pin_* mirror and DEMO_MODE_PIN, so it can't produce the
+        // stale-real_pin_*/pin_* mismatch that lock is there to prevent,
+        // and the whole point of a per-sensor toggle is to work
+        // independently of whatever the global flag is currently set to.
+        //
+        // Same reboot-required contract as every other pin-touching command
+        // in this file (save_pins, save_sensor_enabled, reset_sensor_pin):
+        // task_sensor.cpp only re-inits hardware in initAllSensors() at
+        // boot, so a pin change — in either direction — doesn't take effect
+        // until then. That matters most going demo->real (real hardware was
+        // never brought up), but this applies the same rule uniformly both
+        // ways rather than assuming the real->demo direction is safely
+        // live, which would diverge from every existing pin command's
+        // convention without solid proof no sensor driver holds init-time
+        // state that also needs resetting.
+        String sensor = doc["sensor"] | "";
+        bool demo = doc["demo"] | false;
+        SensorID id = S_COUNT; // sentinel; only used after matched is confirmed true
+        bool matched = true;
+
+        if (sensor == "tds")
+            id = S_TDS;
+        else if (sensor == "dht")
+            id = S_DHT;
+        else if (sensor == "ph")
+            id = S_PH;
+        else if (sensor == "wt")
+            id = S_WTEMP;
+        else if (sensor == "wl")
+            id = S_WL;
+        else if (sensor == "light")
+            id = S_LIGHT;
+        else
+            matched = false;
+
+        if (!matched)
+        {
+            webLog(0, LOG_ERR, "save_sensor_demo: unknown sensor id '" + sensor + "'");
+            sendCmdAck(client, cmd, false, "Unknown sensor id '" + sensor + "'");
+            return;
+        }
+
+        // Determine current demo state directly from the live pin field(s)
+        // rather than trusting the client's belief about prior state — for
+        // the two multi-pin sensors (wl: signal+power, light: sda+scl) both
+        // pins always move together, so checking either is sufficient and
+        // matches sensorPinIsDemo()'s own server-side definition
+        // (task_sensor.cpp) that this command must stay consistent with.
+        bool currentlyDemo = false;
+        switch (id)
+        {
+        case S_TDS:
+            currentlyDemo = (currentConfig.pin_tds == DEMO_MODE_PIN);
+            break;
+        case S_DHT:
+            currentlyDemo = (currentConfig.pin_dht == DEMO_MODE_PIN);
+            break;
+        case S_PH:
+            currentlyDemo = (currentConfig.pin_ph == DEMO_MODE_PIN);
+            break;
+        case S_WTEMP:
+            currentlyDemo = (currentConfig.pin_ds18b20 == DEMO_MODE_PIN);
+            break;
+        case S_WL:
+            currentlyDemo = (currentConfig.pin_wl == DEMO_MODE_PIN);
+            break;
+        case S_LIGHT:
+            currentlyDemo = (currentConfig.pin_lux_sda == DEMO_MODE_PIN);
+            break;
+        default:
+            break;
+        }
+
+        if (demo == currentlyDemo)
+        {
+            // No-op: already in the requested state. Still ack success (not
+            // an error) so a client that raced two toggles, or reloaded with
+            // a stale checkbox state, doesn't get a confusing failure for
+            // asking for what's already true.
+            sendCmdAck(client, cmd, true, "", false);
+            return;
+        }
+
+        if (demo)
+        {
+            // Turning per-sensor demo ON: mirror the real pin(s) first (so
+            // turning it back off restores exactly what was here), then
+            // swap to the sentinel. Also force this one sensor enabled —
+            // same reasoning as save_features's global ON branch: a demo
+            // toggle that's on but shows "no data" because the sensor
+            // happened to be disabled beforehand isn't useful, and
+            // readAllDemo() already skips disabled sensors regardless of
+            // pin (task_sensor.cpp).
+            switch (id)
+            {
+            case S_TDS:
+                currentConfig.real_pin_tds = currentConfig.pin_tds;
+                currentConfig.pin_tds = DEMO_MODE_PIN;
+                break;
+            case S_DHT:
+                currentConfig.real_pin_dht = currentConfig.pin_dht;
+                currentConfig.pin_dht = DEMO_MODE_PIN;
+                break;
+            case S_PH:
+                currentConfig.real_pin_ph = currentConfig.pin_ph;
+                currentConfig.pin_ph = DEMO_MODE_PIN;
+                break;
+            case S_WTEMP:
+                currentConfig.real_pin_ds18b20 = currentConfig.pin_ds18b20;
+                currentConfig.pin_ds18b20 = DEMO_MODE_PIN;
+                break;
+            case S_WL:
+                currentConfig.real_pin_wl = currentConfig.pin_wl;
+                currentConfig.real_pin_wl_power = currentConfig.pin_wl_power;
+                currentConfig.pin_wl = DEMO_MODE_PIN;
+                currentConfig.pin_wl_power = DEMO_MODE_PIN;
+                break;
+            case S_LIGHT:
+                currentConfig.real_pin_lux_sda = currentConfig.pin_lux_sda;
+                currentConfig.real_pin_lux_scl = currentConfig.pin_lux_scl;
+                currentConfig.pin_lux_sda = DEMO_MODE_PIN;
+                currentConfig.pin_lux_scl = DEMO_MODE_PIN;
+                break;
+            default:
+                break;
+            }
+            currentConfig.sensor_enabled[id] = true;
+        }
+        else
+        {
+            // Turning per-sensor demo OFF: restore the real pin(s) from the
+            // mirror saved above (or from whichever save most recently
+            // turned this sensor's demo on). Enabled state is deliberately
+            // left as-is, matching save_features's OFF branch — there's no
+            // single correct "restore" for it.
+            //
+            // Validate BEFORE committing: save_pins gates itself on
+            // currentConfig.demo_mode (the GLOBAL flag) to stay locked out
+            // while pin_* is demo-owned, but that check is a no-op while
+            // this one sensor is individually demo'd and the global flag is
+            // false — save_pins stays fully callable in that window, and
+            // any other sensor's pin can be freely reassigned to a value
+            // that happens to equal THIS sensor's stored real_pin_* (which
+            // reads as harmless right now, since a demo'd sensor's live pin
+            // is -42 and never conflicts with anything). Restoring here
+            // without re-checking would silently land two sensors on the
+            // same physical GPIO with no error anywhere — exactly what
+            // validatePinSet() exists to prevent on every other pin-writing
+            // path. Building the full proposed post-restore pin set and
+            // running it through the same check keeps this command held to
+            // the same safety bar as save_pins, instead of being a narrower
+            // side door around it.
+            int proposedTds = (id == S_TDS) ? currentConfig.real_pin_tds : currentConfig.pin_tds;
+            int proposedDht = (id == S_DHT) ? currentConfig.real_pin_dht : currentConfig.pin_dht;
+            int proposedPh = (id == S_PH) ? currentConfig.real_pin_ph : currentConfig.pin_ph;
+            int proposedWt = (id == S_WTEMP) ? currentConfig.real_pin_ds18b20 : currentConfig.pin_ds18b20;
+            int proposedWl = (id == S_WL) ? currentConfig.real_pin_wl : currentConfig.pin_wl;
+            int proposedSda = (id == S_LIGHT) ? currentConfig.real_pin_lux_sda : currentConfig.pin_lux_sda;
+            int proposedScl = (id == S_LIGHT) ? currentConfig.real_pin_lux_scl : currentConfig.pin_lux_scl;
+            int proposedWlp = (id == S_WL) ? currentConfig.real_pin_wl_power : currentConfig.pin_wl_power;
+
+            PinCheckEntry proposed[] = {
+                {proposedTds, "TDS"},
+                {proposedDht, "DHT22"},
+                {proposedPh, "pH"},
+                {proposedWt, "DS18B20 (Water Temp)"},
+                {proposedWl, "Water Level Signal"},
+                {proposedSda, "BH1750 SDA"},
+                {proposedScl, "BH1750 SCL"},
+                {proposedWlp, "Water Level Power"},
+            };
+            String problem = validatePinSet(proposed, 8);
+            if (problem.length() > 0)
+            {
+                webLog(0, LOG_ERR, "save_sensor_demo rejected: " + problem);
+                sendCmdAck(client, cmd, false, "Can't turn off demo mode for '" + sensor + "': " + problem +
+                                                    " Reassign the conflicting pin first.");
+                return;
+            }
+
+            switch (id)
+            {
+            case S_TDS:
+                currentConfig.pin_tds = currentConfig.real_pin_tds;
+                break;
+            case S_DHT:
+                currentConfig.pin_dht = currentConfig.real_pin_dht;
+                break;
+            case S_PH:
+                currentConfig.pin_ph = currentConfig.real_pin_ph;
+                break;
+            case S_WTEMP:
+                currentConfig.pin_ds18b20 = currentConfig.real_pin_ds18b20;
+                break;
+            case S_WL:
+                currentConfig.pin_wl = currentConfig.real_pin_wl;
+                currentConfig.pin_wl_power = currentConfig.real_pin_wl_power;
+                break;
+            case S_LIGHT:
+                currentConfig.pin_lux_sda = currentConfig.real_pin_lux_sda;
+                currentConfig.pin_lux_scl = currentConfig.real_pin_lux_scl;
+                break;
+            default:
+                break;
+            }
+        }
+
+        if (!state_save())
+        {
+            webLog(0, LOG_ERR, "save_sensor_demo: state_save() failed — settings may not be fully persisted.");
+            sendCmdAck(client, cmd, false, "Failed to save. Device storage may be full or corrupted.");
+            return;
+        }
+        broadcastConfig();
+        webLog(0, LOG_INFO, "Sensor '" + sensor + "' demo mode " + String(demo ? "enabled" : "disabled") + ". Reboot required to apply.");
+        sendCmdAck(client, cmd, true, "", true);
     }
     else if (cmd == "save_sensor_enabled")
     {

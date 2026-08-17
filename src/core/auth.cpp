@@ -299,15 +299,27 @@ void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc
     {
         auth_set_password(newPass);
         // Re-issuing a token invalidates every previously issued token (see
-        // auth_set_password()/auth_issue_token() in state.cpp) — including
-        // this very client's old one — so re-authenticate THIS client
-        // against the fresh token immediately rather than kicking the admin
-        // out of their own change-password flow.
+        // auth_set_password()/auth_issue_token() in state.cpp), but that
+        // alone only stops FUTURE re-auths with the old token — it does
+        // nothing for WS clients that are already connected and already in
+        // s_authedClients, since isAuthed() is an in-memory membership check
+        // per connection, not something re-validated against the token on
+        // every command. Without clearing s_authedClients here, every other
+        // already-open tab/device would keep acting as authenticated over
+        // its live connection until it happened to disconnect/reconnect —
+        // unlike Logout (handleLogoutCommand(), above), which does clear it.
+        // So: clear the whole set, exactly like Logout, then re-add THIS
+        // client so changing your own password doesn't also kick you out of
+        // the flow you're in the middle of. Every other tab gets the
+        // broadcastAuthStatus() below and is forced back to the login
+        // screen, same as an explicit Logout would do to them.
         String freshToken = auth_issue_token();
+        s_authedClients.clear();
         wsMarkClientAuthed(client->id());
+        broadcastAuthStatus(); // pushes every OTHER open tab back to the login/setup overlay immediately, not just on its next reconnect
         resp["ok"] = true;
         resp["token"] = freshToken;
-        webLog(0, LOG_INFO, "Admin password changed by client " + String(client->id()) + ".");
+        webLog(0, LOG_INFO, "Admin password changed by client " + String(client->id()) + "; all other sessions invalidated.");
     }
 
     String payload;

@@ -16,7 +16,11 @@ const tabsData = {
     icons: ["monitoring", "water_drop", "thermostat", "device_thermostat", "light_mode", "waves", "science", "settings_input_component", "settings", "terminal"],
     activeStyle: "text-white font-bold bg-white/10 rounded-2xl shadow-inner",
     inactiveStyle: "text-on-surface-variant font-medium hover:bg-white/10 hover:text-white rounded-2xl transition-colors duration-200",
-    baseStyle: "flex items-center justify-start gap-4 p-3 lg:px-6 lg:py-3 cursor-pointer transition-all duration-150 w-full",
+    // #sideNav only ever renders at lg (1024px+) now — see the breakpoint
+    // fix in index.html — so this row's classes no longer need a
+    // non-lg: base state at all; px-6/py-3 apply unconditionally since
+    // there's no smaller-viewport version of this element to size for.
+    baseStyle: "flex items-center justify-start gap-4 px-6 py-3 cursor-pointer transition-all duration-150 w-full",
     // Placeholder values shown only until the first "config" WS message arrives
     // and overwrites these with the device's real, live pin assignments.
     gpios: [null, DEFAULT_PINS.tds, DEFAULT_PINS.dht, DEFAULT_PINS.wt, DEFAULT_PINS.sda, DEFAULT_PINS.wl, DEFAULT_PINS.ph, null, null, null],
@@ -154,7 +158,7 @@ function initNavigation() {
         li.setAttribute('aria-label', label);
         li.innerHTML = `
             <span class="material-symbols-outlined" aria-hidden="true">${tabsData.icons[index]}</span>
-            <span class="font-label-md text-label-md whitespace-nowrap hidden lg:block">${label}</span>
+            <span class="font-label-md text-nav-label whitespace-nowrap">${label}</span>
         `;
         li.addEventListener('click', () => switchTab(index, li));
         li.addEventListener('keydown', (e) => {
@@ -290,6 +294,34 @@ function initSensorCardLinks() {
 }
 
 function switchTab(index, element) {
+    // Scroll-to-top handling (Part 6.1) — <main> is the single shared
+    // scroll container for every page-section, so without this a tab
+    // switch could open the new page still scrolled to wherever the
+    // PREVIOUS page happened to be, and re-tapping the already-active tab
+    // did nothing at all. Checked here, before currentTabId is reassigned
+    // below, since that's the only point that still knows whether this is
+    // a real switch or a repeat tap on the current tab.
+    const isReTap = (index === currentTabId);
+    const mainEl = document.querySelector('main');
+    if (mainEl) {
+        if (isReTap) {
+            // Re-tapping the active tab: treat it like "scroll to top" —
+            // smooth, since the user is already looking at this page and
+            // the motion itself is the whole point.
+            mainEl.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+            // Genuine page change: snap instantly. This isn't a "nice
+            // scroll" moment, it's making sure the newly-shown page isn't
+            // silently pre-scrolled from whatever the last page's
+            // scrollTop happened to be.
+            mainEl.scrollTo({ top: 0, behavior: 'auto' });
+        }
+    }
+    // A re-tap doesn't change which page is showing or which nav item is
+    // active — every step below this exists to switch pages/update
+    // highlighting, none of which needs to re-run for a no-op tap.
+    if (isReTap) return;
+
     currentTabId = index;
     const navTabsContainer = document.getElementById('nav-tabs');
 
@@ -1095,6 +1127,11 @@ function updateTelemetry(msg) {
     // on the dashboard too (they're all in the same function, after the
     // line that throws).
     if(document.getElementById('dash-val-tds')) document.getElementById('dash-val-tds').innerText = (msg.tds || 0).toFixed(0);
+    // Small icon badge next to the TDS status dot — see the comment on the
+    // element in index.html / tds_comp_using_fake_water_temp in state.h.
+    // Only ever true while TDS itself is live (checked server-side), so no
+    // extra guard needed here beyond the flag itself.
+    if(document.getElementById('dash-tds-fakewt-badge')) document.getElementById('dash-tds-fakewt-badge').classList.toggle('hidden', !msg.tds_fake_wt_comp);
     if(document.getElementById('dash-val-ph')) document.getElementById('dash-val-ph').innerText = (msg.ph_val || 0).toFixed(2);
     if(document.getElementById('dash-val-atemp')) document.getElementById('dash-val-atemp').innerText = (msg.temp || 0).toFixed(1);
     if(document.getElementById('dash-val-hum')) document.getElementById('dash-val-hum').innerText = (msg.hum || 0).toFixed(0);
@@ -1618,10 +1655,22 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+// Smart autoscroll (Part 6.2) — how close to the bottom (in px) still counts
+// as "was already following the log", vs. "deliberately scrolled up to read
+// something". Generous enough to absorb sub-pixel/rounding scroll positions
+// without treating a genuine scroll-up as still-at-bottom.
+const TERMINAL_AUTOSCROLL_THRESHOLD_PX = 40;
+
 function updateTerminal(msg) {
     if (isTerminalPaused) return;
     const term = document.getElementById('terminal-output');
     if(!term) return;
+
+    // Was the view already at (or very near) the bottom BEFORE this line is
+    // appended? Have to read this before appending/trimming below, since
+    // both change scrollHeight out from under us.
+    const wasAtBottom = (term.scrollHeight - term.scrollTop - term.clientHeight) <= TERMINAL_AUTOSCROLL_THRESHOLD_PX;
+
     if(term.children.length > 100) term.removeChild(term.firstChild);
 
     const log = document.createElement('div');
@@ -1629,7 +1678,20 @@ function updateTerminal(msg) {
     const levelClass = msg.level === "error" ? "text-error font-bold" : (msg.level === "warn" ? "text-secondary" : "");
     log.innerHTML = `<span class="${colorClass} opacity-80">[CORE ${msg.core}]</span> <span class="${levelClass}">${escapeHtml(msg.msg)}</span>`;
     term.appendChild(log);
-    term.scrollTop = term.scrollHeight;
+
+    // Only follow the log automatically if the user was already at the
+    // bottom — this used to force-scroll unconditionally, which yanked the
+    // view away from anyone who'd scrolled up to read earlier output.
+    // Someone who scrolled away sees a "New logs" pill instead (below)
+    // rather than being pulled back down mid-read.
+    const jumpBtn = document.getElementById('btn-term-jump-latest');
+    if (wasAtBottom) {
+        term.scrollTop = term.scrollHeight;
+        if (jumpBtn) jumpBtn.classList.add('hidden');
+    } else if (jumpBtn) {
+        jumpBtn.classList.remove('hidden');
+        jumpBtn.classList.add('flex');
+    }
 }
 
 // ============================================================================
@@ -2424,7 +2486,75 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnTermClear = document.getElementById('btn-term-clear');
     if(btnTermClear) btnTermClear.addEventListener('click', () => {
         document.getElementById('terminal-output').innerHTML = '<div><span class="text-secondary opacity-70">[SYS]</span> Terminal cleared.</div>';
+        // Clearing the log also clears any reason to show "New logs" —
+        // nothing to jump to anymore, and the view is already at the
+        // (now-empty) bottom.
+        const jumpBtnOnClear = document.getElementById('btn-term-jump-latest');
+        if (jumpBtnOnClear) { jumpBtnOnClear.classList.add('hidden'); jumpBtnOnClear.classList.remove('flex'); }
     });
+
+    // Jump-to-latest pill (Part 6.2) — shown by updateTerminal() whenever a
+    // new line arrives while the user has scrolled away from the bottom.
+    // Tapping it catches the view up and re-arms autoscroll for the next line.
+    const btnTermJumpLatest = document.getElementById('btn-term-jump-latest');
+    if (btnTermJumpLatest) btnTermJumpLatest.addEventListener('click', () => {
+        const term = document.getElementById('terminal-output');
+        if (term) term.scrollTop = term.scrollHeight;
+        btnTermJumpLatest.classList.add('hidden');
+        btnTermJumpLatest.classList.remove('flex');
+    });
+
+    // Copy button (Part 6.2) — mirrors the Dashboard's Export CSV pattern,
+    // just to the clipboard as plain text instead of a downloaded file
+    // (a full terminal session is short enough that a file feels like
+    // overkill; Clipboard API also doesn't need a download-anchor dance).
+    // Reads innerText per line so the [CORE n] tag and message both come
+    // through as plain text, HTML-free.
+    const btnTermExport = document.getElementById('btn-term-export');
+    if (btnTermExport) btnTermExport.addEventListener('click', async () => {
+        const term = document.getElementById('terminal-output');
+        if (!term) return;
+        const lines = Array.from(term.children).map((el) => el.innerText).join('\n');
+        const original = btnTermExport.innerHTML;
+        try {
+            await navigator.clipboard.writeText(lines);
+            btnTermExport.innerHTML = '<span class="material-symbols-outlined text-[18px]">check</span> Copied';
+        } catch (e) {
+            // Clipboard API can fail (permissions, insecure context, etc.) —
+            // fails visibly rather than silently, same spirit as the
+            // "Not connected to the device right now." alert used elsewhere
+            // in this file for other unavailable actions.
+            btnTermExport.innerHTML = '<span class="material-symbols-outlined text-[18px]">error</span> Copy failed';
+        }
+        setTimeout(() => { btnTermExport.innerHTML = original; }, 2000);
+    });
+
+    // Demo Mode banner (Part 6.4) — "Demo Mode is on... Turn off Demo Mode in
+    // Feature Flags to edit real pin assignments." (#pinout-demo-lock, Sensor
+    // Implementation Config card). It's already a real <button> so Enter/Space
+    // fire 'click' natively — no separate keydown handler needed. Both this
+    // and the Feature Flags card (#settings-feature-flags-card) live on the
+    // same Settings page, so this is a scrollIntoView, not a tab switch.
+    const btnPinoutDemoLock = document.getElementById('pinout-demo-lock');
+    if (btnPinoutDemoLock) {
+        btnPinoutDemoLock.addEventListener('click', () => {
+            const target = document.getElementById('settings-feature-flags-card');
+            if (!target) return;
+            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // Brief highlight so it's obvious which card the click landed on —
+            // .hg-highlight-flash is a one-shot CSS animation (style.css) that
+            // removes itself via 'animationend' below rather than a timeout,
+            // so it can't get out of sync with the actual animation duration.
+            target.classList.remove('hg-highlight-flash');
+            // Force reflow so re-adding the class restarts the animation if
+            // the banner is tapped again before the previous flash finished.
+            void target.offsetWidth;
+            target.classList.add('hg-highlight-flash');
+            target.addEventListener('animationend', () => {
+                target.classList.remove('hg-highlight-flash');
+            }, { once: true });
+        });
+    }
 
     // Per-sensor detail page CSV export — uses exportSeriesToCsv() (charts.js),
     // which was defined but never wired to any button before this. The

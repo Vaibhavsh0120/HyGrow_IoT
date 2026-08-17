@@ -247,6 +247,12 @@ void broadcastData()
     doc["wl_percent"] = currentSensors.wl_percent;
     doc["ph_val"] = currentSensors.ph_val;
     doc["vpd_kpa"] = currentSensors.vpd_kpa;
+    // Only meaningful (and only sent as true) while TDS itself is live —
+    // see the comment on tds_comp_using_fake_water_temp in state.h. Lets
+    // the frontend show a small note on the TDS card instead of a
+    // temperature-compensated reading silently looking fully real while
+    // part of its own math came from Water Temp's demo simulation.
+    doc["tds_fake_wt_comp"] = currentSensors.tds_comp_using_fake_water_temp;
 
     // Per-sensor status, one code per SensorID (same enum order as s_en[] in
     // broadcastConfig() above: S_WL, S_LIGHT, S_TDS, S_DHT, S_PH, S_WTEMP):

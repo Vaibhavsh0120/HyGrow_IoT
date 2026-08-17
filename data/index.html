@@ -11,29 +11,55 @@
     <meta content="width=device-width, initial-scale=1.0, maximum-scale=5.0, viewport-fit=cover" name="viewport"/>
     <title>Web Doctor - Hydroponics IoT</title>
 
+    <!-- PWA installability (Android/Chrome/Edge/desktop): manifest.json +
+         theme-color is what actually drives the native "Install app" /
+         "Add to Home screen" browser prompt on those platforms — the
+         apple-mobile-web-app-* tags below only ever covered iOS Safari,
+         which ignores manifest.json entirely and needs its own separate
+         tags no matter what. Self-hosted at /manifest.json (served
+         straight off LittleFS alongside everything else, see
+         server.serveStatic("/") in task_network.cpp) — this device may
+         only ever be reachable over its own SoftAP with no internet
+         uplink, so like the fonts/favicon below, nothing here can depend
+         on an external URL. theme-color matches the manifest's
+         background_color/theme_color and the app's own dark surface
+         (#0b0d10, see --hg-surface/style.css), so the OS status bar / task
+         switcher chrome around the installed app doesn't clash with it. -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0b0d10">
+
     <!-- Home-screen "Add to Home Screen" behavior on iOS/iPadOS — without
          these, a saved HyGrow shortcut opens inside Safari's chrome (address
          bar, tab strip) instead of full-screen, and uses a generic screenshot
          icon instead of the app's own. status-bar-style "black-translucent"
          lets the fixed sidebar's own background show through the status bar
-         area rather than Safari painting a plain black/white bar over it. -->
+         area rather than Safari painting a plain black/white bar over it.
+         iOS reads these directly and does NOT fall back to manifest.json's
+         name/icons, so they stay alongside the manifest link above rather
+         than being replaced by it. -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Web Doctor">
     <!-- iOS ignores SVG for apple-touch-icon (falls back to a screenshot of
          the page instead) — this PNG is rendered directly from favicon.svg
          at Apple's recommended 180x180 size, not a separate hand-made asset,
-         so it stays in sync with the real icon if favicon.svg ever changes. -->
-    <link rel="apple-touch-icon" href="apple-touch-icon.png">
+         so it stays in sync with the real icon if favicon.svg ever changes.
+         Lives in data/icons/ alongside the other icon assets (css/js/fonts
+         each already get their own subfolder; icons previously sat loose
+         directly in data/). server.serveStatic("/", LittleFS, "/") in
+         task_network.cpp serves the whole data/ tree recursively, so this
+         relative path resolves to /icons/apple-touch-icon.png with no
+         firmware change needed. -->
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 
-    <!-- Self-hosted favicon (data/favicon.svg) — same reasoning as the
+    <!-- Self-hosted favicon (data/icons/favicon.svg) — same reasoning as the
          self-hosted fonts below: this device may only ever be reachable
          over its own SoftAP with no internet uplink, so nothing in <head>
          can depend on an external URL. SVG favicons are supported by every
          modern browser; no separate .ico fallback is bundled since this
          dashboard already assumes a reasonably current browser (it also
          relies on CSS custom properties for theming). -->
-    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="icons/favicon.svg">
 
     <!-- Apply the saved theme before first paint to avoid a flash of the
          wrong theme. Defaults to dark to match this project's original look. -->
@@ -108,7 +134,7 @@
             <div class="flex flex-col gap-2">
                 <label class="font-label-md text-on-surface-variant" for="auth-setup-pass">New Password</label>
                 <div class="hg-secret-field">
-                    <input id="auth-setup-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                    <input id="auth-setup-pass" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                     <button type="button" class="hg-secret-toggle" data-reveal-target="auth-setup-pass" aria-label="Show Password">
                         <span class="material-symbols-outlined">visibility</span>
                     </button>
@@ -117,7 +143,7 @@
             <div class="flex flex-col gap-2">
                 <label class="font-label-md text-on-surface-variant" for="auth-setup-pass-confirm">Confirm Password</label>
                 <div class="hg-secret-field">
-                    <input id="auth-setup-pass-confirm" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                    <input id="auth-setup-pass-confirm" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                     <button type="button" class="hg-secret-toggle" data-reveal-target="auth-setup-pass-confirm" aria-label="Show Password">
                         <span class="material-symbols-outlined">visibility</span>
                     </button>
@@ -137,7 +163,7 @@
             <div class="flex flex-col gap-2">
                 <label class="font-label-md text-on-surface-variant" for="auth-login-pass">Password</label>
                 <div class="hg-secret-field">
-                    <input id="auth-login-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                    <input id="auth-login-pass" maxlength="64" autocomplete="current-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                     <button type="button" class="hg-secret-toggle" data-reveal-target="auth-login-pass" aria-label="Show Password">
                         <span class="material-symbols-outlined">visibility</span>
                     </button>
@@ -313,12 +339,23 @@
 
         <!-- PAGE 0: Dashboard & Vitals -->
         <section class="page-section flex flex-col gap-8" id="page-0">
+            <!-- Mobile fix: this header used to stack Export CSV, the Demo
+                 Mode badge, and the Live Sys.Link pill in one flex-col at
+                 full width each — three separate full-width rows under the
+                 title, which read as a long disconnected list rather than a
+                 header. Now: title row stays full-width on its own line,
+                 and the three controls sit together as a single wrapped row
+                 (flex-wrap, auto-width items) directly under it — same
+                 pattern used for badges/pills elsewhere in this app, so
+                 short pill-shaped controls read as a group instead of a
+                 stack of unrelated blocks. sm+ unchanged (single row,
+                 title left / controls right, already worked there). -->
             <header class="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b border-[rgba(255,255,255,0.08)] pb-4">
                 <div>
                     <h2 class="font-headline-lg text-headline-lg text-white">System Overview</h2>
                     <p class="font-body-md text-body-md text-on-surface-variant mt-1">Real-time telemetry and vitals stream.</p>
                 </div>
-                <div class="flex flex-col sm:flex-row items-center gap-4">
+                <div class="flex flex-wrap items-center gap-3 md:gap-4">
                     <button id="btn-export-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
                         <span class="material-symbols-outlined text-[20px]">download</span> Export CSV
                     </button>
@@ -329,7 +366,7 @@
                         <span class="material-symbols-outlined text-[18px] text-secondary">science</span>
                         <span class="font-label-sm text-label-sm text-secondary font-bold tracking-widest">DEMO MODE</span>
                     </div>
-                    <div class="flex items-center gap-2 liquid-glass px-4 py-2 rounded-2xl w-full sm:w-auto justify-center">
+                    <div class="flex items-center gap-2 liquid-glass px-4 py-2 rounded-2xl justify-center">
                         <span id="vital-link-dot" class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
                         <span id="vital-link-text" aria-live="polite" class="font-label-sm text-label-sm text-secondary">LIVE SYS.LINK</span>
                     </div>
@@ -365,18 +402,33 @@
                 </div>
             </div>
 
-            <!-- Telemetry Grid (All 8 Data Points) -->
-            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 md:gap-8">
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="1">
+            <!-- Telemetry Grid (All 8 Data Points). 2 columns even at the
+                 smallest mobile width (was grid-cols-1 — 8 cards stacked
+                 full-width made for a very long single-column scroll on
+                 phones); gap tightens at the smallest width so two cards
+                 comfortably fit a narrow phone screen without cramping. -->
+            <div class="grid grid-cols-2 md:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-6 md:gap-8">
+                <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="1">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">water_drop</span> TDS</span>
-                        <span id="dash-dot-tds" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
+                        <span class="flex items-center gap-1">
+                            <!-- Only shown while TDS itself is live but its
+                                 temperature compensation fell back to a
+                                 neutral placeholder because Water Temp is
+                                 independently in demo mode — see
+                                 tds_comp_using_fake_water_temp (state.h) /
+                                 tds_fake_wt_comp (updateTelemetry() below).
+                                 Hidden by default; toggled in JS, never CSS,
+                                 same pattern as #demo-mode-badge. -->
+                            <span id="dash-tds-fakewt-badge" class="hidden material-symbols-outlined text-[16px] text-secondary" title="Compensated using a placeholder water temperature — Water Temp is in demo mode">science</span>
+                            <span id="dash-dot-tds" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
+                        </span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-tds">--</span> <span class="text-headline-md text-white/50 ml-1">ppm</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="6">
+                <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="6">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">science</span> pH Level</span>
                         <span id="dash-dot-ph" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -385,7 +437,7 @@
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-ph">--</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="2">
+                <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="2">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">thermostat</span> Air Temp</span>
                         <span id="dash-dot-atemp" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -394,7 +446,7 @@
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-atemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="2">
+                <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="2">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">cloud</span> Humidity</span>
                         <span id="dash-dot-hum" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -403,7 +455,7 @@
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-hum">--</span> <span class="text-headline-md text-white/50 ml-1">%</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="3">
+                <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="3">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">device_thermostat</span> Water Temp</span>
                         <span id="dash-dot-wtemp" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -412,7 +464,7 @@
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-wtemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="4">
+                <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="4">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">light_mode</span> Light</span>
                         <span id="dash-dot-lux" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -421,7 +473,7 @@
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-lux">--</span> <span class="text-headline-md text-white/50 ml-1">lx</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group" data-goto-tab="5">
+                <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="5">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">waves</span> Tank Level</span>
                         <span id="dash-dot-wl" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -430,7 +482,7 @@
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-wl">--</span> <span class="text-headline-md text-white/50 ml-1">%</span></div>
                     </div>
                 </div>
-                <div class="liquid-glass rounded-3xl p-6 flex flex-col gap-4 h-48 relative group">
+                <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined">air</span> VPD</span>
                         <span id="dash-dot-vpd" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
@@ -716,7 +768,7 @@
                                  works exactly as before: clear the field to "Leave blank to
                                  keep current password", or edit it to change. -->
                             <div class="hg-secret-field">
-                                <input id="cfg-wifi-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
+                                <input id="cfg-wifi-pass" maxlength="64" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-wifi-pass" aria-label="Show Wi-Fi Password">
                                     <span class="material-symbols-outlined">visibility</span>
                                 </button>
@@ -725,7 +777,7 @@
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-ap-pass">SoftAP Recovery Password</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-ap-pass" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
+                                <input id="cfg-ap-pass" maxlength="64" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-ap-pass" aria-label="Show SoftAP Recovery Password">
                                     <span class="material-symbols-outlined">visibility</span>
                                 </button>
@@ -756,7 +808,7 @@
                                  cfg-pass-current below which is the field you TYPE INTO to
                                  authorize a change. Never written back to the device. -->
                             <div class="hg-secret-field">
-                                <input id="cfg-admin-pass-display" maxlength="64" readonly class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-on-surface-variant outline-none font-body-md" type="password"/>
+                                <input id="cfg-admin-pass-display" maxlength="64" readonly autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-on-surface-variant outline-none font-body-md" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-admin-pass-display" aria-label="Show Current Admin Password">
                                     <span class="material-symbols-outlined">visibility</span>
                                 </button>
@@ -765,7 +817,7 @@
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-pass-current">Current Password</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-pass-current" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                                <input id="cfg-pass-current" maxlength="64" autocomplete="current-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-current" aria-label="Show Current Password">
                                     <span class="material-symbols-outlined">visibility</span>
                                 </button>
@@ -774,7 +826,7 @@
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-pass-new">New Password</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-pass-new" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                                <input id="cfg-pass-new" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-new" aria-label="Show New Password">
                                     <span class="material-symbols-outlined">visibility</span>
                                 </button>
@@ -783,7 +835,7 @@
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-pass-confirm">Confirm New Password</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-pass-confirm" maxlength="64" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                                <input id="cfg-pass-confirm" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-confirm" aria-label="Show Confirm New Password">
                                     <span class="material-symbols-outlined">visibility</span>
                                 </button>
@@ -802,15 +854,17 @@
                      behavior. Grouped together as "things you toggle to
                      change how this dashboard/device acts day to day",
                      distinct from Access (credentials) and Cloud (Firebase).
-                     Display is naturally short and Feature Flags can grow a
-                     Discard button — paired here instead of with Network/
-                     Password (which have no Discard button and a taller,
-                     stabler height) keeps that variance contained to a row
-                     of two toggle-style cards where an uneven height reads
-                     as normal rather than a stray empty gap next to a form. -->
+                     Display and Feature Flags are stretched to match height
+                     (grid's default row-stretch behavior — no items-start
+                     override here, unlike Access above) so Display's shorter
+                     content doesn't visibly trail off next to Feature Flags'
+                     toggle+button rows; Display's own content is pushed to
+                     the top of that stretched height via mt-auto on nothing
+                     below it, so the extra space reads as intentional
+                     breathing room rather than a stray gap. -->
                 <div class="flex flex-col gap-4">
                     <h3 class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest">Behavior</h3>
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Display</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Choose how the dashboard looks on this device. Saved locally in this browser.</p>
@@ -843,7 +897,7 @@
                          applies live can show "Not saved" after a
                          disconnect even though the device already applied
                          it moments before the ack was lost. -->
-                    <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                    <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6" id="settings-feature-flags-card">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Feature Flags</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Toggle whole-system behaviors. Demo Mode requires a reboot to apply; changes here aren't sent to the device until you hit Save.</p>
 
@@ -914,7 +968,7 @@
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-api">Web API Key</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-fb-api" maxlength="127" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="AIzaSy..." type="password"/>
+                                <input id="cfg-fb-api" maxlength="127" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="AIzaSy..." type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-fb-api" aria-label="Show Web API Key">
                                     <span class="material-symbols-outlined">visibility</span>
                                 </button>
@@ -927,7 +981,7 @@
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-pass">Password</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-fb-pass" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
+                                <input id="cfg-fb-pass" maxlength="63" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-fb-pass" aria-label="Show Firebase Password">
                                     <span class="material-symbols-outlined">visibility</span>
                                 </button>
@@ -999,11 +1053,25 @@
                          is only ever confusing. See cfg-demo-mode's change handler and
                          updateConfigForm() in app.js, which toggle #pinout-demo-lock
                          and each field's [disabled] together from the same "demo"
-                         value in every config frame. -->
-                    <div class="hidden liquid-glass border-l-4 border-secondary/60 p-4 rounded-2xl text-on-surface-variant font-body-md flex items-center gap-2 shadow-lg" id="pinout-demo-lock" role="status">
+                         value in every config frame.
+
+                         A real <button>, not a <div role="status"> (Part 6.3) — the
+                         banner names exactly where to go fix this ("Turn off Demo
+                         Mode in Feature Flags"), so it now scrolls the Feature Flags
+                         card (#settings-feature-flags-card, same page) into view on
+                         click AND on Enter/Space, instead of just describing the fix
+                         and leaving the user to scroll and find it themselves. See
+                         btn-term-jump-latest-style wiring for #pinout-demo-lock in
+                         app.js. role="status" is dropped since a <button> already has
+                         correct semantics; the live-region behavior wasn't doing
+                         anything for a banner that's only ever shown/hidden in
+                         response to a user's own toggle, never asynchronously behind
+                         their back. -->
+                    <button type="button" class="hidden w-full text-left liquid-glass border-l-4 border-secondary/60 p-4 rounded-2xl text-on-surface-variant font-body-md flex items-center gap-2 shadow-lg cursor-pointer hover:bg-white/5 transition-colors" id="pinout-demo-lock">
                         <span class="material-symbols-outlined text-secondary">science</span>
-                        <span>Demo Mode is on — every sensor pin below is simulated and locked. Turn off Demo Mode in Feature Flags to edit real pin assignments.</span>
-                    </div>
+                        <span>Demo Mode is on — every sensor pin below is simulated and locked. Turn off Demo Mode in <span class="underline">Feature Flags</span> to edit real pin assignments.</span>
+                        <span class="material-symbols-outlined text-[18px] ml-auto shrink-0">chevron_right</span>
+                    </button>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         <div class="bg-white/5 p-4 rounded-2xl border border-white/10 flex flex-col gap-3">
                             <div class="flex justify-between items-center">
@@ -1169,6 +1237,15 @@
             <header class="flex justify-between items-end pb-4 mb-4 border-b border-[rgba(255,255,255,0.08)]">
                 <h2 class="font-headline-lg text-headline-lg text-white">System Terminal</h2>
                 <div class="flex gap-2">
+                    <!-- Mirrors the Dashboard's "Export CSV" button pattern —
+                         copies the current on-screen log (up to the 100-line
+                         cap in updateTerminal()) to the clipboard as plain
+                         text, timestamp-free (device doesn't send per-line
+                         timestamps today), one [CORE n] tag + message per
+                         line. See btn-term-export wiring in app.js. -->
+                    <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors flex items-center gap-1" id="btn-term-export">
+                        <span class="material-symbols-outlined text-[18px]">content_copy</span> Copy
+                    </button>
                     <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors" id="btn-term-pause">Pause</button>
                     <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors" id="btn-term-clear">Clear</button>
                 </div>
@@ -1177,6 +1254,15 @@
                 <div class="absolute inset-0 p-6 overflow-y-auto font-label-md text-label-sm text-primary flex flex-col gap-2" id="terminal-output">
                     <div><span class="text-secondary opacity-70">[SYS]</span> Terminal initialized. Listening for WSS events...</div>
                 </div>
+                <!-- Smart-autoscroll "jump to latest" pill (see updateTerminal()
+                     in app.js) — hidden by default. Shown only once the user has
+                     scrolled up away from the bottom AND a new line has arrived
+                     while they were up there, so autoscroll doesn't yank their
+                     place in the log out from under them mid-read. Tapping it
+                     jumps to the bottom and re-arms autoscroll. -->
+                <button id="btn-term-jump-latest" class="hidden absolute bottom-4 left-1/2 -translate-x-1/2 liquid-glass text-white font-label-sm text-label-sm px-4 py-2 rounded-full shadow-lg items-center gap-1 hover:bg-white/10 transition-colors z-10">
+                    <span class="material-symbols-outlined text-[16px]">arrow_downward</span> New logs
+                </button>
             </div>
         </section>
 

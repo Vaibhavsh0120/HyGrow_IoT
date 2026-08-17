@@ -405,6 +405,14 @@ void firebaseUploadCycle()
     // previous version, which left a disabled sensor's field out of the
     // mask entirely — that meant Firestore silently kept whatever value was
     // written the last time the sensor was enabled, forever.)
+    // Deliberately does NOT check sensorPinIsDemo() — a sensor currently
+    // simulating data (demo_mode, or the per-sensor save_sensor_demo
+    // toggle) still counts as "available" here and uploads exactly like a
+    // real reading, with no distinguishing flag anywhere in the document.
+    // Confirmed intentional: demo readings are meant to exercise the full
+    // pipeline including the real Firestore write path, not just the
+    // dashboard. If that ever needs to change, sensorPinIsDemo(id) (see
+    // task_sensor.cpp) is the per-sensor check to add here.
     auto sensorAvailable = [](SensorID id) -> bool
     {
         return currentConfig.sensor_enabled[id] &&
