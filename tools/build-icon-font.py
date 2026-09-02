@@ -173,16 +173,16 @@ def verify_codepoints_render(font_path, codepoint_map):
         font_data = f.read()
     os.remove(decompressed_path)
 
-    face = hb.Face(font_data)
-    hb_font = hb.Font(face)
-    hb.ot_font_set_funcs(hb_font)
+    face = hb.Face(font_data) # type: ignore
+    hb_font = hb.Font(face) # type: ignore
+    hb.ot_font_set_funcs(hb_font) # type: ignore
 
     failures = []
     for name, cp in codepoint_map.items():
-        buf = hb.Buffer()
+        buf = hb.Buffer() # type: ignore
         buf.add_str(chr(cp))
         buf.guess_segment_properties()
-        hb.shape(hb_font, buf, {"liga": False})  # explicitly not relying on GSUB
+        hb.shape(hb_font, buf, {"liga": False})  # type: ignore # explicitly not relying on GSUB
 
         glyph_ids = [info.codepoint for info in buf.glyph_infos]
         if len(glyph_ids) != 1:

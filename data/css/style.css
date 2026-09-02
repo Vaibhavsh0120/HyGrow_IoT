@@ -1328,8 +1328,6 @@ video {
    (themed further down this file); this class is now a no-op kept only
    so the existing class list on #auth-overlay in index.html doesn't
    need editing. */
-.backdrop-blur-xl {
-}
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
 }

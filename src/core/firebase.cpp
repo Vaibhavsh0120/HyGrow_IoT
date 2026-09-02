@@ -16,9 +16,7 @@
 // platformio.ini (no separate async-HTTP dependency).
 //
 // ---------------------------------------------------------------------------
-// Device-state document contract (see docs/FIRESTORE_ARCHITECTURE.md for the
-// full design writeup — this comment is the short version for anyone editing
-// this file):
+// Device-state document contract:
 //
 //   devices/{device_id}
 //     deviceId       string    — mirrors currentConfig.device_id
@@ -47,12 +45,11 @@
 //   2. status/lastUpdated always mean "this device (Wi-Fi + Firestore
 //      reachability) is alive", never "every sensor is healthy". A single
 //      failed sensor still uploads successfully (as null) and still marks
-//      the device Online. Offline is exclusively a BACKEND-derived state —
-//      see functions/index.js's checkDeviceHeartbeats — computed from how
-//      stale lastUpdated has become, not something this firmware ever
-//      writes. That split (connectivity vs. sensor health) is deliberate:
-//      see README.md's "Online vs. sensor health" note and
-//      docs/FIRESTORE_ARCHITECTURE.md section 4.
+//      the device Online. This firmware NEVER writes "Offline" itself —
+//      that has to be derived by whatever reads this collection (e.g. a
+//      scheduled backend job that flags a device Offline once lastUpdated
+//      goes stale). That split (connectivity vs. sensor health) is
+//      deliberate — see README.md's Cloud Sync section.
 // ---------------------------------------------------------------------------
 #include "task_network_internal.h"
 #include "task_network.h"
@@ -371,9 +368,9 @@ void firebaseUploadCycle()
     HTTPClient https;
     https.setTimeout(5000);
 
-    // "devices" is the new default collection (one document per physical
-    // device, keyed by device_id — see docs/FIRESTORE_ARCHITECTURE.md). Still
-    // fully driven by currentConfig.fb_collection, same as before, so an
+    // "devices" is the default collection (one document per physical
+    // device, keyed by device_id). Still fully driven by
+    // currentConfig.fb_collection, same as before, so an
     // existing deployment that has already renamed its collection in
     // Settings keeps working without any firmware-side hardcoding.
     String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "devices";
@@ -438,8 +435,7 @@ void firebaseUploadCycle()
     // Write is a shape that only the :commit endpoint accepts. commit with
     // a single Write entry (update + updateMask + updateTransforms) is the
     // documented way to apply an ordinary field update and a server-value
-    // transform to the same document atomically in one request — see
-    // docs/FIRESTORE_ARCHITECTURE.md section 3 for the full citation trail.
+    // transform to the same document atomically in one request.
     String url = "https://firestore.googleapis.com/v1/projects/" + String(currentConfig.fb_project) +
                  "/databases/(default)/documents:commit?key=" + String(currentConfig.fb_api_key);
 
