@@ -14,8 +14,7 @@ placeholder used elsewhere for the FILL-axis glyph swap), and this
 script's old Step 1 -- blanket-renaming every rlig/rclt feature to "liga"
 to match this repo's original hand-built font -- collapsed them into an
 ambiguous pair that browsers' shaping engines resolved to the empty one.
-Result: 100% of icons fell back to literal fallback text (see PROGRESS.md
-for the full root-cause writeup). A defensive uppercase-ASCII cmap
+Result: 100% of icons fell back to literal fallback text. A defensive uppercase-ASCII cmap
 fallback (mapping A-Z to the same glyphs as a-z) meant that fallback text
 rendered in shouty caps instead of quietly-wrong lowercase, which is why
 broken icons showed up as e.g. "WATER_DROP".
@@ -205,7 +204,7 @@ def verify_codepoints_render(font_path, codepoint_map):
         print(
             "Refusing to write output. This is exactly the class of bug "
             "that broke the old ligature-based font -- see the module "
-            "docstring and PROGRESS.md.",
+            "docstring.",
             file=sys.stderr,
         )
         sys.exit(1)

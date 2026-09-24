@@ -35,10 +35,27 @@ The sensor modules use a common 3.3 V supply and ground. The pH sensor starts
 disabled. You can change sensor pins and enabled states in **Settings → Sensor Implementation
 Config** after connecting to the device.
 
-The dashboard and firmware reject pins reserved for boot, USB, flash/PSRAM,
-or the status LED. TDS, pH, and the water-level signal must use ADC1 pins
-GPIO1–10. The limits follow the [ESP32-S3 DevKitC-1 board guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.0.html)
-and [hardware pin guidance](https://docs.espressif.com/projects/esp-hardware-design-guidelines/en/latest/esp32s3/schematic-checklist.html).
+<details>
+<summary>Which pins cannot be used for sensors?</summary>
+
+The dashboard and firmware reject these pins on this ESP32-S3 N16R8 board:
+
+| Pins | Why they are not allowed |
+| --- | --- |
+| GPIO0, GPIO3, GPIO45, GPIO46 | Boot pins. A sensor connected here could change how the board starts. |
+| GPIO19, GPIO20 | USB data pins. Using them can break the board's USB connection. |
+| GPIO22–37 | Not available for sensor wiring on this board; some are used by flash or PSRAM. |
+| GPIO48 | Reserved for the onboard RGB status LED. |
+| GPIO49 and above | Not valid sensor GPIOs on this board. |
+
+TDS, pH, and the water-level signal also need an **ADC1 pin (GPIO1–10)**
+because they are analog inputs. GPIO3 is still forbidden even though it falls
+in that range. Each assigned sensor pin must be unique. See the
+[ESP32-S3 DevKitC-1 board guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.0.html)
+and [hardware pin guidance](https://docs.espressif.com/projects/esp-hardware-design-guidelines/en/latest/esp32s3/schematic-checklist.html)
+for the board details.
+
+</details>
 
 ## First setup
 
@@ -229,9 +246,6 @@ LittleFS; the longer former font filename could not be packaged with `.gz`.
 | [`data/js/app.js`](data/js/app.js) | Dashboard state and interactions |
 | [`data/css/style.css`](data/css/style.css) | Dashboard styles |
 | [`data/manifest.json`](data/manifest.json) | Web app manifest |
-
-[`PROGRESS.md`](PROGRESS.md) has older project notes. Check the current code
-when a note and the implementation differ.
 
 ## License
 

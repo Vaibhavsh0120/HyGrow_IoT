@@ -73,8 +73,7 @@
      Private Use Area codepoint (see the ICON-CODEPOINTS block just
      below), NOT by OpenType ligature substitution — deliberately:
      a ligature-based build of this font previously shipped completely
-     broken (every icon fell back to literal fallback text; see
-     /PROGRESS.md for the full root-cause writeup). Codepoint rendering
+     broken (every icon fell back to literal fallback text). Codepoint rendering
      needs only a single cmap lookup, no GSUB/shaping involved, so that
      entire bug class is now structurally impossible. At this size
      font-display: block's ~3s invisible-text window is never actually
