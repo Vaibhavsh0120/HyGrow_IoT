@@ -81,7 +81,7 @@
      reached on LittleFS, but swap is used anyway to match the other three
      fonts and avoid any FOIT even in the worst case. */
   font-display: swap;
-  src: url('../fonts/material-symbols-outlined.woff2') format('woff2');
+  src: url('../fonts/symbols.woff2') format('woff2');
 }
 
 /* Auto-generated icon-name -> codepoint rules live below (between the
@@ -2193,6 +2193,12 @@ body {
 #sideNav,
 main {
   -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#sideNav::-webkit-scrollbar,
+main::-webkit-scrollbar {
+  display: none;
 }
 
 /* 5. Mobile sidebar overlay — DEAD CODE: .hg-sidenav-mobile-hidden is never
@@ -2284,6 +2290,49 @@ main {
    has been fixed the same way (`main.p-4` / `main.md\:p-8`). */
 main.p-4 {
   padding-bottom: 5.5rem;
+}
+/* The dismissible offline connection badge sits above the app canvas.
+   Reserve its height so it never covers the first heading on small phones. */
+body.offline-preview main.p-4 {
+  padding-top: calc(5rem + env(safe-area-inset-top));
+}
+
+/* Sensor states use the same colors in dashboard tiles and detail pages. */
+.hg-dot-live, .hg-sensor-status[data-state="live"]::before { background: var(--hg-secondary); }
+.hg-dot-demo, .hg-sensor-status[data-state="demo"]::before { background: #ba92f5; }
+.hg-dot-error, .hg-sensor-status[data-state="error"]::before { background: var(--hg-error); }
+.hg-dot-waiting, .hg-sensor-status[data-state="waiting"]::before { background: #e5ac55; }
+.hg-dot-muted, .hg-sensor-status[data-state="disabled"]::before,
+.hg-sensor-status[data-state="offline"]::before { background: #777; }
+.hg-legend-dot, .hg-sensor-status::before {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex: none;
+}
+.hg-legend-dot { margin: 0 0.25rem 0 0.6rem; vertical-align: middle; }
+.hg-legend-dot:first-child { margin-left: 0; }
+.hg-sensor-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  color: var(--hg-on-surface-variant);
+  font-size: 0.875rem;
+}
+.hg-sensor-status::before { content: ''; }
+[id^="dash-dot-"] { flex-shrink: 0; margin-left: 0.35rem; }
+@media (max-width: 639px) {
+  .hg-dual-readouts {
+    position: static;
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    text-align: left;
+  }
+  .hg-dual-chart { margin-top: 1rem; min-height: 14rem; }
 }
 @media (min-width: 1024px) {
   main.md\:p-8 {

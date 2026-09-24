@@ -475,28 +475,21 @@ static void readAll()
   // TDS (needs water temp for compensation)
   if (currentConfig.sensor_enabled[S_TDS] && !sensorPinIsDemo(S_TDS))
   {
-    // Water temp compensation input: if Water Temp is currently faked
-    // (independently toggled via save_sensor_demo — see command_handlers.cpp)
-    // while TDS itself reads real hardware, currentSensors.water_temp_c is a
-    // simulated value that would otherwise flow straight into readTDS()'s
-    // compensation coefficient (sensor_tds.cpp) and silently skew the real
-    // TDS reading by up to ~10% (compCoeff ranges 0.9-1.02 across demo's
-    // 20-24°C simulated range) with no indication anywhere that the number
-    // is partly synthetic. readTDS() already has a neutral-compensation
-    // fallback for exactly this situation (currentWaterTemp <= 0.0 -> 25.0,
-    // i.e. "don't compensate") — that guard just never fires for a fake
-    // reading, since demo values are always a plausible positive number.
-    // Route around it explicitly here instead of only when water temp is
-    // missing entirely: pass the same neutral 25.0 whenever the input isn't
-    // trustworthy, real hardware or not.
-    bool waterTempIsFake = sensorPinIsDemo(S_WTEMP);
-    float waterTempForComp = waterTempIsFake ? 25.0f : currentSensors.water_temp_c;
+    // Only use a real, healthy water-temperature reading for compensation.
+    // A demo, disabled, failed, or never-read probe can leave a plausible
+    // stale value in currentSensors; using it would make live TDS misleading.
+    // Fall back to neutral 25°C and tell the dashboard when that happens.
+    bool waterTempUsable = currentConfig.sensor_enabled[S_WTEMP] && !sensorPinIsDemo(S_WTEMP) &&
+                           currentSensors.last_ok_ms[S_WTEMP] != 0 &&
+                           currentSensors.last_err[S_WTEMP][0] == '\0' &&
+                           isfinite(currentSensors.water_temp_c);
+    float waterTempForComp = waterTempUsable ? currentSensors.water_temp_c : 25.0f;
 
     float ppm = NAN;
     if (sensor_tds_read(waterTempForComp, currentConfig.tds_k, ppm))
     {
       currentSensors.tds_ppm = ppm;
-      currentSensors.tds_comp_using_fake_water_temp = waterTempIsFake;
+      currentSensors.tds_comp_using_fake_water_temp = !waterTempUsable;
       markOk(S_TDS);
     }
     else

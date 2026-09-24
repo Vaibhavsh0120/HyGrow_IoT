@@ -259,6 +259,7 @@ void broadcastData()
     //   0 = disabled (sensor_enabled[i] is false — not an error, just off)
     //   1 = healthy   (enabled, last_err[i] empty — most recent read cycle ok)
     //   2 = failing    (enabled, last_err[i] non-empty — most recent read cycle failed)
+    //   3 = waiting    (enabled, no successful reading yet this boot)
     // This mirrors exactly what sensorTaskLoop() (task_sensor.cpp) already
     // computes every cycle to drive the status LED, just serialized here too
     // instead of being LED-only. The dashboard and per-sensor detail page use
@@ -271,6 +272,8 @@ void broadcastData()
             sOk.add(0);
         else if (currentSensors.last_err[i][0] != '\0')
             sOk.add(2);
+        else if (currentSensors.last_ok_ms[i] == 0)
+            sOk.add(3);
         else
             sOk.add(1);
     }

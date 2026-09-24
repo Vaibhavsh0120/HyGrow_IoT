@@ -3,6 +3,7 @@
 #include "src/core/state.h"
 #include "src/core/task_network.h"
 #include "src/core/task_sensor.h"
+#include "src/core/pin_safety.h"
 #include "src/utils/led_status.h"
 
 // Human-readable label for esp_reset_reason(), so a crash/watchdog reboot
@@ -37,12 +38,8 @@ static const char *resetReasonToString(esp_reset_reason_t reason)
     }
 }
 
-// GPIO19 (USB D-) and GPIO20 (USB D+) are reserved by the native USB CDC
-// stack on this board (see platformio.ini build_flags and config.h). If any
-// configurable pin was ever saved as 19 or 20 — via a bad manual edit, a
-// migration, or a factory-reset race — using it will fight the USB stack
-// and look like the board randomly disconnecting from the serial monitor.
-// Catch and neutralize that here, once, before any sensor touches a pin.
+// Old firmware or manually edited NVS may contain a pin the current board
+// cannot use. Neutralize it before any sensor driver touches the GPIO.
 //
 // This disables the affected sensor via sensor_enabled[] — the single on/off
 // switch in this firmware — rather than altering the pin number itself, so
@@ -54,25 +51,26 @@ static void enforceForbiddenPins()
         int *pin;
         SensorID sensor;
         const char *name;
+        bool analogInput;
     };
     PinRef pins[] = {
-        {&currentConfig.pin_dht, S_DHT, "DHT22"},
-        {&currentConfig.pin_ds18b20, S_WTEMP, "DS18B20"},
-        {&currentConfig.pin_tds, S_TDS, "TDS"},
-        {&currentConfig.pin_ph, S_PH, "pH"},
-        {&currentConfig.pin_lux_sda, S_LIGHT, "BH1750 SDA"},
-        {&currentConfig.pin_lux_scl, S_LIGHT, "BH1750 SCL"},
-        {&currentConfig.pin_wl, S_WL, "Water Level Signal"},
-        {&currentConfig.pin_wl_power, S_WL, "Water Level Power"},
+        {&currentConfig.pin_dht, S_DHT, "DHT22", false},
+        {&currentConfig.pin_ds18b20, S_WTEMP, "DS18B20", false},
+        {&currentConfig.pin_tds, S_TDS, "TDS", true},
+        {&currentConfig.pin_ph, S_PH, "pH", true},
+        {&currentConfig.pin_lux_sda, S_LIGHT, "BH1750 SDA", false},
+        {&currentConfig.pin_lux_scl, S_LIGHT, "BH1750 SCL", false},
+        {&currentConfig.pin_wl, S_WL, "Water Level Signal", true},
+        {&currentConfig.pin_wl_power, S_WL, "Water Level Power", false},
     };
 
     bool changed = false;
     for (auto &p : pins)
     {
-        if (*p.pin == 19 || *p.pin == 20)
+        if (!sensorPinIsUsable(*p.pin, p.analogInput))
         {
             webLog(0, LOG_WARN, "FORBIDDEN PIN: " + String(p.name) + " was configured on GPIO" +
-                            String(*p.pin) + " (native USB D-/D+). Disabling this sensor to protect the USB stack. "
+                            String(*p.pin) + ". Disabling this sensor to protect the board. "
                             "Assign a different pin in Settings, then re-enable it.");
             currentConfig.sensor_enabled[p.sensor] = false;
             changed = true;
@@ -328,7 +326,7 @@ void setup()
         }
     }
 
-    // 1b. Neutralize any pin that landed on the reserved USB D-/D+ lines
+    // 1b. Neutralize invalid or reserved pins
     // before any sensor init code gets a chance to touch it.
     enforceForbiddenPins();
 

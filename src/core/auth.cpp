@@ -51,6 +51,15 @@ static unsigned long s_authLockoutUntilMs = 0;
 static const uint16_t AUTH_LOCKOUT_MAX_BACKOFF_MS = 30000;
 static const size_t AUTH_PASSWORD_MAX_LEN = 64;
 
+// Identifies this running firmware instance to the dashboard. A fresh value
+// after restart lets the UI distinguish a completed reboot from a brief Wi-Fi
+// disconnect followed by reconnection to the same boot.
+static uint32_t currentBootId()
+{
+    static const uint32_t bootId = esp_random();
+    return bootId;
+}
+
 // Doubles the backoff per consecutive failure: 1s, 2s, 4s, 8s, 16s, 30s
 // (capped), 30s, 30s... Called only after a failed attempt is recorded.
 static unsigned long authBackoffForAttempt(uint16_t attempts)
@@ -85,19 +94,25 @@ void sendAuthStatus(AsyncWebSocketClient *client)
     JsonDocument doc;
     doc["type"] = "auth_status";
     doc["setup_required"] = !auth_is_configured();
+    doc["boot_id"] = currentBootId();
     String payload;
     serializeJson(doc, payload);
     client->text(payload);
 }
 
-void broadcastAuthStatus()
+void broadcastAuthStatus(uint32_t skipClientId)
 {
     JsonDocument doc;
     doc["type"] = "auth_status";
     doc["setup_required"] = !auth_is_configured();
+    doc["boot_id"] = currentBootId();
     String payload;
     serializeJson(doc, payload);
-    ws.textAll(payload);
+    for (AsyncWebSocketClient &connected : ws.getClients())
+    {
+        if (connected.status() == WS_CONNECTED && connected.id() != skipClientId)
+            connected.text(payload);
+    }
 }
 
 void auth_reset_session_and_lockout()
@@ -316,7 +331,7 @@ void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc
         String freshToken = auth_issue_token();
         s_authedClients.clear();
         wsMarkClientAuthed(client->id());
-        broadcastAuthStatus(); // pushes every OTHER open tab back to the login/setup overlay immediately, not just on its next reconnect
+        broadcastAuthStatus(client->id()); // only the other tabs need to authenticate again
         // The Settings page's "Current Password" field (cfg-admin-pass-display
         // in index.html) is the client's only source of truth for the
         // password it will send as `current` on the NEXT change attempt —

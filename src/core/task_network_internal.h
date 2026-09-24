@@ -52,7 +52,7 @@ bool wsClientIsAuthed(uint32_t clientId);
 void wsMarkClientAuthed(uint32_t clientId);
 void wsForgetClient(uint32_t clientId); // called from websocket.cpp's WS_EVT_DISCONNECT
 void sendAuthStatus(AsyncWebSocketClient *client);
-void broadcastAuthStatus();
+void broadcastAuthStatus(uint32_t skipClientId = 0);
 void auth_reset_session_and_lockout();
 void handleAuthCommand(AsyncWebSocketClient *client, JsonDocument &doc);
 void handleLogoutCommand(AsyncWebSocketClient *client, JsonDocument &doc);

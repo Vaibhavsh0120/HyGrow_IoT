@@ -6,11 +6,6 @@
 // ============================================================================
 // 1. UI STATE & NAVIGATION
 // ============================================================================
-// Compiled defaults from config.h — the single source of truth for "what
-// pin should this sensor use when the user turns it on or resets it".
-// Keep this in sync with config.h's DEFAULT_PIN_* macros.
-const DEFAULT_PINS = { tds: 2, dht: 6, wt: 4, sda: 8, scl: 9, wl: 1, wlp: 5, ph: 7 };
-
 const tabsData = {
     labels: ["Dashboard & Vitals", "TDS", "Air Temp & Hum", "Water Temp", "Light", "Water Level", "pH", "Live Calibration", "System Settings", "Terminal"],
     icons: ["monitoring", "water_drop", "thermostat", "device_thermostat", "light_mode", "waves", "science", "settings_input_component", "settings", "terminal"],
@@ -21,16 +16,15 @@ const tabsData = {
     // non-lg: base state at all; px-6/py-3 apply unconditionally since
     // there's no smaller-viewport version of this element to size for.
     baseStyle: "flex items-center justify-start gap-4 px-6 py-3 cursor-pointer transition-all duration-150 w-full",
-    // Placeholder values shown only until the first "config" WS message arrives
-    // and overwrites these with the device's real, live pin assignments.
-    gpios: [null, DEFAULT_PINS.tds, DEFAULT_PINS.dht, DEFAULT_PINS.wt, DEFAULT_PINS.sda, DEFAULT_PINS.wl, DEFAULT_PINS.ph, null, null, null],
+    // No pin or enabled state is known until the device sends its config.
+    gpios: [null, null, null, null, null, null, null, null, null, null],
     // Real sensor_enabled[] state per tab, populated from msg.s_en[] once the
     // first "config" frame arrives. Distinct from `gpios` above: a sensor can
     // have a valid pin (>= 0) but still be enabled:false (e.g. pH ships off by
     // default, or any sensor that auto-disabled after failing startup
     // validation) — the per-sensor detail page toggle should reflect this real
     // flag, not just "does this tab have a pin assigned".
-    enabled: [null, true, true, true, true, true, false, null, null, null],
+    enabled: [null, null, null, null, null, null, null, null, null, null],
     // Per-tab health status from msg.s_ok[] (0=disabled, 1=healthy, 2=enabled
     // but failing to read), populated in updateTelemetry() once a "data" WS
     // frame arrives. null until then — matches `enabled`'s null-until-synced
@@ -42,6 +36,9 @@ const tabsData = {
 let currentTabId = 0;
 let isTerminalPaused = false;
 let globalConfigCache = {}; // Cache config data for CSV export
+let hasConfigSnapshot = false;
+let deviceAuthenticated = false;
+let lastTelemetry = null;
 
 // ------------------------------------------------------------------
 // Settings staging state (Part 5.9). Every Settings card whose Save
@@ -66,6 +63,77 @@ let lastConfirmedSensorEnabled = {};
 // updateConfigForm() from every config frame's msg.pins[].
 let lastConfirmedPins = {};
 let pinoutDirty = false; // true if ANY pin field OR ANY sensor-enable toggle differs from last-confirmed
+
+const SETTINGS_GROUPS = {
+    network: { card: 'settings-network-card', save: 'btn-save-wifi' },
+    password: { card: 'settings-password-card', save: 'btn-change-password' },
+    features: { card: 'settings-feature-flags-card', save: 'btn-save-features', discard: 'btn-discard-features' },
+    cloud: { card: 'settings-cloud-card', save: 'btn-save-firebase' },
+    pinout: { card: 'settings-pinout-card', save: 'btn-save-pins', discard: 'btn-discard-pins' },
+    timing: { card: 'settings-timing-card', save: 'btn-save-intervals' }
+};
+const SETTINGS_FIELDS = {
+    network: { 'cfg-wifi-ssid': 'wifi_ssid', 'cfg-wifi-pass': 'wifi_pass', 'cfg-ap-pass': 'ap_pass' },
+    cloud: { 'cfg-fb-proj': 'fb_proj', 'cfg-fb-api': 'fb_api', 'cfg-fb-email': 'fb_email', 'cfg-fb-pass': 'fb_pass', 'cfg-fb-col': 'fb_col' },
+    timing: { 'cfg-int-read': 'int_read', 'cfg-int-ws': 'int_ws', 'cfg-int-vit': 'int_vit', 'cfg-int-fb': 'int_fb' }
+};
+
+function isSettingsGroupDirty(group) {
+    if (group === 'features') return featuresDirty;
+    if (group === 'pinout') return pinoutDirty;
+    if (group === 'password') return ['cfg-pass-new', 'cfg-pass-confirm'].some(id => !!document.getElementById(id)?.value);
+    const fields = SETTINGS_FIELDS[group];
+    const fieldChanged = Object.keys(fields).some(id => {
+        const input = document.getElementById(id);
+        if (!input) return false;
+        const current = String(hasConfigSnapshot ? (globalConfigCache[fields[id]] ?? '') : (input.defaultValue ?? ''));
+        const blankKeepsSecret = ['cfg-wifi-pass', 'cfg-ap-pass', 'cfg-fb-pass'].includes(id) && input.value === '';
+        return input.value !== current && !blankKeepsSecret;
+    });
+    return fieldChanged || (group === 'cloud' && fbEnabledDirty);
+}
+
+function updateUnsavedChanges() {
+    const widget = document.getElementById('unsaved-widget');
+    if (!widget) return;
+    const groups = Object.keys(SETTINGS_GROUPS).filter(isSettingsGroupDirty);
+    widget.classList.toggle('hidden', groups.length === 0);
+    const count = document.getElementById('unsaved-count');
+    if (count) count.innerText = `${groups.length} unsaved ${groups.length === 1 ? 'section' : 'sections'}`;
+    Object.keys(SETTINGS_GROUPS).forEach(group => {
+        const row = document.getElementById(`unsaved-row-${group}`);
+        if (row) row.classList.toggle('hidden', !groups.includes(group));
+    });
+    if (!groups.length) {
+        const panel = document.getElementById('unsaved-panel');
+        const toggle = document.getElementById('unsaved-toggle');
+        if (panel) panel.classList.add('hidden');
+        if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    }
+}
+
+function discardSettingsGroup(group) {
+    if (group === 'features' || group === 'pinout') {
+        document.getElementById(SETTINGS_GROUPS[group].discard)?.click();
+    } else if (group === 'password') {
+        ['cfg-pass-new', 'cfg-pass-confirm'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        document.getElementById('cfg-pass-error')?.classList.add('hidden');
+    } else {
+        Object.entries(SETTINGS_FIELDS[group]).forEach(([id, key]) => {
+            const el = document.getElementById(id);
+            if (el) el.value = String(hasConfigSnapshot ? (globalConfigCache[key] ?? '') : (el.defaultValue ?? ''));
+        });
+        if (group === 'cloud') {
+            const checkbox = document.getElementById('cfg-fb-enabled');
+            if (checkbox) checkbox.checked = lastConfirmedFbEnabled;
+            fbEnabledDirty = false;
+            document.getElementById('btn-discard-fb-enabled')?.classList.add('hidden');
+            validateFirebaseForm();
+        }
+        if (group === 'network') { validateWifiForm(); validateApPassField(); }
+    }
+    updateUnsavedChanges();
+}
 
 // Chart Buffers (Keep last 20 readings for the UI graphs and CSV Export)
 const MAX_POINTS = 20;
@@ -486,6 +554,8 @@ function switchTab(index, element) {
             : `-- <span class="text-headline-md text-white/50 ml-1">${tabsData.units[index]}</span>`;
         setTimeout(resizeCanvas, 50);
     }
+    refreshSensorStatuses();
+    renderCurrentReadings();
 }
 
 function resizeCanvas() {
@@ -551,15 +621,26 @@ function setAuthButtonsSubmitting(submitting, type) {
 // Shows exactly one of the three overlay panels (spinner / setup / login) and
 // hides the other two. Passing 'none' hides the whole overlay, revealing the
 // dashboard underneath — only done once authentication actually succeeds.
+let offlinePreviewDismissed = false;
 function showAuthPanel(panel) {
     const overlay = document.getElementById('auth-overlay');
     const spinner = document.getElementById('auth-spinner');
     const setup = document.getElementById('auth-setup');
     const login = document.getElementById('auth-login');
+    const previewBar = document.getElementById('offline-preview-bar');
     if (!overlay) return;
 
     setAuthButtonsSubmitting(false);
 
+    if (panel === 'spinner' && offlinePreviewDismissed) {
+        overlay.classList.add('hidden');
+        if (previewBar) previewBar.classList.remove('hidden');
+        document.body.classList.add('offline-preview');
+        return;
+    }
+    if (panel !== 'spinner') offlinePreviewDismissed = false;
+    if (previewBar) previewBar.classList.add('hidden');
+    document.body.classList.remove('offline-preview');
     if (panel === 'none') {
         overlay.classList.add('hidden');
         return;
@@ -568,6 +649,33 @@ function showAuthPanel(panel) {
     if (spinner) spinner.classList.toggle('hidden', panel !== 'spinner');
     if (setup) setup.classList.toggle('hidden', panel !== 'setup');
     if (login) login.classList.toggle('hidden', panel !== 'login');
+}
+
+let lastBootId = null;
+let pendingRestart = null; // { bootId, label, confirmed } until a new boot authenticates
+let hasAuthenticatedOnce = false;
+let connectionNoticeTimer = null;
+let linkStatusTimer = null;
+
+function setLinkStatus(message, connected) {
+    const dot = document.getElementById('vital-link-dot');
+    const text = document.getElementById('vital-link-text');
+    if (!dot || !text) return;
+    dot.classList.toggle('bg-secondary', connected);
+    dot.classList.toggle('animate-pulse', connected);
+    dot.classList.toggle('bg-error', !connected);
+    text.classList.toggle('text-secondary', connected);
+    text.classList.toggle('text-error', !connected);
+    text.innerText = message;
+}
+
+function showConnectionNotice(message) {
+    const notice = document.getElementById('connection-notice');
+    if (!notice) return;
+    if (connectionNoticeTimer) clearTimeout(connectionNoticeTimer);
+    notice.innerText = message;
+    notice.classList.remove('hidden');
+    connectionNoticeTimer = setTimeout(() => notice.classList.add('hidden'), 8000);
 }
 
 // Shows the "Reboot Required?" modal in place of the browser's native
@@ -584,20 +692,15 @@ function showAuthPanel(panel) {
 // etc.) that's worth keeping specific. `onConfirm` runs only if the user taps
 // "Reboot Now" — same contract confirm() had (only the truthy branch used to
 // do anything), so callers that only ever branched on `if (confirm(...))`
-// port over unchanged. `onCancel` is optional, for the few call sites that
-// also had real work in confirm()'s `else` branch (reverting a toggle the
-// user just flipped, since the change was persisted but won't take effect
-// without the reboot they just declined).
+// port over unchanged. Reboot Later keeps the saved device state visible.
 let s_rebootConfirmHandler = null;
-let s_rebootCancelHandler = null;
 
-function confirmReboot(message, onConfirm, onCancel) {
+function confirmReboot(message, onConfirm) {
     const modal = document.getElementById('reboot-confirm');
     const text = document.getElementById('reboot-confirm-text');
     if (!modal) { if (onConfirm) onConfirm(); return; } // defensive fallback — should never happen
-    if (text) text.innerText = message;
+    if (text) text.innerText = message + '\n\nThe change is already saved. Reboot Later applies it on the next device reboot.';
     s_rebootConfirmHandler = onConfirm;
-    s_rebootCancelHandler = onCancel || null;
     modal.classList.remove('hidden');
     modal.classList.add('flex');
 }
@@ -606,7 +709,6 @@ function closeRebootConfirm() {
     const modal = document.getElementById('reboot-confirm');
     if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
     s_rebootConfirmHandler = null;
-    s_rebootCancelHandler = null;
 }
 
 // ----------------------------------------------------------------------
@@ -699,19 +801,34 @@ function closePromptModal() {
     s_promptModalRequiredText = null;
 }
 
-// Shared "actually send the reboot" action for confirmReboot()'s onConfirm
-// callback — flags the next spinner cycle to read "REBOOTING DEVICE..."
-// (see s_pendingRebootLabel/initWebSocket() above) before sending, so the
-// disconnect that's about to happen reads as expected rather than alarming.
-// Deliberately NOT routed through sendCommand(): reboot's handler
-// (command_handlers.cpp) never sends an ack — it calls ESP.restart()
-// directly — so waiting on one would always time out and show a false
-// "failed" error. The plain websocket.send() + swallowed catch here matches
-// what every pre-existing reboot call site already did.
+// Restart commands have no success acknowledgement: the device disconnects
+// as it restarts. Keep the spinner active until auth_status reports a new
+// boot_id and the client has authenticated again.
+function sendRestartCommand(command, label, fields = {}) {
+    if (!websocket || websocket.readyState !== WebSocket.OPEN) {
+        showAlertModal('Not connected to the device right now. Please reconnect and try again.', true);
+        return false;
+    }
+    try { websocket.send(JSON.stringify({ command, ...fields })); }
+    catch (e) {
+        showAlertModal('Could not send the restart request. Please reconnect and try again.', true);
+        return false;
+    }
+    pendingRestart = { bootId: lastBootId, label, confirmed: false };
+    deviceAuthenticated = false;
+    lastTelemetry = null;
+    refreshSensorStatuses();
+    renderCurrentReadings();
+    if (linkStatusTimer) clearTimeout(linkStatusTimer);
+    showAuthPanel('spinner');
+    resetSpinnerLabel();
+    setLinkStatus(label, false);
+    updateSpinnerStatus();
+    return true;
+}
+
 function sendReboot() {
-    s_pendingRebootLabel = true;
-    if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
-    try { websocket.send(JSON.stringify({ command: "reboot" })); } catch (e) { /* device is about to drop the connection anyway */ }
+    return sendRestartCommand('reboot', 'REBOOTING DEVICE...');
 }
 
 // Handles the device's "auth_status" frame — the very first message sent on
@@ -720,14 +837,27 @@ function sendReboot() {
 // before ever showing the Login modal; otherwise branch straight to
 // Setup/Login based on setup_required.
 let lastAuthStatusSetupRequired = false;
+let silentTokenAuthPending = false;
 
 function handleAuthStatus(msg) {
     lastAuthStatusSetupRequired = !!msg.setup_required;
+    if (typeof msg.boot_id === 'number') {
+        if (pendingRestart && pendingRestart.bootId !== null && msg.boot_id !== pendingRestart.bootId) {
+            pendingRestart.confirmed = true;
+        }
+        lastBootId = msg.boot_id;
+    }
     const storedToken = getStoredAuthToken();
     if (storedToken) {
+        silentTokenAuthPending = true;
         websocket.send(JSON.stringify({ command: "auth", token: storedToken }));
         return; // wait for auth_result — keep showing the spinner meanwhile
     }
+    silentTokenAuthPending = false;
+    ['auth-setup-error', 'auth-login-error'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('hidden');
+    });
     showAuthPanel(msg.setup_required ? 'setup' : 'login');
 }
 
@@ -736,9 +866,29 @@ function handleAuthStatus(msg) {
 // task_network.cpp).
 function handleAuthResult(msg) {
     setAuthButtonsSubmitting(false);
+    const wasSilentTokenAttempt = silentTokenAuthPending;
+    silentTokenAuthPending = false;
     if (msg.ok) {
         if (msg.token) setStoredAuthToken(msg.token);
+        deviceAuthenticated = true;
         showAuthPanel('none');
+        refreshSensorStatuses();
+        renderCurrentReadings();
+        if (pendingRestart && pendingRestart.confirmed) {
+            showConnectionNotice('Device restarted and reconnected.');
+            pendingRestart = null;
+            setLinkStatus('RECONNECTED', true);
+        } else if (pendingRestart) {
+            setLinkStatus('RESTART PENDING', true);
+        } else {
+            if (hasAuthenticatedOnce) showConnectionNotice('Device connection restored.');
+            setLinkStatus(hasAuthenticatedOnce ? 'RECONNECTED' : 'LIVE SYS.LINK', true);
+        }
+        hasAuthenticatedOnce = true;
+        if (linkStatusTimer) clearTimeout(linkStatusTimer);
+        if (!pendingRestart) linkStatusTimer = setTimeout(() => {
+            if (websocket && websocket.readyState === WebSocket.OPEN) setLinkStatus('LIVE SYS.LINK', true);
+        }, 8000);
         return;
     }
 
@@ -747,6 +897,15 @@ function handleAuthResult(msg) {
     // browser) — drop it and fall back to a normal login, rather than
     // looping forever on a dead token.
     setStoredAuthToken('');
+
+    if (wasSilentTokenAttempt) {
+        showAuthPanel(lastAuthStatusSetupRequired ? 'setup' : 'login');
+        ['auth-setup-error', 'auth-login-error'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('hidden');
+        });
+        return;
+    }
 
     const loginError = document.getElementById('auth-login-error');
     const setupPanelVisible = !document.getElementById('auth-setup').classList.contains('hidden');
@@ -793,6 +952,7 @@ function handleChangePasswordResult(msg) {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
+        updateUnsavedChanges();
     } else if (errEl) {
         errEl.innerText = msg.error || 'Could not update password.';
         errEl.classList.remove('hidden');
@@ -811,6 +971,10 @@ function handleChangePasswordResult(msg) {
 function handleLogoutResult(msg) {
     if (!msg.ok) return; // nothing to clean up client-side if the server didn't confirm
     setStoredAuthToken('');
+    deviceAuthenticated = false;
+    lastTelemetry = null;
+    refreshSensorStatuses();
+    renderCurrentReadings();
     showAuthPanel(lastAuthStatusSetupRequired ? 'setup' : 'login');
 }
 
@@ -832,26 +996,19 @@ function updateSpinnerStatus() {
     const retryBtn = document.getElementById('auth-spinner-retry');
     if (!label) return;
     if (wsConnectAttempt <= 1) {
-        label.innerText = '';
+        label.innerText = pendingRestart ? 'Waiting for the device to restart and reconnect…' : '';
         if (retryBtn) retryBtn.classList.add('hidden');
     } else {
-        label.innerText = `Still trying to connect… (attempt ${wsConnectAttempt})`;
+        label.innerText = pendingRestart
+            ? `Waiting for the device to restart and reconnect… (attempt ${wsConnectAttempt})`
+            : `Still trying to connect… (attempt ${wsConnectAttempt})`;
         if (retryBtn) retryBtn.classList.remove('hidden');
     }
 }
 
-// Set true for exactly one initWebSocket() cycle — the one immediately
-// following a user-confirmed reboot (see confirmReboot() below) — so that
-// cycle's spinner reads "REBOOTING DEVICE..." instead of the generic
-// "CONNECTING...". Cleared the moment that spinner is actually shown, so an
-// ordinary drop/retry afterward (e.g. the reboot's first reconnect attempt
-// failing because the board is still mid-restart) falls back to the normal
-// label rather than claiming "rebooting" for the rest of the backoff cycle.
-let s_pendingRebootLabel = false;
-
 function resetSpinnerLabel() {
     const label = document.getElementById('auth-spinner-label');
-    if (label) label.innerText = 'CONNECTING...';
+    if (label) label.innerText = pendingRestart ? pendingRestart.label : 'CONNECTING...';
 }
 
 function initWebSocket() {
@@ -861,13 +1018,7 @@ function initWebSocket() {
     // backend: authentication state lives per-WebSocket-connection, not per
     // browser tab, so a dropped/reconnected socket must prove itself again.
     showAuthPanel('spinner');
-    if (s_pendingRebootLabel) {
-        const label = document.getElementById('auth-spinner-label');
-        if (label) label.innerText = 'REBOOTING DEVICE...';
-        s_pendingRebootLabel = false;
-    } else {
-        resetSpinnerLabel();
-    }
+    resetSpinnerLabel();
     wsConnectAttempt++;
     updateSpinnerStatus();
     websocket = new WebSocket(gateway);
@@ -880,17 +1031,19 @@ function onOpen(event) {
     wsBackoff = 2000;
     wsConnectAttempt = 0;
     updateSpinnerStatus();
-    document.getElementById('vital-link-dot').classList.remove('bg-error');
-    document.getElementById('vital-link-dot').classList.add('bg-secondary', 'animate-pulse');
-    document.getElementById('vital-link-text').innerText = 'LIVE SYS.LINK';
-    document.getElementById('vital-link-text').classList.replace('text-error', 'text-secondary');
+    setLinkStatus('VERIFYING DEVICE...', false);
 }
 
 function onClose(event) {
-    document.getElementById('vital-link-dot').classList.remove('bg-secondary', 'animate-pulse');
-    document.getElementById('vital-link-dot').classList.add('bg-error');
-    document.getElementById('vital-link-text').innerText = 'OFFLINE';
-    document.getElementById('vital-link-text').classList.replace('text-secondary', 'text-error');
+    if (linkStatusTimer) clearTimeout(linkStatusTimer);
+    deviceAuthenticated = false;
+    lastTelemetry = null;
+    for (let index = 1; index <= 6; index++) tabsData.ok[index] = null;
+    refreshSensorStatuses();
+    renderCurrentReadings();
+    showAuthPanel('spinner');
+    resetSpinnerLabel();
+    setLinkStatus(pendingRestart ? pendingRestart.label : 'OFFLINE', false);
     // Any save awaiting an ack can no longer receive one on this (now dead)
     // socket — reject them immediately instead of letting them time out.
     rejectAllPendingCommands('Connection lost before the device could confirm.');
@@ -904,7 +1057,7 @@ let reconnectTimer = null;
 // retry instead of waiting out the current exponential-backoff delay.
 function retryConnectionNow() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    if (websocket) { try { websocket.close(); } catch (e) { /* already closed */ } }
+    if (websocket) { try { websocket.onclose = null; websocket.close(); } catch (e) { /* already closed */ } }
     initWebSocket();
 }
 
@@ -1102,65 +1255,128 @@ function updateVitals(msg) {
     }
 }
 
-// Colors one dashboard tile's status dot from an s_ok[] code (0=disabled,
-// 1=healthy, 2=enabled-but-failing). Mirrors the existing fbDot convention
-// above (updateVitals): bg-secondary+animate-pulse = live, bg-error = failing,
-// bg-white/30 (no pulse) = off/disabled. `code` may be undefined if s_ok[]
-// wasn't sent yet (e.g. before the first "data" frame) — treated as healthy
-// so a tile doesn't flash "disabled" for a moment before real data lands.
-function setDashDotStatus(dotId, code) {
-    const dot = document.getElementById(dotId);
-    if (!dot) return;
-    dot.classList.remove('bg-white/30', 'bg-secondary', 'bg-error', 'animate-pulse');
-    if (code === 0) {
-        dot.classList.add('bg-white/30');
-        dot.title = 'Sensor disabled';
-    } else if (code === 2) {
-        dot.classList.add('bg-error');
-        dot.title = 'Sensor enabled but not reading — check wiring/Terminal log';
-    } else {
-        dot.classList.add('bg-secondary', 'animate-pulse');
-        dot.title = 'Live';
+const DASH_SENSOR_DOTS = {
+    1: ['dash-dot-tds'],
+    2: ['dash-dot-atemp', 'dash-dot-hum', 'dash-dot-vpd'],
+    3: ['dash-dot-wtemp'],
+    4: ['dash-dot-lux'],
+    5: ['dash-dot-wl'],
+    6: ['dash-dot-ph']
+};
+const SENSOR_STATUS_LABELS = {
+    offline: 'Device offline',
+    disabled: 'Sensor disabled',
+    error: 'Read error',
+    waiting: 'Waiting for first reading',
+    demo: 'Demo reading',
+    live: 'Live reading'
+};
+
+function sensorStatusForTab(index) {
+    if (!deviceAuthenticated) return 'offline';
+    if (tabsData.enabled[index] === false || tabsData.ok[index] === 0) return 'disabled';
+    if (tabsData.ok[index] === 2) return 'error';
+    if (tabsData.ok[index] !== 1) return 'waiting';
+    return tabsData.gpios[index] === -42 ? 'demo' : 'live';
+}
+
+function refreshSensorStatuses() {
+    Object.entries(DASH_SENSOR_DOTS).forEach(([index, dotIds]) => {
+        const state = sensorStatusForTab(Number(index));
+        dotIds.forEach(dotId => {
+            const dot = document.getElementById(dotId);
+            if (!dot) return;
+            dot.classList.remove('bg-white/30', 'bg-secondary', 'bg-error', 'animate-pulse',
+                'hg-dot-live', 'hg-dot-demo', 'hg-dot-error', 'hg-dot-waiting', 'hg-dot-muted');
+            dot.classList.add(`hg-dot-${state === 'disabled' || state === 'offline' ? 'muted' : state}`);
+            if (state === 'live') dot.classList.add('animate-pulse');
+            dot.title = SENSOR_STATUS_LABELS[state];
+            dot.setAttribute('role', 'img');
+            dot.setAttribute('aria-label', SENSOR_STATUS_LABELS[state]);
+        });
+    });
+    updateCalibrationGating();
+
+    const index = currentTabId;
+    if (index < 1 || index > 6) return;
+    const state = sensorStatusForTab(index);
+    const badge = document.getElementById(index === 2 ? 'dual-sensor-status' : 'sensor-status');
+    if (badge) {
+        badge.innerText = SENSOR_STATUS_LABELS[state];
+        badge.dataset.state = state;
+    }
+    const actionsAvailable = deviceAuthenticated && tabsData.enabled[index] !== null;
+    const powerToggle = document.getElementById(index === 2 ? 'dual-sensor-toggle' : 'sensor-toggle');
+    const demoToggle = document.getElementById(index === 2 ? 'dual-sensor-demo-toggle' : 'sensor-demo-toggle');
+    [powerToggle, demoToggle].forEach(toggle => {
+        if (!toggle) return;
+        if (!actionsAvailable) {
+            toggle.disabled = true;
+            toggle.dataset.connectionLocked = '1';
+        } else if (toggle.dataset.connectionLocked) {
+            toggle.disabled = false;
+            delete toggle.dataset.connectionLocked;
+        }
+    });
+    const error = document.getElementById(index === 2 ? 'dual-sensor-error' : 'sensor-error');
+    const errorText = index === 2 ? error : document.getElementById('sensor-error-text');
+    const errorMessages = {
+        offline: 'Device offline. Live readings are unavailable while reconnecting.',
+        disabled: 'Sensor disabled. Turn on Enable Power to read it again.',
+        error: 'Sensor enabled but not reading. Check wiring and the Terminal log.'
+    };
+    if (error) error.classList.toggle('hidden', !errorMessages[state]);
+    if (errorText && errorMessages[state]) errorText.innerText = errorMessages[state];
+    const reset = document.getElementById('btn-reset-current-sensor');
+    if (reset) reset.classList.toggle('hidden', state === 'offline');
+}
+
+function renderCurrentReadings() {
+    const msg = lastTelemetry || {};
+    const fields = [
+        ['dash-val-tds', 'tds', 1, 0], ['dash-val-ph', 'ph_val', 6, 2],
+        ['dash-val-atemp', 'temp', 2, 1], ['dash-val-hum', 'hum', 2, 0],
+        ['dash-val-wtemp', 'w_t', 3, 1], ['dash-val-lux', 'lux', 4, 0],
+        ['dash-val-wl', 'wl_percent', 5, 0], ['dash-val-vpd', 'vpd_kpa', 2, 2]
+    ];
+    fields.forEach(([id, key, index, digits]) => {
+        const el = document.getElementById(id);
+        const value = msg[key];
+        const state = sensorStatusForTab(index);
+        if (el) el.innerText = (state === 'live' || state === 'demo') && Number.isFinite(value)
+            ? value.toFixed(digits) : '--';
+    });
+    const fakeTempBadge = document.getElementById('dash-tds-fakewt-badge');
+    if (fakeTempBadge) fakeTempBadge.classList.toggle('hidden', sensorStatusForTab(1) !== 'live' || !msg.tds_fake_wt_comp);
+    const calTds = document.getElementById('cal-tds-raw');
+    const calPh = document.getElementById('cal-ph-raw');
+    if (calTds) calTds.innerText = sensorStatusForTab(1) === 'live' && Number.isFinite(msg.tds) ? msg.tds.toFixed(1) : '--';
+    if (calPh) calPh.innerText = sensorStatusForTab(6) === 'live' && Number.isFinite(msg.ph_val) ? msg.ph_val.toFixed(2) : '--';
+
+    if (currentTabId >= 1 && currentTabId <= 6) {
+        const state = sensorStatusForTab(currentTabId);
+        const showing = state === 'live' || state === 'demo';
+        if (currentTabId === 2) {
+            const temp = document.getElementById('sensor-dual-temp');
+            const hum = document.getElementById('sensor-dual-hum');
+            if (temp) temp.innerHTML = `${showing && Number.isFinite(msg.temp) ? msg.temp.toFixed(1) : '--'} <span class="text-headline-md text-white/50 ml-1">°C</span>`;
+            if (hum) hum.innerHTML = `${showing && Number.isFinite(msg.hum) ? msg.hum.toFixed(0) : '--'} <span class="text-headline-md text-white/50 ml-1">%</span>`;
+        } else {
+            const keys = { 1: 'tds', 3: 'w_t', 4: 'lux', 5: 'wl_percent', 6: 'ph_val' };
+            const current = document.getElementById('sensor-current-val');
+            const value = msg[keys[currentTabId]];
+            if (current) current.innerHTML = `${showing && Number.isFinite(value) ? value.toFixed(1) : '--'} <span class="text-headline-md text-white/50 ml-1">${tabsData.units[currentTabId]}</span>`;
+        }
     }
 }
 
 function updateTelemetry(msg) {
-    // `|| 0` on every field here (not just some) protects against a partial
-    // "data" frame — e.g. if broadcastData() is ever extended to omit a
-    // disabled sensor's field, the same way firebaseUploadCycle() already
-    // does. Without it, msg.tds.toFixed() on an undefined field throws and
-    // aborts the rest of this handler, silently freezing every OTHER tile
-    // on the dashboard too (they're all in the same function, after the
-    // line that throws).
-    if(document.getElementById('dash-val-tds')) document.getElementById('dash-val-tds').innerText = (msg.tds || 0).toFixed(0);
-    // Small icon badge next to the TDS status dot — see the comment on the
-    // element in index.html / tds_comp_using_fake_water_temp in state.h.
-    // Only ever true while TDS itself is live (checked server-side), so no
-    // extra guard needed here beyond the flag itself.
-    if(document.getElementById('dash-tds-fakewt-badge')) document.getElementById('dash-tds-fakewt-badge').classList.toggle('hidden', !msg.tds_fake_wt_comp);
-    if(document.getElementById('dash-val-ph')) document.getElementById('dash-val-ph').innerText = (msg.ph_val || 0).toFixed(2);
-    if(document.getElementById('dash-val-atemp')) document.getElementById('dash-val-atemp').innerText = (msg.temp || 0).toFixed(1);
-    if(document.getElementById('dash-val-hum')) document.getElementById('dash-val-hum').innerText = (msg.hum || 0).toFixed(0);
-    if(document.getElementById('dash-val-wtemp')) document.getElementById('dash-val-wtemp').innerText = (msg.w_t || 0).toFixed(1);
-    if(document.getElementById('dash-val-lux')) document.getElementById('dash-val-lux').innerText = (msg.lux || 0).toFixed(0);
-    if(document.getElementById('dash-val-wl')) document.getElementById('dash-val-wl').innerText = (msg.wl_percent || 0).toFixed(0);
-    if(document.getElementById('dash-val-vpd')) document.getElementById('dash-val-vpd').innerText = (msg.vpd_kpa || 0).toFixed(2);
+    lastTelemetry = msg;
 
     // Color each dashboard tile's status dot from msg.s_ok[] (see S_EN_INDEX
     // below for the SensorID-order mapping; VPD has no sensor of its own —
     // it's derived from DHT temp+humidity, so it mirrors DHT's status).
-    // Dots default to "live" green in the HTML, so this only needs to
-    // override that when a sensor is actually disabled or failing.
     if (Array.isArray(msg.s_ok)) {
-        setDashDotStatus('dash-dot-tds', msg.s_ok[S_EN_INDEX.tds]);
-        setDashDotStatus('dash-dot-ph', msg.s_ok[S_EN_INDEX.ph]);
-        setDashDotStatus('dash-dot-atemp', msg.s_ok[S_EN_INDEX.dht]);
-        setDashDotStatus('dash-dot-hum', msg.s_ok[S_EN_INDEX.dht]);
-        setDashDotStatus('dash-dot-wtemp', msg.s_ok[S_EN_INDEX.wt]);
-        setDashDotStatus('dash-dot-lux', msg.s_ok[S_EN_INDEX.light]);
-        setDashDotStatus('dash-dot-wl', msg.s_ok[S_EN_INDEX.wl]);
-        setDashDotStatus('dash-dot-vpd', msg.s_ok[S_EN_INDEX.dht]);
-
         // Mirror the same signal into tabsData.ok[], parallel to the existing
         // tabsData.enabled[], so the per-sensor detail page banner (switchTab)
         // can also distinguish "disabled" from "enabled but not reading"
@@ -1172,23 +1388,25 @@ function updateTelemetry(msg) {
         tabsData.ok[5] = msg.s_ok[S_EN_INDEX.wl];
         tabsData.ok[6] = msg.s_ok[S_EN_INDEX.ph];
     }
-
-    if(document.getElementById('cal-tds-raw')) document.getElementById('cal-tds-raw').innerText = (msg.tds || 0).toFixed(1);
-    if(document.getElementById('cal-ph-raw')) document.getElementById('cal-ph-raw').innerText = (msg.ph_val || 0).toFixed(2);
+    refreshSensorStatuses();
+    renderCurrentReadings();
 
     const pushBuffer = (arr, val) => {
         arr.push(val);
         if(arr.length > MAX_POINTS) arr.shift();
     };
 
-    pushBuffer(sensorBuffers[1], msg.tds);
-    pushBuffer(sensorBuffers[2].hum, msg.hum);
-    pushBuffer(sensorBuffers[2].temp, msg.temp);
-    pushBuffer(sensorBuffers[3], msg.w_t || 0);
-    pushBuffer(sensorBuffers[4], msg.lux || 0);
-    pushBuffer(sensorBuffers[5], msg.wl_percent || 0);
-    pushBuffer(sensorBuffers[6], msg.ph_val || 0);
-    pushBuffer(sensorBuffers[7], msg.vpd_kpa || 0);
+    const pushHealthy = (index, arr, value) => {
+        if (['live', 'demo'].includes(sensorStatusForTab(index)) && Number.isFinite(value)) pushBuffer(arr, value);
+    };
+    pushHealthy(1, sensorBuffers[1], msg.tds);
+    pushHealthy(2, sensorBuffers[2].hum, msg.hum);
+    pushHealthy(2, sensorBuffers[2].temp, msg.temp);
+    pushHealthy(3, sensorBuffers[3], msg.w_t);
+    pushHealthy(4, sensorBuffers[4], msg.lux);
+    pushHealthy(5, sensorBuffers[5], msg.wl_percent);
+    pushHealthy(6, sensorBuffers[6], msg.ph_val);
+    pushHealthy(2, sensorBuffers[7], msg.vpd_kpa);
 
     const sensorPage = document.getElementById('page-sensor');
     const dualSensorPage = document.getElementById('page-dual-sensor');
@@ -1197,19 +1415,10 @@ function updateTelemetry(msg) {
         if(typeof drawChart === 'function') {
             drawChart(currentSensorCtx, currentSensorCanvas, sensorBuffers[currentTabId], currentTabId === 1 ? 'secondary' : 'primary');
         }
-        const unitStr = tabsData.units[currentTabId];
-        const currentVal = sensorBuffers[currentTabId][sensorBuffers[currentTabId].length-1];
-        if (currentVal !== undefined) {
-            document.getElementById('sensor-current-val').innerHTML = `${currentVal.toFixed(1)} <span class="text-headline-md text-white/50 ml-1">${unitStr}</span>`;
-        }
     }
     else if(dualSensorPage && !dualSensorPage.classList.contains('hidden') && currentTabId === 2) {
         if(typeof drawDualChart === 'function') {
             drawDualChart(ctxDual, canvasDual, sensorBuffers[2].hum, sensorBuffers[2].temp);
-        }
-        if (sensorBuffers[2].temp.length > 0) {
-            document.getElementById('sensor-dual-temp').innerHTML = `${sensorBuffers[2].temp[sensorBuffers[2].temp.length-1].toFixed(1)} <span class="text-headline-md text-white/50 ml-1">°C</span>`;
-            document.getElementById('sensor-dual-hum').innerHTML = `${sensorBuffers[2].hum[sensorBuffers[2].hum.length-1].toFixed(0)} <span class="text-headline-md text-white/50 ml-1">%</span>`;
         }
     }
 }
@@ -1261,11 +1470,23 @@ function validateAllPinFields() {
     let problem = "";
     let offendingIds = [];
 
-    // Forbidden pins first (19/20 = native USB D-/D+ on this board).
+    // Match the firmware guard before a save reaches the device. -42 is the
+    // internal sentinel for an already-demo'd sensor, never a user GPIO.
     fields.forEach((f) => {
-        const v = parseInt(f.el.value, 10);
-        if (v === 19 || v === 20) {
-            problem = `GPIO 19 and 20 are reserved for USB on this board and can't be used for a sensor. Change that pin and try again.`;
+        const raw = f.el.value.trim();
+        const v = Number(raw);
+        const unchangedDemoPin = v === -42 && lastConfirmedPins[f.id] === -42;
+        if (!unchangedDemoPin && (!/^\d+$/.test(raw) || !Number.isInteger(v) || v < 1 || v > 47 || (v >= 22 && v <= 37))) {
+            problem = `${PIN_FIELD_LABELS[f.id]} needs an exposed GPIO on this ESP32-S3 board.`;
+            offendingIds.push(f.id);
+        } else if (v === 3 || v === 45 || v === 46) {
+            problem = `GPIO${v} is a boot strapping pin; choose another GPIO.`;
+            offendingIds.push(f.id);
+        } else if (v === 19 || v === 20) {
+            problem = 'GPIO19 and GPIO20 are reserved for USB on this board.';
+            offendingIds.push(f.id);
+        } else if (['cfg-pin-tds', 'cfg-pin-ph', 'cfg-pin-wl'].includes(f.id) && v !== -42 && v > 10) {
+            problem = `${PIN_FIELD_LABELS[f.id]} is an analog input and needs an ADC1 pin (GPIO1-10).`;
             offendingIds.push(f.id);
         }
     });
@@ -1335,18 +1556,21 @@ function recomputePinoutDirty() {
     let dirty = false;
     Object.keys(PIN_FIELD_LABELS).forEach((id) => {
         const el = document.getElementById(id);
-        if (el && lastConfirmedPins[id] !== undefined && parseInt(el.value, 10) !== lastConfirmedPins[id]) {
+        const baseline = lastConfirmedPins[id] !== undefined ? lastConfirmedPins[id] : Number(el?.defaultValue ?? el?.value);
+        if (el && (el.value === '' || parseInt(el.value, 10) !== baseline)) {
             dirty = true;
         }
     });
     Object.keys(S_EN_INDEX).forEach((sensorId) => {
         const el = document.getElementById('cfg-sensor-enabled-' + sensorId);
-        if (el && lastConfirmedSensorEnabled[sensorId] !== undefined && el.checked !== lastConfirmedSensorEnabled[sensorId]) {
+        const baseline = lastConfirmedSensorEnabled[sensorId] !== undefined ? lastConfirmedSensorEnabled[sensorId] : !!el?.defaultChecked;
+        if (el && el.checked !== baseline) {
             dirty = true;
         }
     });
 
     pinoutDirty = dirty;
+    updateUnsavedChanges();
     // Demo Mode lock (see updateConfigForm()) always wins over dirty state —
     // don't re-enable Save just because something's unsaved if the whole
     // card is locked. A pin-validation problem also always wins.
@@ -1419,13 +1643,25 @@ function validateFirebaseForm() {
 }
 
 function updateConfigForm(msg) {
+    const draftFields = new Set();
+    Object.values(SETTINGS_FIELDS).forEach(fields => {
+        Object.entries(fields).forEach(([id, key]) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const oldValue = String(hasConfigSnapshot ? (globalConfigCache[key] ?? '') : (el.defaultValue ?? ''));
+            const blankKeepsSecret = ['cfg-wifi-pass', 'cfg-ap-pass', 'cfg-fb-pass'].includes(id) && el.value === '';
+            if (el.value !== oldValue && !blankKeepsSecret) draftFields.add(id);
+        });
+    });
     globalConfigCache = msg; // Cache for CSV export
+    hasConfigSnapshot = true;
 
-    if(document.getElementById('cfg-wifi-ssid')) document.getElementById('cfg-wifi-ssid').value = msg.wifi_ssid || "";
-    if(document.getElementById('cfg-fb-proj')) document.getElementById('cfg-fb-proj').value = msg.fb_proj || "";
-    if(document.getElementById('cfg-fb-api')) document.getElementById('cfg-fb-api').value = msg.fb_api || "";
-    if(document.getElementById('cfg-fb-email')) document.getElementById('cfg-fb-email').value = msg.fb_email || "";
-    if(document.getElementById('cfg-fb-col')) document.getElementById('cfg-fb-col').value = msg.fb_col || "";
+    ['network', 'cloud'].forEach(group => {
+        Object.entries(SETTINGS_FIELDS[group]).forEach(([id, key]) => {
+            const el = document.getElementById(id);
+            if (el && !draftFields.has(id)) el.value = msg[key] || '';
+        });
+    });
 
     // Plaintext credentials (see broadcastConfig(), task_network.cpp, and
     // auth_get_password_for_ws(), state.cpp, for the tradeoff this
@@ -1436,9 +1672,6 @@ function updateConfigForm(msg) {
     // must treat "unchanged from msg.wifi_pass" the same as blank. cfg-fb-pass
     // gets the same treatment for consistency with cfg-fb-api just above.
     // cfg-admin-pass-display is read-only and never submitted anywhere.
-    if(document.getElementById('cfg-wifi-pass')) document.getElementById('cfg-wifi-pass').value = msg.wifi_pass || "";
-    if(document.getElementById('cfg-ap-pass')) document.getElementById('cfg-ap-pass').value = msg.ap_pass || "";
-    if(document.getElementById('cfg-fb-pass')) document.getElementById('cfg-fb-pass').value = msg.fb_pass || "";
     if(document.getElementById('cfg-admin-pass-display')) document.getElementById('cfg-admin-pass-display').value = msg.admin_pass || "";
 
     // Re-run form validation now that fresh values landed in these fields —
@@ -1540,10 +1773,10 @@ function updateConfigForm(msg) {
     document.querySelectorAll('[data-sensor-enable]').forEach((el) => { el.disabled = !!msg.demo; });
 
     // Timing intervals (Part 5.8)
-    if(document.getElementById('cfg-int-read') && msg.int_read !== undefined) document.getElementById('cfg-int-read').value = msg.int_read;
-    if(document.getElementById('cfg-int-ws') && msg.int_ws !== undefined) document.getElementById('cfg-int-ws').value = msg.int_ws;
-    if(document.getElementById('cfg-int-vit') && msg.int_vit !== undefined) document.getElementById('cfg-int-vit').value = msg.int_vit;
-    if(document.getElementById('cfg-int-fb') && msg.int_fb !== undefined) document.getElementById('cfg-int-fb').value = msg.int_fb;
+    Object.entries(SETTINGS_FIELDS.timing).forEach(([id, key]) => {
+        const el = document.getElementById(id);
+        if (el && !draftFields.has(id) && msg[key] !== undefined) el.value = msg[key];
+    });
 
     // Per-sensor enabled state (Part 2.4) — reflects the REAL sensor_enabled[]
     // flag, not just "pin >= 0". A sensor can have a valid pin saved but still
@@ -1607,6 +1840,21 @@ function updateConfigForm(msg) {
         // that hasn't been reflashed yet just won't send it, so guard the length.
         if (msg.pins.length >= 8) lastConfirmedPins['cfg-pin-wlp'] = msg.pins[7];
 
+        // A per-sensor Demo Mode pin is owned by its toggle, even when the
+        // global Demo Mode switch is off. Keep its GPIO input and Reset
+        // button locked until that sensor is switched back to real hardware.
+        Object.keys(PIN_FIELD_LABELS).forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.disabled = !!msg.demo || lastConfirmedPins[id] === -42;
+                el.title = lastConfirmedPins[id] === -42 ? 'Turn off this sensor’s Demo Mode to edit its pin.' : '';
+            }
+        });
+        const resetSensorPinIndex = { tds: 0, dht: 1, ph: 2, wt: 3, wl: 4, light: 5 };
+        document.querySelectorAll('[data-reset-sensor]').forEach((btn) => {
+            btn.disabled = !!msg.demo || msg.pins[resetSensorPinIndex[btn.dataset.resetSensor]] === -42;
+        });
+
         if (!pinoutDirty) {
             Object.keys(lastConfirmedPins).forEach((id) => {
                 const el = document.getElementById(id);
@@ -1619,34 +1867,52 @@ function updateConfigForm(msg) {
         // instead of whatever it was before this config frame arrived.
         // validateAllPinFields() itself calls recomputePinoutDirty() at the
         // end, so that's covered here too.
-        if (typeof validateAllPinFields === 'function') validateAllPinFields();
+    if (typeof validateAllPinFields === 'function') validateAllPinFields();
     }
+    refreshSensorStatuses();
+    renderCurrentReadings();
+    updateUnsavedChanges();
 }
 
 // Shows the "sensor is disabled" banner and hides the interactive controls
 // on the Live Calibration page for whichever of TDS/pH is currently off.
 // This must live at module scope because updateConfigForm() calls it whenever
 // a fresh device config frame arrives.
+let phCalibrationWasReady = false;
 function updateCalibrationGating() {
-    const tdsEnabled = !!tabsData.enabled[1];
-    const phEnabled = !!tabsData.enabled[6];
+    const tdsState = sensorStatusForTab(1);
+    const phState = sensorStatusForTab(6);
+    const tdsEnabled = tdsState === 'live';
+    const phEnabled = phState === 'live';
+    const unavailableMessage = (sensor, state) => {
+        if (state === 'demo') return `${sensor} is showing simulated data. Turn off Demo Mode and reboot before calibrating.`;
+        if (state === 'disabled') return `${sensor} is disabled. Enable it in Settings before calibrating.`;
+        if (state === 'error') return `${sensor} is not reading. Check the wiring and Terminal log before calibrating.`;
+        if (state === 'waiting') return `Waiting for the first real ${sensor} reading.`;
+        return 'Device offline. Reconnect before calibrating.';
+    };
 
     const tdsBanner = document.getElementById('cal-tds-disabled-banner');
     const tdsControls = document.getElementById('cal-tds-controls');
     if (tdsBanner) tdsBanner.classList.toggle('hidden', tdsEnabled);
     if (tdsControls) tdsControls.classList.toggle('hidden', !tdsEnabled);
+    const tdsText = document.getElementById('cal-tds-unavailable-text');
+    if (tdsText) tdsText.innerText = unavailableMessage('TDS sensor', tdsState);
 
     const phBanner = document.getElementById('cal-ph-disabled-banner');
     const phControls = document.getElementById('ph-wizard-controls');
     if (phBanner) phBanner.classList.toggle('hidden', phEnabled);
     if (phControls) phControls.classList.toggle('hidden', !phEnabled);
+    const phText = document.getElementById('cal-ph-unavailable-text');
+    if (phText) phText.innerText = unavailableMessage('pH sensor', phState);
 
     // A sensor going from enabled to disabled mid-wizard invalidates whatever
     // is in progress. The wizard state itself lives inside DOMContentLoaded,
     // so it exposes this tiny reset callback after it is initialized.
-    if (!phEnabled && typeof window.resetPhWizardForGating === 'function') {
+    if (phCalibrationWasReady && !phEnabled && typeof window.resetPhWizardForGating === 'function') {
         window.resetPhWizardForGating();
     }
+    phCalibrationWasReady = phEnabled;
 }
 
 // Escapes text that will be inserted into innerHTML so device-supplied
@@ -1704,6 +1970,41 @@ function updateTerminal(msg) {
 // 4. EVENT LISTENERS & DOM BINDING
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('auth-spinner-close')?.addEventListener('click', () => {
+        offlinePreviewDismissed = true;
+        showAuthPanel('spinner');
+        setLinkStatus(pendingRestart ? pendingRestart.label : 'OFFLINE', false);
+    });
+    document.getElementById('offline-preview-bar')?.addEventListener('click', () => {
+        offlinePreviewDismissed = false;
+        showAuthPanel('spinner');
+    });
+    const unsavedWidget = document.getElementById('unsaved-widget');
+    const unsavedPanel = document.getElementById('unsaved-panel');
+    const unsavedToggle = document.getElementById('unsaved-toggle');
+    if (unsavedToggle) unsavedToggle.addEventListener('click', () => {
+        const open = unsavedPanel.classList.toggle('hidden') === false;
+        unsavedToggle.setAttribute('aria-expanded', String(open));
+    });
+    if (unsavedWidget) unsavedWidget.addEventListener('click', (event) => {
+        const action = event.target.closest('[data-save-group], [data-discard-group], [data-review-group]');
+        if (!action) return;
+        const group = action.dataset.saveGroup || action.dataset.discardGroup || action.dataset.reviewGroup;
+        if (!SETTINGS_GROUPS[group]) return;
+        if (action.dataset.discardGroup) { discardSettingsGroup(group); return; }
+        if (action.dataset.saveGroup) {
+            const saveButton = document.getElementById(SETTINGS_GROUPS[group].save);
+            if (saveButton && !saveButton.disabled) { saveButton.click(); return; }
+        }
+        switchTab(8);
+        document.getElementById(SETTINGS_GROUPS[group].card)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    document.querySelectorAll('#page-8 input').forEach(input => {
+        if (input.id === 'cfg-admin-pass-display') return;
+        input.addEventListener('input', updateUnsavedChanges);
+        input.addEventListener('change', updateUnsavedChanges);
+    });
+    updateUnsavedChanges();
     initNavigation();
     initBottomNav();
     initSensorCardLinks();
@@ -1816,9 +2117,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnRebootLater = document.getElementById('btn-reboot-confirm-later');
     if (btnRebootLater) {
         btnRebootLater.addEventListener('click', () => {
-            const cancelHandler = s_rebootCancelHandler;
             closeRebootConfirm();
-            if (cancelHandler) cancelHandler();
+            showConnectionNotice('Change saved. Reboot from Settings → System when ready.');
         });
     }
 
@@ -1965,6 +2265,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 btnSaveWifi.innerText = "Saved!";
                 setTimeout(() => { btnSaveWifi.innerText = "Update Network"; }, 2000);
                 if (apPassEl) apPassEl.value = ''; // never leave a saved password sitting in the field
+                updateUnsavedChanges();
                 // Fix (gap #6): if the new credentials are wrong, the device
                 // safely falls back to its HyGrow-Setup SoftAP after ~15s
                 // (see initNetworkTask() in task_network.cpp) — but this
@@ -2006,6 +2307,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const setFbEnabledDirty = (dirty) => {
         fbEnabledDirty = dirty;
         if (btnDiscardFbEnabled) btnDiscardFbEnabled.classList.toggle('hidden', !dirty);
+        updateUnsavedChanges();
     };
 
     if (cfgFbEnabled) {
@@ -2045,7 +2347,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const original = btnSaveFb.innerText;
                 btnSaveFb.disabled = true;
                 btnSaveFb.innerText = 'Saving…';
-                sendFeatureFlags(cfgFbEnabled, cfgDemoMode ? cfgDemoMode.checked : undefined).then(() => {
+                sendFeatureFlags({ fb_en: cfgFbEnabled.checked }).then(() => {
                     lastConfirmedFbEnabled = cfgFbEnabled.checked;
                     setFbEnabledDirty(false);
                     btnSaveFb.disabled = false;
@@ -2135,6 +2437,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 const el = document.getElementById('cfg-sensor-enabled-' + sensorId);
                 return el && lastConfirmedSensorEnabled[sensorId] !== undefined && el.checked !== lastConfirmedSensorEnabled[sensorId];
             });
+            const pinsChanged = Object.keys(PIN_FIELD_LABELS).some((id) => {
+                const el = document.getElementById(id);
+                return el && lastConfirmedPins[id] !== undefined && Number(el.value) !== lastConfirmedPins[id];
+            });
 
             const wlpEl = document.getElementById('cfg-pin-wlp');
             const pinsPayload = {
@@ -2164,7 +2470,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     enabled: document.getElementById('cfg-sensor-enabled-' + sensorId).checked
                 }));
             }, Promise.resolve())
-                .then(() => sendCommand(pinsPayload))
+                .then(() => pinsChanged ? sendCommand(pinsPayload) : null)
                 .then(() => {
                     // Both kinds of field are now confirmed — pull the
                     // just-saved checkbox states into lastConfirmedSensorEnabled
@@ -2181,7 +2487,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (btnDiscardPins) btnDiscardPins.disabled = false;
                     btnSavePins.innerText = original;
                     recomputePinoutDirty();
-                    confirmReboot("Pinout saved. The ESP32 must reboot to reassign hardware interrupts safely. Reboot now?", sendReboot);
+                    confirmReboot("Hardware settings saved. The ESP32 must reboot to apply them safely. Reboot now?", sendReboot);
                 })
                 .catch((err) => {
                     if (btnDiscardPins) btnDiscardPins.disabled = false;
@@ -2199,11 +2505,11 @@ document.addEventListener('DOMContentLoaded', () => {
         btnDiscardPins.addEventListener('click', () => {
             Object.keys(PIN_FIELD_LABELS).forEach((id) => {
                 const el = document.getElementById(id);
-                if (el && lastConfirmedPins[id] !== undefined) el.value = lastConfirmedPins[id];
+                if (el) el.value = lastConfirmedPins[id] !== undefined ? lastConfirmedPins[id] : el.defaultValue;
             });
             Object.keys(S_EN_INDEX).forEach((sensorId) => {
                 const el = document.getElementById('cfg-sensor-enabled-' + sensorId);
-                if (el && lastConfirmedSensorEnabled[sensorId] !== undefined) el.checked = lastConfirmedSensorEnabled[sensorId];
+                if (el) el.checked = lastConfirmedSensorEnabled[sensorId] !== undefined ? lastConfirmedSensorEnabled[sensorId] : el.defaultChecked;
             });
             validateAllPinFields(); // clears any error highlighting from the discarded values
         });
@@ -2245,7 +2551,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCalTds = document.getElementById('btn-cal-tds');
     if(btnCalTds) {
         btnCalTds.addEventListener('click', () => {
-            if (!tabsData.enabled[1]) { updateCalibrationGating(); return; }
+            if (sensorStatusForTab(1) !== 'live') { updateCalibrationGating(); return; }
             if (!validateTdsTarget()) return;
 
             const targetPpm = parseFloat(document.getElementById('cfg-tds-target').value);
@@ -2321,32 +2627,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setPhStepUI(1);
     }
 
-    // Shows the "sensor is disabled" banner and hides the interactive
-    // controls on the Live Calibration page for whichever of TDS/pH is
-    // currently off, instead of letting the wizard/button run against a
-    // sensor whose currentSensors value the firmware never touches (see
-    // the banner comments in index.html). Called on init and any time a
-    // config frame updates tabsData.enabled[].
-    function updateCalibrationGating() {
-        const tdsEnabled = !!tabsData.enabled[1];
-        const phEnabled = !!tabsData.enabled[6];
-
-        const tdsBanner = document.getElementById('cal-tds-disabled-banner');
-        const tdsControls = document.getElementById('cal-tds-controls');
-        if (tdsBanner) tdsBanner.classList.toggle('hidden', tdsEnabled);
-        if (tdsControls) tdsControls.classList.toggle('hidden', !tdsEnabled);
-
-        const phBanner = document.getElementById('cal-ph-disabled-banner');
-        const phControls = document.getElementById('ph-wizard-controls');
-        if (phBanner) phBanner.classList.toggle('hidden', phEnabled);
-        if (phControls) phControls.classList.toggle('hidden', !phEnabled);
-
-        // A sensor going from enabled to disabled mid-wizard (another tab
-        // toggled it, or a reboot from an unrelated save) invalidates
-        // whatever's in progress -- reset back to Step 1 so a later
-        // re-enable never lets Step 3 "Save" fire off stale captured volts.
-        if (!phEnabled && typeof resetPhWizard === 'function') resetPhWizard();
-    }
+    window.resetPhWizardForGating = resetPhWizard;
 
     const btnCalPh7 = document.getElementById('btn-cal-ph-7');
     if(btnCalPh7) {
@@ -2355,7 +2636,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // cal-ph-disabled-banner while pH is off (updateCalibrationGating()),
             // but guard the handler itself too in case this fires from a
             // stale click queued just before the sensor was disabled.
-            if (!tabsData.enabled[6]) { updateCalibrationGating(); return; }
+            if (sensorStatusForTab(6) !== 'live') { updateCalibrationGating(); return; }
             const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
             if (isNaN(livePh)) { showAlertModal("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected.", true); return; }
             const off = globalConfigCache.ph_off || 0.0;
@@ -2370,7 +2651,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCalPh4 = document.getElementById('btn-cal-ph-4');
     if(btnCalPh4) {
         btnCalPh4.addEventListener('click', () => {
-            if (!tabsData.enabled[6]) { updateCalibrationGating(); return; }
+            if (sensorStatusForTab(6) !== 'live') { updateCalibrationGating(); return; }
             const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
             if (isNaN(livePh)) { showAlertModal("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected.", true); return; }
             if (ph7Volt === null) { setPhStepUI(1); return; } // shouldn't happen, but don't let Step 2 run without Step 1
@@ -2402,6 +2683,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCalPhSave = document.getElementById('btn-cal-ph-save');
     if(btnCalPhSave) {
         btnCalPhSave.addEventListener('click', () => {
+            if (sensorStatusForTab(6) !== 'live') { updateCalibrationGating(); return; }
             if (ph7Volt === null || ph4Volt === null || ph7Volt === ph4Volt) {
                 showAlertModal("Please complete both Step 1 (pH 7.0) and Step 2 (pH 4.0) before saving.", true);
                 return;
@@ -2457,8 +2739,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // sendCmdAck() on the success path — the device is gone before it
             // could send one. Waiting on an ack here would time out on every
             // single successful reboot and show a false "failed" error.
-            if (!websocket || websocket.readyState !== WebSocket.OPEN) { showAlertModal("Not connected to the device right now.", true); return; }
-            websocket.send(JSON.stringify({command: "reboot"}));
+            sendReboot();
         }, null, { title: 'Reboot Device?', confirmLabel: 'Reboot Now' });
     });
 
@@ -2481,8 +2762,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Same reasoning as btn-reboot above: state_factory_reset() also
                 // restarts the device with no ack on the way out, so this stays a
                 // raw send rather than going through sendCommand().
-                if (!websocket || websocket.readyState !== WebSocket.OPEN) { showAlertModal("Not connected to the device right now.", true); return; }
-                websocket.send(JSON.stringify({command: "factory_reset"}));
+                sendRestartCommand('factory_reset', 'RESETTING DEVICE...');
             }
         );
     });
@@ -2670,21 +2950,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Still re-enable the toggle even though we're skipping the
                 // rest of the UI update — leaving it permanently disabled
                 // would strand it if the user navigates back to this tab.
-                e.target.disabled = false;
+                e.target.disabled = !deviceAuthenticated;
                 return;
             }
-            e.target.disabled = false;
+            e.target.disabled = !deviceAuthenticated;
             confirmReboot(
                 `Sensor enabled state changed. The ESP32 must reboot to safely apply hardware changes. Reboot now?`,
-                sendReboot,
-                () => {
-                    e.target.checked = !isEnabled;
-                    syncPowerToggleLabel(e.target.id, toggleLabelId);
-                }
+                sendReboot
             );
         }).catch((err) => {
             document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} enable change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
-            e.target.disabled = false;
+            e.target.disabled = !deviceAuthenticated;
             if (currentTabId !== startedOnTabId) return; // stale — switchTab() already shows the real state for whatever tab is open now
             e.target.checked = !isEnabled; // revert — the device never actually applied this
             syncPowerToggleLabel(e.target.id, toggleLabelId);
@@ -2719,6 +2995,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (msg.type !== "command_result" || msg.command !== "reset_sensor_pin") return;
                 resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
                 if (!msg.ok) {
+                    pendingRestart = null;
+                    showAuthPanel('none');
+                    setLinkStatus('LIVE SYS.LINK', true);
                     showAlertModal(`Pin reset failed: ${msg.error || 'the device rejected the request.'}`, true);
                 }
                 // ok:true is never actually sent (see comment above) — this
@@ -2730,11 +3009,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
             }, ACK_TIMEOUT_MS);
 
-            try {
-                websocket.send(JSON.stringify({ command: "reset_sensor_pin", sensor: sensorId }));
-            } catch (e) {
+            if (!sendRestartCommand('reset_sensor_pin', 'RESETTING SENSOR...', { sensor: sensorId })) {
                 resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
-                showAlertModal("Failed to send reset request: " + e.message, true);
             }
         }, null, { title: 'Reset Pin?', confirmLabel: 'Reset & Reboot' });
     };
@@ -2769,21 +3045,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // though the device had already applied and persisted the change
     // moments earlier, before the ack made it back.
     //
-    // sendFeatureFlags() itself is unchanged — still the single function
-    // that actually sends save_features, still takes an explicit demo
-    // value so the sensor-page toggles (which have no cfg-fb-enabled field
-    // in the DOM at all) can supply it directly. fb_en always falls back
-    // to globalConfigCache.fb_en when the Settings checkbox isn't present
-    // on the current page.
+    // Each card sends only the flag it owns. The device's save_features
+    // handler leaves omitted fields unchanged, so a staged Demo Mode edit
+    // cannot be accidentally applied by Save Credentials (or vice versa).
     // ------------------------------------------------------------------
-    const sendFeatureFlags = (sourceEl, demoOverride) => {
-        const cfgFbEnabledEl = document.getElementById('cfg-fb-enabled');
-        const demo = demoOverride !== undefined ? !!demoOverride : !!document.getElementById('cfg-demo-mode')?.checked;
-        const payload = {
-            command: "save_features",
-            demo,
-            fb_en: cfgFbEnabledEl ? !!cfgFbEnabledEl.checked : !!globalConfigCache.fb_en
-        };
+    const sendFeatureFlags = (flags) => {
+        const payload = { command: 'save_features', ...flags };
         return sendCommand(payload).then((msg) => {
             // reboot_required only ever comes back true when demo_mode
             // itself just changed (see save_features, command_handlers.cpp)
@@ -2792,8 +3059,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (msg && msg.reboot_required) {
                 confirmReboot(
                     `Demo Mode ${payload.demo ? "enabled" : "disabled"}. The ESP32 must reboot to safely apply this change. Reboot now?`,
-                    sendReboot,
-                    () => { if (sourceEl) sourceEl.checked = !sourceEl.checked; }
+                    sendReboot
                 );
             }
             return msg;
@@ -2813,6 +3079,7 @@ document.addEventListener('DOMContentLoaded', () => {
         featuresDirty = dirty;
         if (btnSaveFeatures) btnSaveFeatures.disabled = !dirty;
         if (btnDiscardFeatures) btnDiscardFeatures.classList.toggle('hidden', !dirty);
+        updateUnsavedChanges();
     };
 
     const cfgDemoMode = document.getElementById('cfg-demo-mode');
@@ -2828,7 +3095,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const original = btnSaveFeatures.innerText;
             btnSaveFeatures.disabled = true;
             btnSaveFeatures.innerText = 'Saving…';
-            sendFeatureFlags(cfgDemoMode, cfgDemoMode.checked).then(() => {
+            sendFeatureFlags({ demo: cfgDemoMode.checked }).then(() => {
                 lastConfirmedDemo = cfgDemoMode.checked;
                 setFeaturesDirty(false);
                 btnSaveFeatures.innerText = 'Saved!';
@@ -2884,10 +3151,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 // the toggle so it isn't stranded disabled if they come
                 // back to this tab; switchTab() already re-syncs its
                 // checked state from the fresh pin data by then.
-                e.target.disabled = false;
+                e.target.disabled = !deviceAuthenticated;
                 return;
             }
-            e.target.disabled = false;
+            e.target.disabled = !deviceAuthenticated;
             // reboot_required mirrors save_features's own convention (see
             // sendFeatureFlags() above) — only true when this sensor's demo
             // state actually changed (see command_handlers.cpp), so
@@ -2895,16 +3162,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (msg && msg.reboot_required) {
                 confirmReboot(
                     `Demo Mode ${demo ? "enabled" : "disabled"} for this sensor. The ESP32 must reboot to safely apply this change. Reboot now?`,
-                    sendReboot,
-                    () => {
-                        e.target.checked = !demo;
-                        syncDemoToggleLabel(e.target.id, toggleLabelId);
-                    }
+                    sendReboot
                 );
             }
         }).catch((err) => {
             document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Demo Mode change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
-            e.target.disabled = false;
+            e.target.disabled = !deviceAuthenticated;
             if (currentTabId !== startedOnTabId) return; // stale — switchTab() already shows the real state for whatever tab is open now
             e.target.checked = !demo; // revert — the device never actually applied this
             syncDemoToggleLabel(e.target.id, toggleLabelId);
@@ -3005,5 +3268,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // initialization" (a TDZ error), which aborts the rest of this handler
     // and silently kills every event listener registered after it,
     // including the login/setup buttons and the eye-icon reveal toggles.
-    updateCalibrationGating();
+    refreshSensorStatuses();
+    renderCurrentReadings();
 });

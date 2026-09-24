@@ -26,7 +26,7 @@
 //     lastUpdated    timestamp — Firestore SERVER timestamp (fieldTransforms,
 //                                 not a device-clock value), refreshed on
 //                                 every successful upload.
-//     uptime_s       integer   — device's own millis()/1000, informational.
+//     uptime_s       integer   — measured seconds since this boot, informational.
 //     firmwareVersion string   — compile-time constant, see FIRMWARE_VERSION.
 //     <8 sensor fields>        — one per telemetry value below.
 //
@@ -57,12 +57,13 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <esp_timer.h>
 
 // Bumped by hand when firmware behavior meaningfully changes. Purely
 // informational for the Firestore document / downstream apps — nothing in
 // this firmware reads it back. Kept here (not config.h) since it is not a
 // runtime-configurable value and has no NVS-backed override.
-#define FIRMWARE_VERSION "1.1.0"
+#define FIRMWARE_VERSION "1.1.3"
 
 static String s_fbIdToken;
 static uint32_t s_fbTokenExpiryMs = 0; // millis() timestamp after which the cached token is considered stale
@@ -487,7 +488,13 @@ void firebaseUploadCycle()
     fields["deviceId"]["stringValue"] = docId;
     fields["status"]["stringValue"] = "Online"; // connectivity, not sensor health — see file header
     fields["firmwareVersion"]["stringValue"] = FIRMWARE_VERSION;
-    fields["uptime_s"]["integerValue"] = String(millis() / 1000);
+    // Read the board's elapsed time at upload, rather than deriving uptime
+    // from the configured upload interval. The 64-bit timer also avoids the
+    // millis() wrap after roughly 49 days of continuous operation.
+    char uptimeSeconds[24];
+    snprintf(uptimeSeconds, sizeof(uptimeSeconds), "%lld",
+             static_cast<long long>(esp_timer_get_time() / 1000000LL));
+    fields["uptime_s"]["integerValue"] = uptimeSeconds;
 
     if (haveTds)
         fields["tds_ppm"]["doubleValue"] = currentSensors.tds_ppm;

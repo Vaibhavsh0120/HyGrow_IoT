@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 r"""
-Regenerates data/fonts/material-symbols-outlined.woff2 and
+Regenerates data/fonts/symbols.woff2 and
 data/css/_icon-codepoints.css.
 
 --- Why this file looks the way it does (read before touching it) ---
@@ -290,7 +290,7 @@ def main():
     verify_codepoints_render("/tmp/_subset.woff2", codepoint_map)
 
     # Step 4: only now, having passed verification, write the real outputs.
-    out_font_path = "data/fonts/material-symbols-outlined.woff2"
+    out_font_path = "data/fonts/symbols.woff2"
     final = TTFont("/tmp/_subset.woff2")
     final.save(out_font_path)
     print(f"Wrote {out_font_path} ({os.path.getsize(out_font_path):,} bytes)")

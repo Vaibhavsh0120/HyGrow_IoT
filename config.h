@@ -173,9 +173,8 @@ enum SensorID
 // per-sensor hardware-layer fact rather than a UI-only concept: a sensor's
 // pin equals DEMO_MODE_PIN if and only if that sensor is currently sourcing
 // simulated data (see sensorPinIsDemo() in task_sensor.cpp). Any negative
-// value is already treated as "not a real GPIO, never conflicts" throughout
-// this codebase (see isForbiddenPin()/validatePinSet() in
-// command_handlers.cpp), so this slots into the existing pin-safety system
+// value is treated as "not a real GPIO, never conflicts" by pin_safety.h and
+// validatePinSet() in command_handlers.cpp, so it fits the pin-safety system
 // with zero risk of colliding with a real assignment. -42 is arbitrary but
 // memorable and unambiguous in logs/JSON payloads — it can never be mistaken
 // for a real GPIO number or for the "unset" sentinel some libraries use (-1).

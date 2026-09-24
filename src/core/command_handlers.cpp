@@ -5,7 +5,7 @@
 // for the full map of the split). Owns:
 //   - sendCmdAck(): the per-command ack every save/calibrate button in
 //     app.js's sendCommand() waits on before showing "Saved!"
-//   - isForbiddenPin()/validatePinSet(): the server-side pin safety net
+//   - validatePinSet(): the server-side pin safety net
 //     behind the client-side check in Settings (app.js) — the real boundary,
 //     since a hand-crafted WS message can skip the browser entirely
 //   - handleDeviceCommand(): every command name other than "auth"/
@@ -32,6 +32,7 @@
 #include "task_network.h"
 #include "task_network_internal.h"
 #include "state.h"
+#include "pin_safety.h"
 
 // Sends a per-command acknowledgement directly to the requesting client only
 // (never broadcast) — the frontend's real-ack save flow (app.js sendCommand())
@@ -69,16 +70,10 @@ void sendCmdAck(AsyncWebSocketClient *client, const String &cmd, bool ok, const 
 // currentConfig/NVS". Neither one is a substitute for enforceForbiddenPins()
 // in HyGrow_IoT.ino, which remains the last-resort boot-time guard.
 
-// True if `pin` is a reserved USB D-/D+ line. Any negative value (not a real
-// GPIO) is always fine — it simply can't match 19 or 20.
-static bool isForbiddenPin(int pin)
-{
-    return pin == 19 || pin == 20;
-}
-
-// Checks a proposed full set of sensor pins for GPIO19/20 use and for
-// duplicate assignments between different sensors. A negative value never
-// conflicts with anything (it isn't a real GPIO). Returns "" if the whole
+// Checks a proposed full set of sensor pins for out-of-range/reserved pins and
+// duplicate assignments. DEMO_MODE_PIN is the only non-GPIO value allowed:
+// other negative values could otherwise reach a sensor driver after reboot.
+// Returns "" if the whole
 // set is valid, or a human-readable reason naming the offending sensor(s)/
 // pin if not.
 struct PinCheckEntry
@@ -90,20 +85,31 @@ static String validatePinSet(PinCheckEntry entries[], int count)
 {
     for (int i = 0; i < count; i++)
     {
-        if (isForbiddenPin(entries[i].pin))
+        const int pin = entries[i].pin;
+        if (pin == DEMO_MODE_PIN)
+            continue;
+        if (pin < 1 || pin > 47 || (pin >= 22 && pin <= 37))
+            return String(entries[i].label) + " must use an exposed GPIO on this ESP32-S3 board.";
+        if (pin == 3 || pin == 45 || pin == 46)
+            return String(entries[i].label) + " uses a boot strapping pin; choose another GPIO.";
+        if (pin == 19 || pin == 20)
         {
-            return String(entries[i].label) + " is set to GPIO" + String(entries[i].pin) +
+            return String(entries[i].label) + " is set to GPIO" + String(pin) +
                    ", which is reserved for USB on this board.";
         }
+        if ((i == 0 || i == 2 || i == 4) && pin > 10)
+            return String(entries[i].label) + " is an analog input and needs an ADC1 pin (GPIO1-10).";
+        if (!sensorPinIsUsable(pin, i == 0 || i == 2 || i == 4))
+            return String(entries[i].label) + " cannot use this GPIO on the current board.";
     }
 
     for (int i = 0; i < count; i++)
     {
-        if (entries[i].pin < 0)
+        if (entries[i].pin == DEMO_MODE_PIN)
             continue;
         for (int j = i + 1; j < count; j++)
         {
-            if (entries[j].pin < 0)
+            if (entries[j].pin == DEMO_MODE_PIN)
                 continue;
             if (entries[i].pin == entries[j].pin)
             {
@@ -338,6 +344,20 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
             {proposedScl, "BH1750 SCL"},
             {proposedWlp, "Water Level Power"},
         };
+        const int currentPins[] = {
+            currentConfig.pin_tds, currentConfig.pin_dht, currentConfig.pin_ph,
+            currentConfig.pin_ds18b20, currentConfig.pin_wl, currentConfig.pin_lux_sda,
+            currentConfig.pin_lux_scl, currentConfig.pin_wl_power,
+        };
+        for (int i = 0; i < 8; ++i)
+        {
+            if (proposed[i].pin != currentPins[i] &&
+                (proposed[i].pin == DEMO_MODE_PIN || currentPins[i] == DEMO_MODE_PIN))
+            {
+                sendCmdAck(client, cmd, false, "A sensor in Demo Mode must be switched back to real hardware before editing its pin.");
+                return;
+            }
+        }
         String problem = validatePinSet(proposed, 8);
 
         if (problem.length() > 0)
@@ -367,6 +387,12 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
     }
     else if (cmd == "calibrate_ph")
     {
+        if (!currentConfig.sensor_enabled[S_PH] || currentConfig.pin_ph == DEMO_MODE_PIN ||
+            currentSensors.last_ok_ms[S_PH] == 0 || currentSensors.last_err[S_PH][0] != '\0')
+        {
+            sendCmdAck(client, cmd, false, "Wait for a healthy real pH reading before calibrating.");
+            return;
+        }
         float proposedOffset = doc["offset"] | currentConfig.ph_offset;
         float proposedSlope = doc["slope"] | currentConfig.ph_slope;
 
@@ -399,6 +425,12 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
     }
     else if (cmd == "calibrate_tds")
     {
+        if (!currentConfig.sensor_enabled[S_TDS] || currentConfig.pin_tds == DEMO_MODE_PIN ||
+            currentSensors.last_ok_ms[S_TDS] == 0 || currentSensors.last_err[S_TDS][0] != '\0')
+        {
+            sendCmdAck(client, cmd, false, "Wait for a healthy real TDS reading before calibrating.");
+            return;
+        }
         float proposedK = doc["tds_k"] | currentConfig.tds_k;
         // The client sends a K-factor, already computed from
         // target_ppm/current_ppm (see the pH wizard's TDS card in app.js) —
@@ -866,6 +898,47 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
 
         String sensor = doc["sensor"] | "";
         bool matched = true;
+
+        // Validate the final pinout before changing RAM or NVS. Resetting to
+        // a compiled default can collide with another sensor's reassigned
+        // GPIO, and an individually demo'd sensor must be switched back with
+        // save_sensor_demo so its real-pin mirror stays consistent.
+        PinCheckEntry resetPins[] = {
+            {currentConfig.pin_tds, "TDS"}, {currentConfig.pin_dht, "DHT22"},
+            {currentConfig.pin_ph, "pH"}, {currentConfig.pin_ds18b20, "DS18B20"},
+            {currentConfig.pin_wl, "Water Level Signal"},
+            {currentConfig.pin_lux_sda, "BH1750 SDA"},
+            {currentConfig.pin_lux_scl, "BH1750 SCL"},
+            {currentConfig.pin_wl_power, "Water Level Power"},
+        };
+        if (sensor == "tds") resetPins[0].pin = PIN_TDS;
+        else if (sensor == "dht") resetPins[1].pin = PIN_DHT;
+        else if (sensor == "ph") resetPins[2].pin = PIN_PH;
+        else if (sensor == "wt") resetPins[3].pin = PIN_DS18B20;
+        else if (sensor == "wl") { resetPins[4].pin = PIN_WL; resetPins[7].pin = PIN_WL_PWR; }
+        else if (sensor == "light") { resetPins[5].pin = PIN_LUX_SDA; resetPins[6].pin = PIN_LUX_SCL; }
+        else
+        {
+            sendCmdAck(client, cmd, false, "Unknown sensor id '" + sensor + "'");
+            return;
+        }
+        const int oldPins[] = {currentConfig.pin_tds, currentConfig.pin_dht, currentConfig.pin_ph,
+                               currentConfig.pin_ds18b20, currentConfig.pin_wl, currentConfig.pin_lux_sda,
+                               currentConfig.pin_lux_scl, currentConfig.pin_wl_power};
+        for (int i = 0; i < 8; ++i)
+        {
+            if (resetPins[i].pin != DEMO_MODE_PIN && oldPins[i] == DEMO_MODE_PIN)
+            {
+                sendCmdAck(client, cmd, false, "Turn off this sensor's Demo Mode before resetting its pin.");
+                return;
+            }
+        }
+        String resetProblem = validatePinSet(resetPins, 8);
+        if (resetProblem.length() > 0)
+        {
+            sendCmdAck(client, cmd, false, resetProblem);
+            return;
+        }
 
         // Resets the sensor's pin(s) to their compiled default AND
         // re-enables it — a one-click undo for both a bad manual pin edit

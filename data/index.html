@@ -76,7 +76,7 @@
     <!-- Fonts/Icons are self-hosted from data/fonts/ via @font-face in
          style.css. No network requests — this device may only ever be
          reachable over its own SoftAP with no internet uplink at all. -->
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=1.1.3">
 </head>
 <body class="bg-[#000000] text-on-background font-body-md h-screen w-screen overflow-hidden flex relative tracking-wide">
 
@@ -99,7 +99,10 @@
     <div id="auth-overlay" role="dialog" aria-modal="true" aria-label="Device authentication" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl">
 
         <!-- 1. Loading spinner -->
-        <div id="auth-spinner" class="hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col items-center gap-4">
+        <div id="auth-spinner" class="relative hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col items-center gap-4">
+            <button id="auth-spinner-close" type="button" aria-label="Close connecting screen and view offline dashboard" title="View offline dashboard" class="text-on-surface-variant hover:text-white" style="position:absolute;top:0.75rem;right:0.75rem;line-height:1;">
+                <span class="material-symbols-outlined" data-icon="close" aria-hidden="true"></span>
+            </button>
             <!-- 3-dot pulse-wave (chunk 4c) — see .hg-auth-loader in style.css
                  for why this replaced the old single-ring border-spin. -->
             <div class="hg-auth-loader" role="status" aria-label="Connecting">
@@ -194,7 +197,7 @@
             </div>
             <div class="flex flex-col gap-3">
                 <button id="btn-reboot-confirm-yes" class="w-full bg-primary-container text-on-primary-container font-label-md py-3 rounded-xl hover:opacity-90 transition-all">Reboot Now</button>
-                <button id="btn-reboot-confirm-later" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all">Not Now</button>
+                <button id="btn-reboot-confirm-later" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all">Reboot Later</button>
             </div>
         </div>
 
@@ -330,6 +333,32 @@
         style="padding-bottom: env(safe-area-inset-bottom, 0px);">
     </nav>
 
+    <div id="connection-notice" role="status" aria-live="polite" class="hidden liquid-glass rounded-2xl border border-white/10 p-4 text-white font-body-md"
+         style="position:fixed;top:1rem;right:1rem;z-index:90;max-width:min(24rem,calc(100vw - 2rem));"></div>
+
+    <button id="offline-preview-bar" type="button" class="hidden liquid-glass rounded-xl border border-error/50 px-3 py-2 text-white font-label-sm" style="position:fixed;top:calc(1rem + env(safe-area-inset-top, 0px));left:50%;transform:translateX(-50%);z-index:80;width:max-content;max-width:calc(100vw - 2rem);white-space:normal;text-align:center;">
+        Offline · Reconnecting · Details
+    </button>
+
+    <div id="unsaved-widget" class="hidden" style="position:fixed;right:1rem;bottom:calc(5.5rem + env(safe-area-inset-bottom, 0px));z-index:60;width:min(23rem,calc(100vw - 2rem));">
+        <div id="unsaved-panel" class="hidden liquid-glass rounded-2xl border border-white/20 p-4 text-white shadow-lg" style="margin-bottom:0.5rem;max-height:55vh;overflow-y:auto;">
+            <div class="font-label-md text-white" style="margin-bottom:0.25rem;">Unsaved settings</div>
+            <p class="font-label-sm text-on-surface-variant" style="margin-bottom:0.75rem;">Save or discard each section before leaving this device.</p>
+            <div id="unsaved-rows" class="flex flex-col gap-2">
+                <div id="unsaved-row-network" class="hidden flex items-center gap-2"><button type="button" data-review-group="network" class="flex-1 text-left text-white underline">Network</button><button type="button" data-save-group="network" class="text-primary">Save</button><button type="button" data-discard-group="network" class="text-on-surface-variant">Discard</button></div>
+                <div id="unsaved-row-password" class="hidden flex items-center gap-2"><button type="button" data-review-group="password" class="flex-1 text-left text-white underline">Password</button><button type="button" data-save-group="password" class="text-primary">Save</button><button type="button" data-discard-group="password" class="text-on-surface-variant">Discard</button></div>
+                <div id="unsaved-row-features" class="hidden flex items-center gap-2"><button type="button" data-review-group="features" class="flex-1 text-left text-white underline">Demo Mode</button><button type="button" data-save-group="features" class="text-primary">Save</button><button type="button" data-discard-group="features" class="text-on-surface-variant">Discard</button></div>
+                <div id="unsaved-row-cloud" class="hidden flex items-center gap-2"><button type="button" data-review-group="cloud" class="flex-1 text-left text-white underline">Cloud</button><button type="button" data-save-group="cloud" class="text-primary">Save</button><button type="button" data-discard-group="cloud" class="text-on-surface-variant">Discard</button></div>
+                <div id="unsaved-row-pinout" class="hidden flex items-center gap-2"><button type="button" data-review-group="pinout" class="flex-1 text-left text-white underline">Hardware</button><button type="button" data-save-group="pinout" class="text-primary">Save</button><button type="button" data-discard-group="pinout" class="text-on-surface-variant">Discard</button></div>
+                <div id="unsaved-row-timing" class="hidden flex items-center gap-2"><button type="button" data-review-group="timing" class="flex-1 text-left text-white underline">Timing</button><button type="button" data-save-group="timing" class="text-primary">Save</button><button type="button" data-discard-group="timing" class="text-on-surface-variant">Discard</button></div>
+            </div>
+        </div>
+        <button id="unsaved-toggle" type="button" aria-expanded="false" aria-controls="unsaved-panel" class="liquid-glass rounded-2xl border border-primary px-4 py-3 text-white font-label-md shadow-lg" style="width:max-content;max-width:100%;margin-left:auto;display:flex;align-items:center;justify-content:center;gap:0.5rem;">
+            <span class="material-symbols-outlined" data-icon="edit_note" aria-hidden="true"></span>
+            <span id="unsaved-count">Unsaved changes</span>
+        </button>
+    </div>
+
     <!-- MAIN CANVAS -->
     <!-- Left margin only reserves space for #sideNav at lg (moved from md —
          see the #sideNav/#bottomNav comments above); below lg there's no
@@ -367,11 +396,12 @@
                         <span class="font-label-sm text-label-sm text-secondary font-bold tracking-widest">DEMO MODE</span>
                     </div>
                     <div class="flex items-center gap-2 liquid-glass px-4 py-2 rounded-2xl justify-center">
-                        <span id="vital-link-dot" class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
-                        <span id="vital-link-text" aria-live="polite" class="font-label-sm text-label-sm text-secondary">LIVE SYS.LINK</span>
+                        <span id="vital-link-dot" class="w-2 h-2 rounded-full bg-error"></span>
+                        <span id="vital-link-text" aria-live="polite" class="font-label-sm text-label-sm text-error">OFFLINE</span>
                     </div>
                 </div>
             </header>
+            <p class="font-label-sm text-label-sm text-on-surface-variant" style="margin:0.5rem 0 1rem;">Sensor status: <span class="hg-legend-dot hg-dot-live"></span> Live <span class="hg-legend-dot hg-dot-demo"></span> Demo <span class="hg-legend-dot hg-dot-error"></span> Read error <span class="hg-legend-dot hg-dot-muted"></span> Off or offline</p>
 
             <!-- Vitals Row -->
             <div class="grid grid-cols-2 md:grid-cols-3 gap-4 md:gap-6">
@@ -420,8 +450,8 @@
                                  tds_fake_wt_comp (updateTelemetry() below).
                                  Hidden by default; toggled in JS, never CSS,
                                  same pattern as #demo-mode-badge. -->
-                            <span id="dash-tds-fakewt-badge" class="hidden material-symbols-outlined text-[16px] text-secondary" title="Compensated using a placeholder water temperature — Water Temp is in demo mode" data-icon="science"></span>
-                            <span id="dash-dot-tds" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
+                            <span id="dash-tds-fakewt-badge" class="hidden material-symbols-outlined text-[16px] text-secondary" title="TDS used neutral 25°C compensation because a real water temperature was unavailable" data-icon="science"></span>
+                            <span id="dash-dot-tds" class="w-2 h-2 rounded-full bg-white/30" title="Waiting for device"></span>
                         </span>
                     </div>
                     <div class="flex-1 flex items-end">
@@ -431,7 +461,7 @@
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="6">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="science"></span> pH Level</span>
-                        <span id="dash-dot-ph" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
+                        <span id="dash-dot-ph" class="w-2 h-2 rounded-full bg-white/30" title="Waiting for device"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-ph">--</span></div>
@@ -440,7 +470,7 @@
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="2">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="thermostat"></span> Air Temp</span>
-                        <span id="dash-dot-atemp" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
+                        <span id="dash-dot-atemp" class="w-2 h-2 rounded-full bg-white/30" title="Waiting for device"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-atemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
@@ -449,7 +479,7 @@
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="2">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="cloud"></span> Humidity</span>
-                        <span id="dash-dot-hum" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
+                        <span id="dash-dot-hum" class="w-2 h-2 rounded-full bg-white/30" title="Waiting for device"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-hum">--</span> <span class="text-headline-md text-white/50 ml-1">%</span></div>
@@ -458,7 +488,7 @@
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="3">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="device_thermostat"></span> Water Temp</span>
-                        <span id="dash-dot-wtemp" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
+                        <span id="dash-dot-wtemp" class="w-2 h-2 rounded-full bg-white/30" title="Waiting for device"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-wtemp">--</span> <span class="text-headline-md text-white/50 ml-1">°C</span></div>
@@ -467,7 +497,7 @@
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="4">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="light_mode"></span> Light</span>
-                        <span id="dash-dot-lux" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
+                        <span id="dash-dot-lux" class="w-2 h-2 rounded-full bg-white/30" title="Waiting for device"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-lux">--</span> <span class="text-headline-md text-white/50 ml-1">lx</span></div>
@@ -476,7 +506,7 @@
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group" data-goto-tab="5">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="waves"></span> Tank Level</span>
-                        <span id="dash-dot-wl" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
+                        <span id="dash-dot-wl" class="w-2 h-2 rounded-full bg-white/30" title="Waiting for device"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-secondary"><span id="dash-val-wl">--</span> <span class="text-headline-md text-white/50 ml-1">%</span></div>
@@ -485,7 +515,7 @@
                 <div class="liquid-glass rounded-3xl p-4 sm:p-6 flex flex-col gap-2 sm:gap-4 h-36 sm:h-48 relative group">
                     <div class="flex justify-between items-center">
                         <span class="font-label-md text-label-md text-white flex items-center gap-2"><span class="material-symbols-outlined" data-icon="air"></span> VPD</span>
-                        <span id="dash-dot-vpd" class="w-2 h-2 rounded-full bg-secondary animate-pulse" title="Live"></span>
+                        <span id="dash-dot-vpd" class="w-2 h-2 rounded-full bg-white/30" title="Waiting for device"></span>
                     </div>
                     <div class="flex-1 flex items-end">
                         <div class="font-display-lg-mobile text-primary"><span id="dash-val-vpd">--</span> <span class="text-headline-md text-white/50 ml-1">kPa</span></div>
@@ -503,6 +533,7 @@
                         <span id="sensor-name">Sensor Details</span>
                     </h2>
                     <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">GPIO PIN: <span class="text-primary" id="sensor-pin">--</span></p>
+                    <p id="sensor-status" class="hg-sensor-status" role="status">Device offline</p>
                 </div>
                 <div class="flex flex-wrap items-center gap-4">
                     <button id="btn-export-sensor-csv" class="liquid-glass text-white font-label-md px-4 py-2 rounded-xl hover:bg-white/10 flex items-center gap-2 transition-all">
@@ -521,7 +552,7 @@
                             <input checked="" class="sr-only peer" id="sensor-toggle" type="checkbox"/>
                             <span class="hg-toggle-track"></span>
                         </label>
-                        <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
+                        <span class="ml-3 font-label-md text-label-md text-white">Enabled</span>
                         <span id="sensor-toggle-state" class="ml-3 font-label-sm text-label-sm text-secondary">ON</span>
                     </div>
                 </div>
@@ -550,6 +581,7 @@
                         <span>Air Temp &amp; Humidity</span>
                     </h2>
                     <p class="font-label-sm text-label-sm text-on-surface-variant mt-2">GPIO PIN: <span class="text-primary" id="dual-sensor-pin">--</span></p>
+                    <p id="dual-sensor-status" class="hg-sensor-status" role="status">Device offline</p>
                 </div>
                 <div class="flex flex-wrap items-center gap-4">
                     <div class="flex items-center">
@@ -565,13 +597,14 @@
                             <input checked="" class="sr-only peer" id="dual-sensor-toggle" type="checkbox"/>
                             <span class="hg-toggle-track"></span>
                         </label>
-                        <span class="ml-3 font-label-md text-label-md text-white">Enable Power</span>
+                        <span class="ml-3 font-label-md text-label-md text-white">Enabled</span>
                         <span id="dual-sensor-toggle-state" class="ml-3 font-label-sm text-label-sm text-secondary">ON</span>
                     </div>
                 </div>
             </header>
+            <div id="dual-sensor-error" class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md" role="alert"></div>
             <div class="flex-1 liquid-glass rounded-3xl p-6 md:p-8 flex flex-col relative min-h-[400px]">
-                <div class="absolute top-6 md:top-8 right-6 md:right-8 flex gap-8 z-10 text-right">
+                <div class="hg-dual-readouts absolute top-6 md:top-8 right-6 md:right-8 flex gap-8 z-10 text-right">
                     <div>
                         <div class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-1">Temperature</div>
                         <div class="font-display-lg text-display-lg text-secondary" id="sensor-dual-temp">-- <span class="text-headline-md text-white/50 ml-1">°C</span></div>
@@ -581,7 +614,7 @@
                         <div class="font-display-lg text-display-lg text-primary" id="sensor-dual-hum">-- <span class="text-headline-md text-white/50 ml-1">%</span></div>
                     </div>
                 </div>
-                <div class="flex-1 w-full mt-24 md:mt-16 relative">
+                <div class="hg-dual-chart flex-1 w-full mt-24 md:mt-16 relative">
                     <canvas class="w-full h-full absolute inset-0" id="telemetryChartDual"></canvas>
                 </div>
             </div>
@@ -604,7 +637,7 @@
                          app.js's updateCalibrationGating(). -->
                     <div id="cal-tds-disabled-banner" class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" role="alert">
                         <span class="material-symbols-outlined" aria-hidden="true" data-icon="power_off"></span>
-                        <span>TDS sensor is disabled. Enable it in Settings before calibrating.</span>
+                        <span id="cal-tds-unavailable-text">Connect the device and wait for a real TDS reading before calibrating.</span>
                     </div>
                     <div id="cal-tds-controls" class="flex flex-col gap-6">
                     <div class="bg-white/5 p-4 rounded-2xl border border-white/10">
@@ -647,7 +680,7 @@
                          Toggled in app.js's updateCalibrationGating(). -->
                     <div id="cal-ph-disabled-banner" class="hidden liquid-glass border-l-4 border-error p-4 rounded-2xl text-error font-body-md flex items-center gap-2 shadow-lg" role="alert">
                         <span class="material-symbols-outlined" aria-hidden="true" data-icon="power_off"></span>
-                        <span>pH sensor is disabled. Enable it in Settings before calibrating.</span>
+                        <span id="cal-ph-unavailable-text">Connect the device and wait for a real pH reading before calibrating.</span>
                     </div>
 
                     <div id="ph-wizard-controls" class="flex flex-col gap-6">
@@ -753,7 +786,7 @@
                 <div class="flex flex-col gap-4">
                     <h3 class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest">Access</h3>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-                    <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                    <div id="settings-network-card" class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Network Settings</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Configure device network connection (Wi-Fi).</p>
                         <div class="flex flex-col gap-2">
@@ -810,7 +843,7 @@
                          value straight from cfg-admin-pass-display itself
                          (see handleChangePassword() in app.js). Never written
                          back to the device by this field. -->
-                    <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                    <div id="settings-password-card" class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Change Password</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Update the admin password used to access this device's dashboard.</p>
                         <div class="flex flex-col gap-2">
@@ -933,7 +966,7 @@
                      rather than just moving the problem around. -->
                 <div class="flex flex-col gap-4">
                     <h3 class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest">Cloud</h3>
-                    <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                    <div id="settings-cloud-card" class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Cloud Provisioning</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Configure connection to Cloud Firestore.</p>
 
@@ -1035,9 +1068,9 @@
                      breakpoint, same rendered result as before. -->
                 <div class="flex flex-col gap-4">
                     <h3 class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest">Hardware</h3>
-                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                <div id="settings-pinout-card" class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                     <h3 class="font-headline-md text-headline-md text-white">Sensor Implementation Config</h3>
-                    <p class="text-on-surface-variant text-body-md mb-2">Manage physical hardware pinouts and status. GPIO numbers always stay saved and visible; use each card's <strong class="text-white font-bold">Enabled</strong> switch to turn a sensor on or off. Changes to pins and Enabled switches aren't sent to the device until you hit Save.</p>
+                    <p class="text-on-surface-variant text-body-md mb-2">Manage physical hardware pinouts and status. GPIO numbers stay saved and visible; use each card's <strong class="text-white font-bold">Enabled</strong> switch to turn a sensor on or off. TDS, pH, and water-level signals need ADC1 pins (GPIO1–10). USB, boot, flash/PSRAM, and status LED pins are reserved. Changes aren't sent until you hit Save.</p>
                     <!-- Client-side pin validation banner (Part 4.2) — hidden by
                          default, shown by app.js when any pin field is 19, 20, or
                          a forbidden/duplicate value. Styled consistently with the
@@ -1079,9 +1112,9 @@
                             </div>
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="text-on-surface-variant font-label-sm">Sig:</span>
-                                <input id="cfg-pin-wl" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="1"/>
+                                <input id="cfg-pin-wl" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="1"/>
                                 <span class="text-on-surface-variant font-label-sm">Pwr:</span>
-                                <input id="cfg-pin-wlp" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="5"/>
+                                <input id="cfg-pin-wlp" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="5"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
@@ -1098,9 +1131,9 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">SDA/SCL:</span>
-                                <input id="cfg-pin-sda" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="8"/>
+                                <input id="cfg-pin-sda" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="8"/>
                                 <span class="text-on-surface-variant font-label-sm">/</span>
-                                <input id="cfg-pin-scl" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="9"/>
+                                <input id="cfg-pin-scl" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="9"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
@@ -1117,7 +1150,7 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-tds" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="2"/>
+                                <input id="cfg-pin-tds" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="2"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
@@ -1134,7 +1167,7 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-dht" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="6"/>
+                                <input id="cfg-pin-dht" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="6"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
@@ -1151,7 +1184,7 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-ph" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="7"/>
+                                <input id="cfg-pin-ph" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="7"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
@@ -1168,7 +1201,7 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-wt" data-pin-field="1" min="0" max="48" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="4"/>
+                                <input id="cfg-pin-wt" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="4"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
@@ -1184,7 +1217,7 @@
                 </div>
 
                 <!-- Timing card -->
-                <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
+                <div id="settings-timing-card" class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                     <h3 class="font-headline-md text-headline-md text-white">Timing</h3>
                     <p class="text-on-surface-variant text-body-md mb-2">Adjust sample rate and push cadence. All values in milliseconds (2000&ndash;60000).</p>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1268,8 +1301,8 @@
     </main>
 
     <!-- Load Local Modular Scripts -->
-    <script src="js/charts.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/charts.js?v=1.1.3"></script>
+    <script src="js/app.js?v=1.1.3"></script>
 
 </body>
 </html>
