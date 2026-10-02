@@ -102,6 +102,9 @@
 
 // ---------- Pin assignments (ESP32-S3 N16R8) ----------
 // [NVS] pin_*  — changes take effect after reboot.
+// Jumper cable colors: red = 3V3 VCC, black = common GND.
+// Water-level VCC uses switched power controlled by GPIO5 instead of
+// continuous 3V3; see README.md for the power-switch wiring guidance.
 //
 // Pin numbers are always a plain GPIO assignment — they are NOT the on/off
 // switch for a sensor. Whether a sensor is actually read is controlled by
@@ -116,14 +119,14 @@
 // pinMode()/analogRead() on either one fights the USB stack for the same
 // lines and reads as a repeating "board disconnects on its own" while a
 // serial monitor is attached. Never assign a sensor/LED pin here to 19 or 20.
-#define DEFAULT_PIN_WL_SIG 1   // Water level analog signal
-#define DEFAULT_PIN_WL_PWR 5   // Water level power gate (reduces electrolysis)
-#define DEFAULT_PIN_I2C_SDA 8  // BH1750 SDA
-#define DEFAULT_PIN_I2C_SCL 9  // BH1750 SCL
-#define DEFAULT_PIN_TDS_SIG 2  // TDS analog signal (ADC1)
-#define DEFAULT_PIN_DHT22 6    // DHT22 data
+#define DEFAULT_PIN_WL_SIG 1   // White: water level S / analog output (ADC1)
+#define DEFAULT_PIN_WL_PWR 5   // Orange: water level power control (HIGH = on)
+#define DEFAULT_PIN_I2C_SDA 8  // Purple: BH1750 SDA
+#define DEFAULT_PIN_I2C_SCL 9  // Grey: BH1750 SCL
+#define DEFAULT_PIN_TDS_SIG 2  // Yellow: TDS A / analog output (ADC1)
+#define DEFAULT_PIN_DHT22 6    // Green: DHT22 DATA
 #define DEFAULT_PIN_PH_SIG 7   // pH analog signal (ADC1 — also avoids the ADC2/WiFi contention pin 20 had)
-#define DEFAULT_PIN_DS18B20 4  // OneWire bus for DS18B20
+#define DEFAULT_PIN_DS18B20 4  // Blue: DS18B20 DATA / DQ (OneWire)
 #define DEFAULT_PIN_RGB_LED 48 // WS2812 status LED
 
 // Compatibility aliases used by the runtime config layer.

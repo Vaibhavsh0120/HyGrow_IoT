@@ -21,19 +21,31 @@ calibration, and pin assignments are saved on the board across normal reboots.
 
 ## Default wiring
 
-| Sensor and example purchase link | Protocol | Default ESP32-S3 pins | Note |
-| --- | --- | --- | --- |
-| [Water level sensor](https://amzn.in/d/0cKf4nuQ) | Analog | GPIO1 signal, GPIO5 switched power | Power is switched on briefly for each reading to reduce corrosion. |
-| [BH1750 light sensor](https://amzn.in/d/09NZHxCq) | I2C | GPIO8 SDA, GPIO9 SCL | Ambient light sensor. |
-| [DFRobot Gravity analog TDS](https://robocraze.com/products/dfrobot-gravity-analog-tds-water-quality-sensor-meter-for-arduino) | Analog | GPIO2 signal | Readings are median-filtered in firmware. |
-| [Hexonix DHT22 AM2302](https://amzn.in/d/07a1dbpF) | Digital | GPIO6 data | Air temperature and humidity. |
-| [DFRobot Gravity Lab pH V2](https://robu.in/product/dfrobot-gravity-lab-grade-analog-ph-sensor-meter-kit-v2/) | Analog | GPIO7 signal | Starts disabled until enabled and calibrated; supports 3.3 V. |
-| [amiciSense DS18B20 kit](https://amzn.in/d/0exQsfGD) | OneWire | GPIO4 data | Waterproof water-temperature probe. |
-| Built-in RGB LED | NeoPixel | GPIO48 (reserved) | Onboard WS2812 status light. |
+| Sensor and example purchase link | Protocol | Default ESP32-S3 pins | Jumper cable colors | Note |
+| --- | --- | --- | --- | --- |
+| [Water level sensor](https://amzn.in/d/0cKf4nuQ) | Analog | GPIO1 S / analog output, GPIO5 power control | White signal, orange power control | Power is switched on briefly for each reading to reduce corrosion. |
+| [BH1750 light sensor](https://amzn.in/d/09NZHxCq) | I2C | GPIO8 SDA, GPIO9 SCL | Purple SDA, grey SCL | Ambient light sensor. |
+| [DFRobot Gravity analog TDS](https://robocraze.com/products/dfrobot-gravity-analog-tds-water-quality-sensor-meter-for-arduino) | Analog | GPIO2 A / analog output | Yellow | Readings are median-filtered in firmware. |
+| [Hexonix DHT22 AM2302](https://amzn.in/d/07a1dbpF) | Digital | GPIO6 DATA | Green | Air temperature and humidity. |
+| [DFRobot Gravity Lab pH V2](https://robu.in/product/dfrobot-gravity-lab-grade-analog-ph-sensor-meter-kit-v2/) | Analog | GPIO7 signal | — | Starts disabled until enabled and calibrated; supports 3.3 V. |
+| [amiciSense DS18B20 kit](https://amzn.in/d/0exQsfGD) | OneWire | GPIO4 DATA / DQ | Blue | Waterproof water-temperature probe. |
+| Built-in RGB LED | NeoPixel | GPIO48 (reserved) | — | Onboard WS2812 status light. |
 
-The sensor modules use a common 3.3 V supply and ground. The pH sensor starts
-disabled. You can change sensor pins and enabled states in **Settings → Sensor Implementation
-Config** after connecting to the device.
+Use **red** cables from **3V3** to sensor **VCC** (except switched water-level
+power), and **black** cables from **GND** to every sensor's **GND**. These
+colors are the project's jumper-cable convention; follow terminal labels
+when connecting a sensor's existing leads.
+
+Water-level VCC comes from the switched 3.3 V supply controlled by GPIO5.
+GPIO5 is HIGH during a reading and LOW otherwise. Use an active-high 3.3 V
+load switch to supply the sensor unless its current draw has been confirmed
+safe for direct GPIO powering.
+
+These GPIO values are the firmware defaults for first boot, factory reset,
+and each sensor's **Reset** action. Previously saved pin settings override
+the defaults. You can change sensor pins and enabled states in
+**Settings → Sensor Implementation Config** after connecting to the device;
+save and reboot to apply changes. The pH sensor starts disabled.
 
 <details>
 <summary>Which pins cannot be used for sensors?</summary>
