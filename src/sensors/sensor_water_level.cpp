@@ -6,7 +6,7 @@
  * pin (pin_wl_power). Most cheap water level strips are resistive and will
  * slowly corrode/electroplate their traces if left under constant voltage
  * while submerged. Gating power so the probe is only energized for the
- * ~10ms it takes to settle and take a reading — instead of being powered
+ * short burst it takes to settle and take a reading — instead of being powered
  * 24/7 — is the standard mitigation and is what pin_wl_power is for.
  * ============================================================================
  */
@@ -16,10 +16,13 @@
 // 12-bit ADC on ESP32-S3 (replaced with hardware mv)
 #define MAX_VOLTAGE_MV 3300.0f
 
-// Time for the probe to settle after power is applied, before we trust the
-// analog reading. 10ms is generous for the RC time constant of a resistive
-// strip probe with a few hundred ohms/kohm impedance.
-#define WL_SETTLE_MS 10
+// Give the switched probe and its output time to settle. The old single
+// conversion at 10ms could publish a power-on transient as an empty tank.
+// A short median-filtered burst rejects isolated ADC spikes without hiding
+// a genuinely empty tank or delaying changes across sensor cycles.
+#define WL_SETTLE_MS 50
+#define WL_SAMPLE_COUNT 9
+#define WL_SAMPLE_GAP_MS 2
 
 static bool s_wlReady = false;
 
@@ -54,16 +57,38 @@ float readWaterLevel()
         return NAN;
     }
 
-    // 2. Power the probe, wait for the reading to settle, sample, then cut
-    // power again immediately. This is the anti-corrosion measure: the probe
-    // is only ever live for ~WL_SETTLE_MS + one ADC read per sensor cycle,
-    // not continuously.
+    // 2. Keep every conversion inside one bounded power pulse. Discard the
+    // first conversion after power-on/channel switching, then collect a
+    // burst. Cut power before filtering; the nominal on-time is ~66ms plus
+    // ADC conversion time, with the probe off between sensor cycles.
     digitalWrite(currentConfig.pin_wl_power, HIGH);
     delay(WL_SETTLE_MS);
 
-    int raw_mv = analogReadMilliVolts(currentConfig.pin_wl);
+    (void)analogReadMilliVolts(currentConfig.pin_wl);
+    int samples[WL_SAMPLE_COUNT];
+    for (int i = 0; i < WL_SAMPLE_COUNT; i++)
+    {
+        samples[i] = analogReadMilliVolts(currentConfig.pin_wl);
+        if (i + 1 < WL_SAMPLE_COUNT)
+            delay(WL_SAMPLE_GAP_MS);
+    }
 
     digitalWrite(currentConfig.pin_wl_power, LOW);
+
+    // Sort this small stack buffer and use its middle value. Zero remains
+    // a valid sample: sustained dry readings must still reach the graph.
+    for (int i = 1; i < WL_SAMPLE_COUNT; i++)
+    {
+        int value = samples[i];
+        int j = i - 1;
+        while (j >= 0 && samples[j] > value)
+        {
+            samples[j + 1] = samples[j];
+            j--;
+        }
+        samples[j + 1] = value;
+    }
+    int raw_mv = samples[WL_SAMPLE_COUNT / 2];
 
     // 3. Sanity check the raw ADC value. A dry/disconnected probe typically
     // floats near 0; a short or fully-submerged high-conductivity probe can
