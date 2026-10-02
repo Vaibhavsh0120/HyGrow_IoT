@@ -94,6 +94,26 @@ The dashboard and firmware are uploaded separately. If you only upload the
 firmware, the web page may still be an older version. The board keeps saved
 settings in NVS across normal reboots.
 
+### PlatformIO troubleshooting
+
+The project pins Espressif32 7.1.3 and the library versions below.
+If a build reports `sdkconfig.h: No such file or directory` and VS Code also
+reports missing ESP32 SDK folders, reinstall the incomplete framework package,
+then regenerate IntelliSense:
+
+```powershell
+pio pkg install -g -t "platformio/framework-arduinoespressif32@~4.20017.0" --force
+pio project init --ide vscode -e esp32-s3-n16r8
+pio run -e esp32-s3-n16r8
+```
+
+If VS Code repeatedly installs PlatformIO when opening the project, first
+check that your existing `platformio --version` works. In local workspace
+settings, turn off `platformio-ide.useBuiltinPIOCore` and set
+`platformio-ide.customPATH` to the directory containing that working CLI.
+Keep this machine-specific path in the ignored `.vscode/settings.json`.
+Reload the VS Code window after changing those settings.
+
 ### Using Arduino IDE
 
 Select **ESP32S3 Dev Module** with these board settings:
@@ -117,14 +137,14 @@ from `platformio.ini` automatically.
 
 | Library | Author | Version |
 | --- | --- | --- |
-| ESPAsyncWebServer | ESP32Async | 3.11.2 |
-| AsyncTCP | ESP32Async | 3.4.10 |
+| ESPAsyncWebServer | ESP32Async | 3.12.1 |
+| AsyncTCP | ESP32Async | 3.5.0 |
 | ArduinoJson | Benoit Blanchon | 7.4.3 |
 | Adafruit NeoPixel | Adafruit | 1.15.5 |
 | Adafruit Unified Sensor | Adafruit | 1.1.15 |
 | DHT sensor library | Adafruit | 1.4.7 |
-| DallasTemperature | Miles Burton | 3.11.0 |
-| OneWire | Paul Stoffregen | 2.3.7 |
+| DallasTemperature | Miles Burton | 4.0.6 |
+| OneWire | Paul Stoffregen | 2.3.8 |
 | BH1750 | Christopher Laws | 1.3.0 |
 
 Arduino CLI can compile with the matching board settings:
