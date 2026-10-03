@@ -35,10 +35,16 @@ const tabsData = {
 
 let currentTabId = 0;
 let isTerminalPaused = false;
+const terminalLogs = new HyGrowTerminal.LogBuffer(200);
+let terminalRenderedEntries = [];
+let terminalPausedEntries = [];
+let terminalPendingCount = 0;
+let terminalCleared = false;
 let globalConfigCache = {}; // Cache config data for CSV export
 let hasConfigSnapshot = false;
 let deviceAuthenticated = false;
 let lastTelemetry = null;
+let lastTelemetryReceivedAt = 0;
 
 // ------------------------------------------------------------------
 // Settings staging state (Part 5.9). Every Settings card whose Save
@@ -52,6 +58,7 @@ let lastTelemetry = null;
 // ------------------------------------------------------------------
 let lastConfirmedDemo = false;
 let featuresDirty = false;
+let featuresSubmitting = false;
 let lastConfirmedFbEnabled = false;
 let fbEnabledDirty = false;
 // Keyed by short sensor id (tds/dht/ph/wt/wl/light), matching S_EN_INDEX/
@@ -63,6 +70,7 @@ let lastConfirmedSensorEnabled = {};
 // updateConfigForm() from every config frame's msg.pins[].
 let lastConfirmedPins = {};
 let pinoutDirty = false; // true if ANY pin field OR ANY sensor-enable toggle differs from last-confirmed
+let pinoutSubmitting = false;
 
 const SETTINGS_GROUPS = {
     network: { card: 'settings-network-card', save: 'btn-save-wifi' },
@@ -137,6 +145,7 @@ function discardSettingsGroup(group) {
 
 // Chart Buffers (Keep last 20 readings for the UI graphs and CSV Export)
 const MAX_POINTS = 20;
+const sampleHistory = new HyGrowTelemetry.SampleHistory(MAX_POINTS);
 const sensorBuffers = {
     1: [], // TDS
     2: { hum: [], temp: [] }, // Dual (Air Temp/Hum)
@@ -152,61 +161,6 @@ let currentSensorCanvas = null;
 let currentSensorCtx = null;
 const canvasDual = document.getElementById('telemetryChartDual');
 const ctxDual = canvasDual ? canvasDual.getContext('2d') : null;
-
-// Mobile sidebar overlay — legacy/currently inert: #btn-mobile-menu (the
-// only trigger for setMobileNavOpen(true)) is permanently `hidden` in the
-// DOM (see its comment in index.html), so this never actually opens today.
-// #sideNav itself now only ever renders at the lg breakpoint (moved from
-// md — see the #sideNav/#bottomNav comments in index.html), below which
-// #bottomNav is the real navigation. Left in place rather than removed
-// since deleting it isn't part of this breakpoint fix's scope. Owns
-// opening/closing
-// #sideNav's `.hg-sidenav-mobile-open` class and #mobile-nav-scrim's
-// visibility together, so they can never drift out of sync with each other.
-function setMobileNavOpen(open) {
-    const nav = document.getElementById('sideNav');
-    const scrim = document.getElementById('mobile-nav-scrim');
-    const btn = document.getElementById('btn-mobile-menu');
-    if (!nav) return;
-    nav.classList.toggle('hg-sidenav-mobile-open', open);
-    if (scrim) scrim.classList.toggle('hidden', !open);
-    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    // Prevents the page behind the full-screen overlay from scrolling along
-    // with it on iOS — without this, a swipe that starts on the overlay can
-    // still rubber-band/scroll <main> underneath, which reads as the menu
-    // itself being broken/laggy.
-    document.body.classList.toggle('overflow-hidden', open);
-}
-
-function isMobileNavOpen() {
-    const nav = document.getElementById('sideNav');
-    return !!nav && nav.classList.contains('hg-sidenav-mobile-open');
-}
-
-function initMobileNav() {
-    const btnOpen = document.getElementById('btn-mobile-menu');
-    const btnClose = document.getElementById('btn-mobile-nav-close');
-    const scrim = document.getElementById('mobile-nav-scrim');
-
-    if (btnOpen) btnOpen.addEventListener('click', () => setMobileNavOpen(!isMobileNavOpen()));
-    if (btnClose) btnClose.addEventListener('click', () => setMobileNavOpen(false));
-    if (scrim) scrim.addEventListener('click', () => setMobileNavOpen(false));
-
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && isMobileNavOpen()) setMobileNavOpen(false);
-    });
-
-    // A resize that crosses back up into the lg desktop layout (e.g.
-    // rotating an iPhone in a stage-manager/external-display setup, or
-    // just a window resize on a browser dev-tools device toolbar) should
-    // never leave the overlay state stuck open and unreachable behind the
-    // now-fixed desktop sidebar — close it whenever the viewport is no
-    // longer in the mobile range this behavior applies to. Threshold moved
-    // to 1024 to match #sideNav's breakpoint (was 768/md).
-    window.addEventListener('resize', () => {
-        if (window.innerWidth >= 1024 && isMobileNavOpen()) setMobileNavOpen(false);
-    });
-}
 
 function initNavigation() {
     const navTabsContainer = document.getElementById('nav-tabs');
@@ -404,11 +358,6 @@ function switchTab(index, element) {
     // is purely additive, not a behavior change for them.
     if (!element) element = navTabsContainer.children[index];
 
-    // On the mobile overlay, selecting a page means "go there" — leaving the
-    // menu open over the freshly-switched page would just be in the way.
-    // No-op at md and up, where the sidebar was never in overlay mode.
-    if (isMobileNavOpen()) setMobileNavOpen(false);
-
     // Update Active Classes
     Array.from(navTabsContainer.children).forEach(child => {
         child.className = `${tabsData.baseStyle} ${tabsData.inactiveStyle}`;
@@ -477,10 +426,10 @@ function switchTab(index, element) {
         // screen until the next "data" frame arrives.
         const lastTemp = sensorBuffers[2].temp[sensorBuffers[2].temp.length - 1];
         const lastHum = sensorBuffers[2].hum[sensorBuffers[2].hum.length - 1];
-        document.getElementById('sensor-dual-temp').innerHTML = lastTemp !== undefined
+        document.getElementById('sensor-dual-temp').innerHTML = Number.isFinite(lastTemp)
             ? `${lastTemp.toFixed(1)} <span class="text-headline-md text-white/50 ml-1">°C</span>`
             : `-- <span class="text-headline-md text-white/50 ml-1">°C</span>`;
-        document.getElementById('sensor-dual-hum').innerHTML = lastHum !== undefined
+        document.getElementById('sensor-dual-hum').innerHTML = Number.isFinite(lastHum)
             ? `${lastHum.toFixed(0)} <span class="text-headline-md text-white/50 ml-1">%</span>`
             : `-- <span class="text-headline-md text-white/50 ml-1">%</span>`;
 
@@ -549,7 +498,7 @@ function switchTab(index, element) {
         // from the same buffer once the fresh canvas has real dimensions,
         // so only the numeric readout needs handling here.
         const bufferedVal = sensorBuffers[index] ? sensorBuffers[index][sensorBuffers[index].length - 1] : undefined;
-        document.getElementById('sensor-current-val').innerHTML = bufferedVal !== undefined
+        document.getElementById('sensor-current-val').innerHTML = Number.isFinite(bufferedVal)
             ? `${bufferedVal.toFixed(1)} <span class="text-headline-md text-white/50 ml-1">${tabsData.units[index]}</span>`
             : `-- <span class="text-headline-md text-white/50 ml-1">${tabsData.units[index]}</span>`;
         setTimeout(resizeCanvas, 50);
@@ -694,6 +643,30 @@ function showConnectionNotice(message) {
 // do anything), so callers that only ever branched on `if (confirm(...))`
 // port over unchanged. Reboot Later keeps the saved device state visible.
 let s_rebootConfirmHandler = null;
+let dialogReturnFocus = null;
+const appDialogIds = ['reboot-confirm', 'alert-modal', 'confirm-modal', 'prompt-modal'];
+
+function openAppDialog(id) {
+    const overlay = document.getElementById('app-dialog-overlay');
+    const modal = document.getElementById(id);
+    if (!overlay || !modal) return;
+    if (overlay.classList.contains('hidden')) dialogReturnFocus = document.activeElement;
+    appDialogIds.forEach(name => {
+        const panel = document.getElementById(name);
+        if (panel) { panel.classList.toggle('hidden', name !== id); panel.classList.toggle('flex', name === id); }
+    });
+    overlay.classList.remove('hidden');
+    document.querySelectorAll('main, #sideNav, #bottomNav').forEach(el => { el.inert = true; });
+    const focus = modal.querySelector?.('input') || modal.querySelector?.('[id$="cancel"], [id$="later"]') || modal.querySelector?.('button');
+    if (focus) focus.focus();
+}
+
+function closeAppDialog() {
+    document.getElementById('app-dialog-overlay')?.classList.add('hidden');
+    document.querySelectorAll('main, #sideNav, #bottomNav').forEach(el => { el.inert = false; });
+    if (dialogReturnFocus?.focus) dialogReturnFocus.focus();
+    dialogReturnFocus = null;
+}
 
 function confirmReboot(message, onConfirm) {
     const modal = document.getElementById('reboot-confirm');
@@ -703,12 +676,14 @@ function confirmReboot(message, onConfirm) {
     s_rebootConfirmHandler = onConfirm;
     modal.classList.remove('hidden');
     modal.classList.add('flex');
+    openAppDialog('reboot-confirm');
 }
 
 function closeRebootConfirm() {
     const modal = document.getElementById('reboot-confirm');
     if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
     s_rebootConfirmHandler = null;
+    closeAppDialog();
 }
 
 // ----------------------------------------------------------------------
@@ -739,11 +714,13 @@ function showAlertModal(message, isError) {
     if (title) title.innerText = isError ? 'Error' : 'Notice';
     modal.classList.remove('hidden');
     modal.classList.add('flex');
+    openAppDialog('alert-modal');
 }
 
 function closeAlertModal() {
     const modal = document.getElementById('alert-modal');
     if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+    closeAppDialog();
 }
 
 let s_confirmModalHandler = null;
@@ -764,6 +741,7 @@ function confirmModal(message, onConfirm, onCancel, opts) {
     s_confirmModalCancelHandler = onCancel || null;
     modal.classList.remove('hidden');
     modal.classList.add('flex');
+    openAppDialog('confirm-modal');
 }
 
 function closeConfirmModal() {
@@ -771,6 +749,7 @@ function closeConfirmModal() {
     if (modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
     s_confirmModalHandler = null;
     s_confirmModalCancelHandler = null;
+    closeAppDialog();
 }
 
 let s_promptModalHandler = null;
@@ -789,6 +768,7 @@ function promptModal(message, requiredText, onConfirm) {
     s_promptModalRequiredText = requiredText;
     modal.classList.remove('hidden');
     modal.classList.add('flex');
+    openAppDialog('prompt-modal');
     if (input) setTimeout(() => input.focus(), 50);
 }
 
@@ -799,6 +779,7 @@ function closePromptModal() {
     if (input) input.value = '';
     s_promptModalHandler = null;
     s_promptModalRequiredText = null;
+    closeAppDialog();
 }
 
 // Restart commands have no success acknowledgement: the device disconnects
@@ -1194,6 +1175,12 @@ function onMessage(event) {
     else if (msg.type === "data") updateTelemetry(msg);
     else if (msg.type === "config") updateConfigForm(msg);
     else if (msg.type === "log") updateTerminal(msg);
+    else if (msg.type === "log_batch" && Array.isArray(msg.entries)) {
+        const added = msg.entries.reduce((count, entry) => count + (terminalLogs.add(entry) ? 1 : 0), 0);
+        if (added) terminalCleared = false;
+        if (isTerminalPaused) { terminalPendingCount += added; updateTerminalSummary(); }
+        else renderTerminal();
+    }
 }
 
 
@@ -1250,7 +1237,7 @@ function updateVitals(msg) {
             fbText.innerText = `Last error: ${msg.firebase_last_error}`;
         } else {
             fbDot.classList.add('bg-white/30');
-            fbText.innerText = 'Never uploaded — check credentials, or enable Firebase Upload in Feature Flags';
+            fbText.innerText = 'No uploads yet. Check Firebase Upload and credentials in Settings → Cloud Provisioning.';
         }
     }
 }
@@ -1268,12 +1255,17 @@ const SENSOR_STATUS_LABELS = {
     disabled: 'Sensor disabled',
     error: 'Read error',
     waiting: 'Waiting for first reading',
+    stale: 'Reading out of date',
     demo: 'Demo reading',
     live: 'Live reading'
 };
 
 function sensorStatusForTab(index) {
     if (!deviceAuthenticated) return 'offline';
+    if (lastTelemetry?.sensorStatus) {
+        const names = { 1: 'tds', 2: 'dht', 3: 'water_temp', 4: 'light', 5: 'water_level', 6: 'ph' };
+        return HyGrowTelemetry.sampleState(lastTelemetry, names[index], Date.now() - lastTelemetryReceivedAt);
+    }
     if (tabsData.enabled[index] === false || tabsData.ok[index] === 0) return 'disabled';
     if (tabsData.ok[index] === 2) return 'error';
     if (tabsData.ok[index] !== 1) return 'waiting';
@@ -1287,7 +1279,7 @@ function refreshSensorStatuses() {
             const dot = document.getElementById(dotId);
             if (!dot) return;
             dot.classList.remove('bg-white/30', 'bg-secondary', 'bg-error', 'animate-pulse',
-                'hg-dot-live', 'hg-dot-demo', 'hg-dot-error', 'hg-dot-waiting', 'hg-dot-muted');
+                'hg-dot-live', 'hg-dot-demo', 'hg-dot-error', 'hg-dot-waiting', 'hg-dot-stale', 'hg-dot-muted');
             dot.classList.add(`hg-dot-${state === 'disabled' || state === 'offline' ? 'muted' : state}`);
             if (state === 'live') dot.classList.add('animate-pulse');
             dot.title = SENSOR_STATUS_LABELS[state];
@@ -1323,7 +1315,8 @@ function refreshSensorStatuses() {
     const errorMessages = {
         offline: 'Device offline. Live readings are unavailable while reconnecting.',
         disabled: 'Sensor disabled. Turn on Enable Power to read it again.',
-        error: 'Sensor enabled but not reading. Check wiring and the Terminal log.'
+        error: 'Sensor enabled but not reading. Check wiring and the Terminal log.',
+        stale: 'Reading out of date. Waiting for a new sensor sample.'
     };
     if (error) error.classList.toggle('hidden', !errorMessages[state]);
     if (errorText && errorMessages[state]) errorText.innerText = errorMessages[state];
@@ -1351,7 +1344,7 @@ function renderCurrentReadings() {
     const calTds = document.getElementById('cal-tds-raw');
     const calPh = document.getElementById('cal-ph-raw');
     if (calTds) calTds.innerText = sensorStatusForTab(1) === 'live' && Number.isFinite(msg.tds) ? msg.tds.toFixed(1) : '--';
-    if (calPh) calPh.innerText = sensorStatusForTab(6) === 'live' && Number.isFinite(msg.ph_val) ? msg.ph_val.toFixed(2) : '--';
+    if (calPh) calPh.innerText = sensorStatusForTab(6) === 'live' && Number.isFinite(msg.ph_voltage_mv) ? (msg.ph_voltage_mv / 1000).toFixed(3) + ' V' : '--';
 
     if (currentTabId >= 1 && currentTabId <= 6) {
         const state = sensorStatusForTab(currentTabId);
@@ -1371,7 +1364,17 @@ function renderCurrentReadings() {
 }
 
 function updateTelemetry(msg) {
+    const now = Date.now();
+    if (lastTelemetry && msg.bootId === lastTelemetry.bootId && msg.hardwareId === lastTelemetry.hardwareId &&
+        Number.isSafeInteger(msg.sampleSequence) && Number.isSafeInteger(lastTelemetry.sampleSequence)) {
+        if (msg.sampleSequence < lastTelemetry.sampleSequence) return;
+        if (msg.sampleSequence === lastTelemetry.sampleSequence && Number.isFinite(lastTelemetry.sampleAgeMs)) {
+            // Repeated pushes must not make an unchanged sample younger.
+            msg = { ...msg, sampleAgeMs: Math.max(msg.sampleAgeMs || 0, lastTelemetry.sampleAgeMs + Math.max(0, now - lastTelemetryReceivedAt)) };
+        }
+    }
     lastTelemetry = msg;
+    lastTelemetryReceivedAt = now;
 
     // Color each dashboard tile's status dot from msg.s_ok[] (see S_EN_INDEX
     // below for the SensorID-order mapping; VPD has no sensor of its own —
@@ -1391,22 +1394,17 @@ function updateTelemetry(msg) {
     refreshSensorStatuses();
     renderCurrentReadings();
 
-    const pushBuffer = (arr, val) => {
-        arr.push(val);
-        if(arr.length > MAX_POINTS) arr.shift();
-    };
-
-    const pushHealthy = (index, arr, value) => {
-        if (['live', 'demo'].includes(sensorStatusForTab(index)) && Number.isFinite(value)) pushBuffer(arr, value);
-    };
-    pushHealthy(1, sensorBuffers[1], msg.tds);
-    pushHealthy(2, sensorBuffers[2].hum, msg.hum);
-    pushHealthy(2, sensorBuffers[2].temp, msg.temp);
-    pushHealthy(3, sensorBuffers[3], msg.w_t);
-    pushHealthy(4, sensorBuffers[4], msg.lux);
-    pushHealthy(5, sensorBuffers[5], msg.wl_percent);
-    pushHealthy(6, sensorBuffers[6], msg.ph_val);
-    pushHealthy(2, sensorBuffers[7], msg.vpd_kpa);
+    if (sampleHistory.add(msg)) {
+        const values = field => sampleHistory.rows.map(row => row[field]);
+        sensorBuffers[1] = values('tds_ppm');
+        sensorBuffers[2].hum = values('humidity');
+        sensorBuffers[2].temp = values('temp_c');
+        sensorBuffers[3] = values('water_temp_c');
+        sensorBuffers[4] = values('lux');
+        sensorBuffers[5] = values('wl_percent');
+        sensorBuffers[6] = values('ph_val');
+        sensorBuffers[7] = values('vpd_kpa');
+    }
 
     const sensorPage = document.getElementById('page-sensor');
     const dualSensorPage = document.getElementById('page-dual-sensor');
@@ -1575,7 +1573,7 @@ function recomputePinoutDirty() {
     // don't re-enable Save just because something's unsaved if the whole
     // card is locked. A pin-validation problem also always wins.
     const demoLocked = !!(document.getElementById('pinout-demo-lock') && !document.getElementById('pinout-demo-lock').classList.contains('hidden'));
-    btnSavePins.disabled = demoLocked || !lastPinValidationOk || !dirty;
+    btnSavePins.disabled = pinoutSubmitting || demoLocked || !lastPinValidationOk || !dirty;
     if (btnDiscardPins) btnDiscardPins.classList.toggle('hidden', !dirty);
 }
 
@@ -1889,6 +1887,7 @@ function updateCalibrationGating() {
         if (state === 'disabled') return `${sensor} is disabled. Enable it in Settings before calibrating.`;
         if (state === 'error') return `${sensor} is not reading. Check the wiring and Terminal log before calibrating.`;
         if (state === 'waiting') return `Waiting for the first real ${sensor} reading.`;
+        if (state === 'stale') return `${sensor} reading is out of date. Wait for a fresh reading before calibrating.`;
         return 'Device offline. Reconnect before calibrating.';
     };
 
@@ -1934,42 +1933,100 @@ function escapeHtml(str) {
 const TERMINAL_AUTOSCROLL_THRESHOLD_PX = 40;
 
 function updateTerminal(msg) {
-    if (isTerminalPaused) return;
+    if (!terminalLogs.add(msg)) return;
+    terminalCleared = false;
+    if (isTerminalPaused) { terminalPendingCount++; updateTerminalSummary(); return; }
+    renderTerminal();
+}
+
+function updateTerminalSummary() {
+    const summary = document.getElementById('terminal-summary');
+    if (!summary) return;
+    const warnings = terminalLogs.entries.filter(entry => entry.level === 'warn').reduce((n, entry) => n + entry.count, 0);
+    const errors = terminalLogs.entries.filter(entry => entry.level === 'error').reduce((n, entry) => n + entry.count, 0);
+    summary.innerText = isTerminalPaused
+        ? `Paused${terminalPendingCount ? ` · ${terminalPendingCount} new message${terminalPendingCount === 1 ? '' : 's'}` : ''}`
+        : `${terminalRenderedEntries.length} of ${terminalLogs.entries.length} entries · ${warnings} warnings · ${errors} errors`;
+}
+
+function renderTerminal(forceBottom = false) {
     const term = document.getElementById('terminal-output');
-    if(!term) return;
-
-    // Was the view already at (or very near) the bottom BEFORE this line is
-    // appended? Have to read this before appending/trimming below, since
-    // both change scrollHeight out from under us.
-    const wasAtBottom = (term.scrollHeight - term.scrollTop - term.clientHeight) <= TERMINAL_AUTOSCROLL_THRESHOLD_PX;
-
-    if(term.children.length > 100) term.removeChild(term.firstChild);
-
-    const log = document.createElement('div');
-    const colorClass = msg.core === 0 ? "log-core-0" : "log-core-1";
-    const levelClass = msg.level === "error" ? "text-error font-bold" : (msg.level === "warn" ? "text-secondary" : "");
-    log.innerHTML = `<span class="${colorClass} opacity-80">[CORE ${msg.core}]</span> <span class="${levelClass}">${escapeHtml(msg.msg)}</span>`;
-    term.appendChild(log);
-
-    // Only follow the log automatically if the user was already at the
-    // bottom — this used to force-scroll unconditionally, which yanked the
-    // view away from anyone who'd scrolled up to read earlier output.
-    // Someone who scrolled away sees a "New logs" pill instead (below)
-    // rather than being pulled back down mid-read.
+    if (!term) return;
+    const wasAtBottom = forceBottom || (term.scrollHeight - term.scrollTop - term.clientHeight) <= TERMINAL_AUTOSCROLL_THRESHOLD_PX;
+    const oldScroll = term.scrollTop;
+    const entries = isTerminalPaused ? terminalPausedEntries : terminalLogs.entries;
+    const level = document.getElementById('terminal-level')?.value || 'all';
+    const query = document.getElementById('terminal-search')?.value || '';
+    // Pause freezes rows, including repeat counts, while incoming events stay bounded.
+    const view = new HyGrowTerminal.LogBuffer(200);
+    view.entries = entries;
+    terminalRenderedEntries = view.matching(level, query).map(entry => ({ ...entry }));
+    const fragment = document.createDocumentFragment();
+    if (!terminalRenderedEntries.length) {
+        const empty = document.createElement('p');
+        empty.className = 'terminal-empty';
+        empty.textContent = entries.length
+            ? 'No matching messages. Clear the search or choose All messages.'
+            : (terminalCleared ? 'Log cleared. New device messages will appear here.' : 'Device messages appear here when connected.');
+        fragment.appendChild(empty);
+    }
+    terminalRenderedEntries.forEach(entry => {
+        const row = document.createElement('div');
+        row.className = `terminal-row terminal-${entry.level}`;
+        const time = document.createElement('span');
+        time.className = 'terminal-time';
+        time.textContent = HyGrowTerminal.formatUptime(entry.uptimeMs);
+        time.title = `${entry.source} · time since device startup`;
+        const severity = document.createElement('span');
+        severity.className = 'terminal-level-label';
+        severity.textContent = HyGrowTerminal.levelNames[entry.level];
+        const message = document.createElement('span');
+        message.className = 'terminal-message';
+        message.textContent = entry.msg;
+        if (entry.count > 1) {
+            const count = document.createElement('span');
+            count.className = 'terminal-repeat';
+            count.textContent = `Repeated ${entry.count} times`;
+            message.appendChild(count);
+        }
+        row.append(time, severity, message);
+        fragment.appendChild(row);
+    });
+    term.replaceChildren(fragment);
+    updateTerminalSummary();
     const jumpBtn = document.getElementById('btn-term-jump-latest');
     if (wasAtBottom) {
         term.scrollTop = term.scrollHeight;
-        if (jumpBtn) jumpBtn.classList.add('hidden');
-    } else if (jumpBtn) {
-        jumpBtn.classList.remove('hidden');
-        jumpBtn.classList.add('flex');
+    } else {
+        term.scrollTop = oldScroll;
     }
+    if (jumpBtn) jumpBtn.classList.toggle('hidden', wasAtBottom);
 }
 
 // ============================================================================
 // 4. EVENT LISTENERS & DOM BINDING
 // ============================================================================
 document.addEventListener('DOMContentLoaded', () => {
+    setInterval(() => {
+        if (lastTelemetry) { refreshSensorStatuses(); renderCurrentReadings(); }
+    }, 1000);
+    document.addEventListener('keydown', (event) => {
+        const overlay = document.getElementById('app-dialog-overlay');
+        if (!overlay || overlay.classList.contains('hidden')) return;
+        const modal = appDialogIds.map(id => document.getElementById(id)).find(el => el && !el.classList.contains('hidden'));
+        if (!modal) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            const cancel = modal.querySelector('[id$="cancel"], [id$="later"], #btn-alert-modal-ok');
+            if (cancel) cancel.click();
+        } else if (event.key === 'Tab') {
+            const controls = Array.from(modal.querySelectorAll('button, input, [tabindex="0"]')).filter(el => !el.disabled && el.getClientRects().length);
+            if (!controls.length) return;
+            const first = controls[0], last = controls[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        }
+    });
     document.getElementById('auth-spinner-close')?.addEventListener('click', () => {
         offlinePreviewDismissed = true;
         showAuthPanel('spinner');
@@ -2008,7 +2065,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initNavigation();
     initBottomNav();
     initSensorCardLinks();
-    initMobileNav();
     initWebSocket();
     setTimeout(resizeCanvas, 100);
 
@@ -2342,14 +2398,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 col: document.getElementById('cfg-fb-col').value
             };
             const wasDirty = fbEnabledDirty;
+            const submittedFbEnabled = !!cfgFbEnabled?.checked;
             const sendCredentials = () => runSaveButton(btnSaveFb, payload, "Credentials Saved", "Save Credentials");
             if (wasDirty && cfgFbEnabled) {
                 const original = btnSaveFb.innerText;
                 btnSaveFb.disabled = true;
                 btnSaveFb.innerText = 'Saving…';
-                sendFeatureFlags({ fb_en: cfgFbEnabled.checked }).then(() => {
-                    lastConfirmedFbEnabled = cfgFbEnabled.checked;
-                    setFbEnabledDirty(false);
+                sendFeatureFlags({ fb_en: submittedFbEnabled }).then(() => {
+                    lastConfirmedFbEnabled = submittedFbEnabled;
+                    setFbEnabledDirty(cfgFbEnabled.checked !== lastConfirmedFbEnabled);
                     btnSaveFb.disabled = false;
                     btnSaveFb.innerText = original;
                     sendCredentials();
@@ -2454,8 +2511,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 pin_scl: parseInt(document.getElementById('cfg-pin-scl').value)
             };
             if (wlpEl) pinsPayload.pin_wlp = parseInt(wlpEl.value);
+            const submittedPins = Object.fromEntries(Object.keys(PIN_FIELD_LABELS).map(id => [id, Number(document.getElementById(id)?.value)]));
+            const submittedEnabled = Object.fromEntries(dirtySensorIds.map(id => [id, document.getElementById('cfg-sensor-enabled-' + id).checked]));
 
             const original = btnSavePins.innerText;
+            pinoutSubmitting = true;
             btnSavePins.disabled = true;
             if (btnDiscardPins) btnDiscardPins.disabled = true;
             btnSavePins.innerText = 'Saving…';
@@ -2467,31 +2527,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 return chain.then(() => sendCommand({
                     command: "save_sensor_enabled",
                     sensor: sensorId,
-                    enabled: document.getElementById('cfg-sensor-enabled-' + sensorId).checked
-                }));
+                    enabled: submittedEnabled[sensorId]
+                }).then(() => { lastConfirmedSensorEnabled[sensorId] = submittedEnabled[sensorId]; }));
             }, Promise.resolve())
-                .then(() => pinsChanged ? sendCommand(pinsPayload) : null)
+                .then(() => pinsChanged ? sendCommand(pinsPayload).then(() => { Object.assign(lastConfirmedPins, submittedPins); }) : null)
                 .then(() => {
                     // Both kinds of field are now confirmed — pull the
                     // just-saved checkbox states into lastConfirmedSensorEnabled
                     // directly rather than waiting for the next config frame,
                     // same as how Feature Flags' Save handler above updates
                     // lastConfirmedDemo immediately after its own send.
-                    dirtySensorIds.forEach((sensorId) => {
-                        lastConfirmedSensorEnabled[sensorId] = document.getElementById('cfg-sensor-enabled-' + sensorId).checked;
-                    });
-                    Object.keys(PIN_FIELD_LABELS).forEach((id) => {
-                        const el = document.getElementById(id);
-                        if (el) lastConfirmedPins[id] = parseInt(el.value, 10);
-                    });
+                    pinoutSubmitting = false;
                     if (btnDiscardPins) btnDiscardPins.disabled = false;
                     btnSavePins.innerText = original;
                     recomputePinoutDirty();
                     confirmReboot("Hardware settings saved. The ESP32 must reboot to apply them safely. Reboot now?", sendReboot);
                 })
                 .catch((err) => {
+                    pinoutSubmitting = false;
                     if (btnDiscardPins) btnDiscardPins.disabled = false;
-                    btnSavePins.disabled = false;
+                    recomputePinoutDirty();
                     btnSavePins.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
                     setTimeout(() => {
                         btnSavePins.innerText = original;
@@ -2582,6 +2637,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // ------------------------------------------------------------------
     let ph7Volt = null;
     let ph4Volt = null;
+    let phCaptureIdentity = null;
+    let ph7Sequence = null;
     let phWizardDirty = false; // true once Step 1 starts, false again after a successful save (or a full reset)
 
     function phWizardBeforeUnload(e) {
@@ -2623,6 +2680,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function resetPhWizard() {
         ph7Volt = null;
         ph4Volt = null;
+        phCaptureIdentity = null;
+        ph7Sequence = null;
         phWizardDirty = false;
         setPhStepUI(1);
     }
@@ -2637,11 +2696,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // but guard the handler itself too in case this fires from a
             // stale click queued just before the sensor was disabled.
             if (sensorStatusForTab(6) !== 'live') { updateCalibrationGating(); return; }
-            const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
-            if (isNaN(livePh)) { showAlertModal("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected.", true); return; }
-            const off = globalConfigCache.ph_off || 0.0;
-            const slope = globalConfigCache.ph_slope || 1.0;
-            ph7Volt = (livePh - off) / slope;
+            const rawMv = lastTelemetry?.ph_voltage_mv;
+            if (!Number.isFinite(rawMv) || rawMv <= 0 || rawMv > 3300) { showAlertModal("A fresh raw probe voltage is required. Check the pH sensor and its wiring.", true); return; }
+            ph7Volt = rawMv / 1000;
+            phCaptureIdentity = `${lastTelemetry.hardwareId}:${lastTelemetry.bootId}`;
+            ph7Sequence = lastTelemetry.sampleSequence;
             phWizardDirty = true;
             document.querySelectorAll('#cal-ph-7-val').forEach((el) => { el.innerText = ph7Volt.toFixed(3) + " V"; });
             setPhStepUI(2);
@@ -2652,18 +2711,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if(btnCalPh4) {
         btnCalPh4.addEventListener('click', () => {
             if (sensorStatusForTab(6) !== 'live') { updateCalibrationGating(); return; }
-            const livePh = parseFloat(document.getElementById('cal-ph-raw').innerText);
-            if (isNaN(livePh)) { showAlertModal("No live pH reading yet — make sure the pH sensor is enabled and the probe is connected.", true); return; }
             if (ph7Volt === null) { setPhStepUI(1); return; } // shouldn't happen, but don't let Step 2 run without Step 1
-            const off = globalConfigCache.ph_off || 0.0;
-            const slope = globalConfigCache.ph_slope || 1.0;
-            ph4Volt = (livePh - off) / slope;
-
-            if (ph4Volt === ph7Volt) {
-                showAlertModal("The 4.0 reading matches the 7.0 reading exactly — the probe may still be in the first solution. Rinse it and place it in the pH 4.0 buffer before capturing.", true);
+            if (phCaptureIdentity !== `${lastTelemetry.hardwareId}:${lastTelemetry.bootId}`) {
+                resetPhWizard();
+                showAlertModal('The device restarted. Capture both buffer voltages again.', true);
+                return;
+            }
+            if (lastTelemetry.sampleSequence <= ph7Sequence) {
+                showAlertModal('Wait for a new sensor sample after moving the probe into the pH 4.0 buffer.', true);
+                return;
+            }
+            const rawMv = lastTelemetry?.ph_voltage_mv;
+            try { HyGrowTelemetry.fitPh(ph7Volt * 1000, rawMv); }
+            catch (err) {
+                showAlertModal(err.message + ' Rinse the probe and wait for it to stabilize in the pH 4.0 buffer.', true);
                 ph4Volt = null;
                 return;
             }
+            ph4Volt = rawMv / 1000;
 
             document.querySelectorAll('#cal-ph-4-val').forEach((el) => { el.innerText = ph4Volt.toFixed(3) + " V"; });
             const review7 = document.getElementById('ph-review-7');
@@ -2684,17 +2749,23 @@ document.addEventListener('DOMContentLoaded', () => {
     if(btnCalPhSave) {
         btnCalPhSave.addEventListener('click', () => {
             if (sensorStatusForTab(6) !== 'live') { updateCalibrationGating(); return; }
+            if (phCaptureIdentity !== `${lastTelemetry.hardwareId}:${lastTelemetry.bootId}`) {
+                resetPhWizard();
+                showAlertModal('The device restarted. Capture both buffer voltages again.', true);
+                return;
+            }
             if (ph7Volt === null || ph4Volt === null || ph7Volt === ph4Volt) {
                 showAlertModal("Please complete both Step 1 (pH 7.0) and Step 2 (pH 4.0) before saving.", true);
                 return;
             }
-            const newSlope = (7.0 - 4.0) / (ph7Volt - ph4Volt);
-            const newOff = 7.0 - (newSlope * ph7Volt);
+            let fit;
+            try { fit = HyGrowTelemetry.fitPh(ph7Volt * 1000, ph4Volt * 1000); }
+            catch (err) { showAlertModal(err.message, true); return; }
 
             const payload = {
                 command: "calibrate_ph",
-                offset: parseFloat(newOff.toFixed(2)),
-                slope: parseFloat(newSlope.toFixed(2))
+                offset: Number(fit.offset.toFixed(6)),
+                slope: Number(fit.slope.toFixed(6))
             };
             btnCalPhSave.disabled = true;
             const original = btnCalPhSave.innerText;
@@ -2769,19 +2840,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const btnTermPause = document.getElementById('btn-term-pause');
     if(btnTermPause) btnTermPause.addEventListener('click', () => {
+        if (!isTerminalPaused) terminalPausedEntries = terminalLogs.entries.map(entry => ({ ...entry }));
         isTerminalPaused = !isTerminalPaused;
         btnTermPause.innerText = isTerminalPaused ? "Resume" : "Pause";
-        btnTermPause.classList.toggle('bg-white/30');
+        btnTermPause.setAttribute('aria-pressed', String(isTerminalPaused));
+        if (!isTerminalPaused) { terminalPendingCount = 0; renderTerminal(true); }
+        updateTerminalSummary();
     });
 
     const btnTermClear = document.getElementById('btn-term-clear');
     if(btnTermClear) btnTermClear.addEventListener('click', () => {
-        document.getElementById('terminal-output').innerHTML = '<div><span class="text-secondary opacity-70">[SYS]</span> Terminal cleared.</div>';
+        terminalLogs.clear();
+        terminalRenderedEntries = [];
+        terminalPausedEntries = [];
+        terminalPendingCount = 0;
+        terminalCleared = true;
+        renderTerminal(true);
         // Clearing the log also clears any reason to show "New logs" —
         // nothing to jump to anymore, and the view is already at the
         // (now-empty) bottom.
         const jumpBtnOnClear = document.getElementById('btn-term-jump-latest');
         if (jumpBtnOnClear) { jumpBtnOnClear.classList.add('hidden'); jumpBtnOnClear.classList.remove('flex'); }
+    });
+
+    ['terminal-search', 'terminal-level'].forEach(id => {
+        const control = document.getElementById(id);
+        if (control) control.addEventListener(id === 'terminal-search' ? 'input' : 'change', () => renderTerminal(true));
     });
 
     // Jump-to-latest pill (Part 6.2) — shown by updateTerminal() whenever a
@@ -2795,27 +2879,37 @@ document.addEventListener('DOMContentLoaded', () => {
         btnTermJumpLatest.classList.remove('flex');
     });
 
-    // Copy button (Part 6.2) — mirrors the Dashboard's Export CSV pattern,
-    // just to the clipboard as plain text instead of a downloaded file
-    // (a full terminal session is short enough that a file feels like
-    // overkill; Clipboard API also doesn't need a download-anchor dance).
-    // Reads innerText per line so the [CORE n] tag and message both come
-    // through as plain text, HTML-free.
+    // Copy the currently visible filtered rows, including uptime and levels.
     const btnTermExport = document.getElementById('btn-term-export');
     if (btnTermExport) btnTermExport.addEventListener('click', async () => {
-        const term = document.getElementById('terminal-output');
-        if (!term) return;
-        const lines = Array.from(term.children).map((el) => el.innerText).join('\n');
+        const lines = terminalRenderedEntries.map(HyGrowTerminal.formatLog).join('\n');
+        if (!lines) return;
         const original = btnTermExport.innerHTML;
         try {
-            await navigator.clipboard.writeText(lines);
-            btnTermExport.innerHTML = '<span class="material-symbols-outlined text-[18px]" data-icon="check"></span> Copied';
+            try {
+                await navigator.clipboard.writeText(lines);
+            } catch (_) {
+                // LAN HTTP has no Clipboard API in many browsers. Copy on the
+                // user's click through a temporary selected plain-text field.
+                const focus = document.activeElement;
+                const field = document.createElement('textarea');
+                field.value = lines;
+                field.readOnly = true;
+                field.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+                document.body.appendChild(field);
+                field.select();
+                let copied = false;
+                try { copied = document.execCommand('copy'); }
+                finally { field.remove(); if (focus?.focus) focus.focus(); }
+                if (!copied) throw new Error('Clipboard unavailable');
+            }
+            btnTermExport.innerText = 'Copied';
         } catch (e) {
             // Clipboard API can fail (permissions, insecure context, etc.) —
             // fails visibly rather than silently, same spirit as the
             // "Not connected to the device right now." alert used elsewhere
             // in this file for other unavailable actions.
-            btnTermExport.innerHTML = '<span class="material-symbols-outlined text-[18px]" data-icon="error"></span> Copy failed';
+            btnTermExport.innerText = 'Copy failed — select text';
         }
         setTimeout(() => { btnTermExport.innerHTML = original; }, 2000);
     });
@@ -2870,42 +2964,21 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Advanced CSV Export (Bundles config and the 20-point buffers for all 8 sensors)
+    // Export aligned sensor cycles with identity, uptime and provenance.
     const btnExport = document.getElementById('btn-export-csv');
     if(btnExport) {
         btnExport.addEventListener('click', () => {
-            if(!sensorBuffers[1].length) { showAlertModal("Waiting for telemetry data...", true); return; }
-
-            let csv = "data:text/csv;charset=utf-8,\n";
-            csv += "--- SYSTEM CONFIGURATION ---\n";
-            csv += `Firebase Project,${globalConfigCache.fb_proj || "N/A"}\n`;
-            csv += `Firestore Collection,${globalConfigCache.fb_col || "N/A"}\n`;
-            csv += `TDS Calibration (K),${globalConfigCache.tds_k || "1.0"}\n`;
-            csv += `pH Calibration (Offset),${globalConfigCache.ph_off || "0.0"}\n`;
-            csv += `pH Calibration (Slope),${globalConfigCache.ph_slope || "1.0"}\n\n`;
-
-            csv += "--- TELEMETRY HISTORY (Last 20 Reads) ---\n";
-            csv += "Index,TDS(ppm),AirTemp(C),Humidity(%),WaterTemp(C),Light(lux),WaterLevel(%),pH,VPD(kPa)\n";
-
-            for(let i=0; i < sensorBuffers[1].length; i++) {
-                csv += `${i},`;
-                csv += `${(sensorBuffers[1][i]||0).toFixed(1)},`;
-                csv += `${(sensorBuffers[2].temp[i]||0).toFixed(1)},`;
-                csv += `${(sensorBuffers[2].hum[i]||0).toFixed(1)},`;
-                csv += `${(sensorBuffers[3][i]||0).toFixed(1)},`;
-                csv += `${(sensorBuffers[4][i]||0).toFixed(1)},`;
-                csv += `${(sensorBuffers[5][i]||0).toFixed(1)},`;
-                csv += `${(sensorBuffers[6][i]||0).toFixed(2)},`;
-                csv += `${(sensorBuffers[7][i]||0).toFixed(2)}\n`;
-            }
-
+            if (!sampleHistory.rows.length) { showAlertModal("Waiting for the first sensor sample.", true); return; }
+            const csv = HyGrowTelemetry.rowsToCsv(sampleHistory.rows);
+            const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
             const link = document.createElement("a");
-            link.setAttribute("href", encodeURI(csv));
+            link.setAttribute("href", url);
             const d = new Date();
             link.setAttribute("download", `hygrow_export_${d.getFullYear()}${(d.getMonth()+1)}${d.getDate()}.csv`);
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
         });
     }
 
@@ -2945,7 +3018,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         e.target.disabled = true;
         sendCommand({ command: "save_sensor_enabled", sensor: sensorId, enabled: isEnabled }).then(() => {
-            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} ${isEnabled ? "ENABLED" : "DISABLED"}.</div>`;
+            updateTerminal({ source: 'Dashboard', level: 'info', msg: `${sensorName} ${isEnabled ? "enabled" : "disabled"}.` });
             if (currentTabId !== startedOnTabId) {
                 // Still re-enable the toggle even though we're skipping the
                 // rest of the UI update — leaving it permanently disabled
@@ -2959,7 +3032,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 sendReboot
             );
         }).catch((err) => {
-            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> ${escapeHtml(sensorName)} enable change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
+            updateTerminal({ source: 'Dashboard', level: 'error', msg: `${sensorName} enable change failed: ${err && err.message ? err.message : 'error'}.` });
             e.target.disabled = !deviceAuthenticated;
             if (currentTabId !== startedOnTabId) return; // stale — switchTab() already shows the real state for whatever tab is open now
             e.target.checked = !isEnabled; // revert — the device never actually applied this
@@ -2996,8 +3069,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 resetSensorPinListeners = resetSensorPinListeners.filter((fn) => fn !== onResult);
                 if (!msg.ok) {
                     pendingRestart = null;
+                    deviceAuthenticated = websocket?.readyState === WebSocket.OPEN;
                     showAuthPanel('none');
                     setLinkStatus('LIVE SYS.LINK', true);
+                    refreshSensorStatuses();
+                    renderCurrentReadings();
                     showAlertModal(`Pin reset failed: ${msg.error || 'the device rejected the request.'}`, true);
                 }
                 // ok:true is never actually sent (see comment above) — this
@@ -3077,7 +3153,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const setFeaturesDirty = (dirty) => {
         featuresDirty = dirty;
-        if (btnSaveFeatures) btnSaveFeatures.disabled = !dirty;
+        if (btnSaveFeatures) btnSaveFeatures.disabled = featuresSubmitting || !dirty;
         if (btnDiscardFeatures) btnDiscardFeatures.classList.toggle('hidden', !dirty);
         updateUnsavedChanges();
     };
@@ -3092,19 +3168,27 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btnSaveFeatures) {
         btnSaveFeatures.addEventListener('click', () => {
             if (!cfgDemoMode) return;
+            if (featuresSubmitting) return;
+            const submittedDemo = cfgDemoMode.checked;
             const original = btnSaveFeatures.innerText;
+            featuresSubmitting = true;
+            if (btnDiscardFeatures) btnDiscardFeatures.disabled = true;
             btnSaveFeatures.disabled = true;
             btnSaveFeatures.innerText = 'Saving…';
-            sendFeatureFlags({ demo: cfgDemoMode.checked }).then(() => {
-                lastConfirmedDemo = cfgDemoMode.checked;
-                setFeaturesDirty(false);
+            sendFeatureFlags({ demo: submittedDemo }).then(() => {
+                featuresSubmitting = false;
+                if (btnDiscardFeatures) btnDiscardFeatures.disabled = false;
+                lastConfirmedDemo = submittedDemo;
+                setFeaturesDirty(cfgDemoMode.checked !== lastConfirmedDemo);
                 btnSaveFeatures.innerText = 'Saved!';
                 setTimeout(() => { btnSaveFeatures.innerText = original; }, 2000);
             }).catch((err) => {
-                btnSaveFeatures.disabled = false;
+                featuresSubmitting = false;
+                if (btnDiscardFeatures) btnDiscardFeatures.disabled = false;
+                setFeaturesDirty(cfgDemoMode.checked !== lastConfirmedDemo);
                 btnSaveFeatures.innerText = 'Not saved — ' + (err && err.message ? err.message : 'error');
-                setTimeout(() => { btnSaveFeatures.innerText = original; btnSaveFeatures.disabled = !featuresDirty; }, 3000);
-                document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Feature flag save failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
+                setTimeout(() => { btnSaveFeatures.innerText = original; setFeaturesDirty(cfgDemoMode.checked !== lastConfirmedDemo); }, 3000);
+                updateTerminal({ source: 'Dashboard', level: 'error', msg: `Feature flag save failed: ${err && err.message ? err.message : 'error'}.` });
             });
         });
     }
@@ -3166,7 +3250,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 );
             }
         }).catch((err) => {
-            document.getElementById('terminal-output').innerHTML += `<div><span class="text-secondary opacity-80">[SYS]</span> Demo Mode change failed: ${escapeHtml(err && err.message ? err.message : 'error')}.</div>`;
+            updateTerminal({ source: 'Dashboard', level: 'error', msg: `Demo Mode change failed: ${err && err.message ? err.message : 'error'}.` });
             e.target.disabled = !deviceAuthenticated;
             if (currentTabId !== startedOnTabId) return; // stale — switchTab() already shows the real state for whatever tab is open now
             e.target.checked = !demo; // revert — the device never actually applied this

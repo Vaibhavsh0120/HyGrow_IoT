@@ -2,6 +2,40 @@
    HyGrow IoT Custom Styles
    ========================================================================== */
 
+/* Terminal uses the dashboard's existing offline fonts and theme tokens. */
+.terminal-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; }
+.terminal-actions, .terminal-toolbar { display: flex; gap: 8px; align-items: center; }
+.terminal-toolbar { margin-bottom: 12px; flex-wrap: wrap; }
+.terminal-search { flex: 1; min-width: 160px; }
+.terminal-search input { width: 100%; }
+.terminal-control { min-height: 44px; padding: 8px 12px; border: 1px solid var(--hg-surface-border); border-radius: 12px; background: var(--hg-surface); color: var(--hg-on-background); font-family: 'Inter', sans-serif; font-size: 14px; line-height: 1.4; }
+.terminal-control:focus-visible, #terminal-output:focus-visible { outline: 2px solid var(--hg-primary); outline-offset: 3px; }
+.terminal-control[aria-pressed="true"] { border-color: var(--hg-on-surface-variant); background: var(--hg-surface-alt-10); }
+.terminal-meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; font-size: 12px; color: var(--hg-on-surface-variant); }
+.terminal-panel { position: relative; flex: 1; min-height: 360px; border: 1px solid var(--hg-surface-border); border-radius: 16px; overflow: hidden; background: var(--hg-surface); }
+#terminal-output { position: absolute; inset: 0; padding: 16px; overflow-y: auto; overflow-x: hidden; color: var(--hg-on-background); font-size: 13px; line-height: 1.65; }
+.terminal-row { display: grid; grid-template-columns: 72px 64px minmax(0, 1fr); column-gap: 12px; align-items: baseline; padding: 8px 0; }
+.terminal-time { color: var(--hg-on-surface-variant); font-size: 12px; font-variant-numeric: tabular-nums; }
+.terminal-level-label { font-family: 'Inter', sans-serif; font-size: 12px; color: var(--hg-on-surface-variant); }
+.terminal-message { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.terminal-warn .terminal-level-label { color: #fbbf24; }
+.terminal-error .terminal-level-label { color: var(--hg-error); font-weight: 600; }
+.terminal-repeat { display: inline-block; margin-left: 8px; font-family: 'Inter', sans-serif; font-size: 12px; color: var(--hg-on-surface-variant); }
+.terminal-empty { padding: 16px 0; color: var(--hg-on-surface-variant); font-family: 'Inter', sans-serif; }
+.terminal-jump { position: absolute; bottom: 16px; right: 16px; box-shadow: 0 4px 16px rgba(0,0,0,.15); }
+.terminal-jump:not(.hidden) { display: inline-flex; align-items: center; gap: 8px; }
+html.light .terminal-warn .terminal-level-label { color: #92400e; }
+@media (hover: hover) and (pointer: fine) { .terminal-control:hover { background: var(--hg-surface-alt-10); } }
+@media (max-width: 639px) {
+    .terminal-actions { width: 100%; }
+    .terminal-actions button { flex: 1; padding-inline: 8px; }
+    .terminal-toolbar > label { width: 100%; }
+    .terminal-toolbar select { width: 100%; }
+    .terminal-row { grid-template-columns: 72px minmax(0, 1fr); row-gap: 4px; padding: 12px 0; }
+    .terminal-message { grid-column: 1 / -1; }
+    #terminal-output { padding: 16px; }
+}
+
 /* Tailwind CSS v3
 
  * Offline-First Fonts
@@ -138,18 +172,14 @@
   word-wrap: normal;
   direction: ltr;
   -webkit-font-smoothing: antialiased;
-  /* Defensive containment (kept regardless of the codepoint fix above):
-     this element is sized on the assumption its rendered content is
-     always exactly one ~1em-square glyph. Bounding it to 1em with
-     overflow hidden means ANY future rendering failure — this font, a
-     replacement font, or a codepoint that turns out to be unmapped —
-     degrades to a small clipped/blank box instead of exploding the
-     surrounding layout (nav rows, dashboard cards) the way plain
-     fallback text did before. */
+  /* A single codepoint glyph reserves one square. Its ink can extend
+     beyond the font's line box; keep that visible instead of clipping it. */
   width: 1em;
   height: 1em;
-  overflow: hidden;
+  overflow: visible;
 }
+/* A block glyph avoids inline baseline descent being clipped by the icon box. */
+.material-symbols-outlined::before { display: block; }
 /* The glyph comes from this pseudo-element's `content`, driven by the
    matching [data-icon="..."] rule in _icon-codepoints.css — the span
    itself carries no text content, so there is nothing for a shaping
@@ -243,8 +273,6 @@ canvas {
    Terminal Specific Overrides
    (Optional: Used if Tailwind logging classes need enforcement)
    ========================================================================== */
-.log-core-0 { color: var(--hg-on-background); } /* Network Task logs */
-.log-core-1 { color: var(--hg-secondary); } /* Sensor Task logs */
 
 
 /* ==========================================================================
@@ -2200,55 +2228,6 @@ main::-webkit-scrollbar {
   display: none;
 }
 
-/* 5. Mobile sidebar overlay — DEAD CODE: .hg-sidenav-mobile-hidden is never
-   applied to any element (see index.html's #sideNav) and #btn-mobile-menu,
-   the only trigger for the JS that would add it, is permanently `hidden`
-   (see its comment in index.html). #sideNav's actual show/hide today is
-   the plain `hidden lg:flex` Tailwind toggle (moved from md to lg — see
-   the #sideNav/#bottomNav comments in index.html); #bottomNav is the real
-   navigation below lg. Left in place rather than deleted since removing it
-   isn't part of this breakpoint fix's scope — if this block is ever
-   revived, update `767px`/`768px` below to `1023px`/`1024px` to match. */
-@media (max-width: 767px) {
-  .hg-sidenav-mobile-hidden {
-    width: 100vw;
-    height: 100dvh;
-    top: 0;
-    left: 0;
-    border-radius: 0;
-    transform: translateX(-100%);
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-  .hg-sidenav-mobile-hidden.hg-sidenav-mobile-open {
-    transform: translateX(0);
-  }
-  /* Full-screen overlay state shows the text labels (normally an lg-and-up
-     thing) and the close button, and stretches the nav list to fill the
-     extra vertical room instead of staying icon-rail-narrow. */
-  .hg-sidenav-mobile-hidden #nav-tabs {
-    align-items: stretch;
-  }
-  .hg-sidenav-mobile-hidden h1,
-  .hg-sidenav-mobile-hidden #nav-tabs span.font-label-md {
-    display: block !important;
-  }
-  .hg-sidenav-mobile-hidden span.material-symbols-outlined.lg\:hidden {
-    display: none !important;
-  }
-  #btn-mobile-nav-close {
-    display: flex !important;
-  }
-}
-/* #mobile-nav-scrim — same dead-code status as the block above (its only
-   trigger, #btn-mobile-menu, is permanently hidden). Kept inert at every
-   width via the inline .hidden class on the element itself; this rule is
-   redundant belt-and-suspenders and not load-bearing either way. */
-@media (min-width: 768px) {
-  #mobile-nav-scrim {
-    display: none !important;
-  }
-}
-
 /* 6. Large Mac displays — without a cap, <main>'s content grows to fill
    the full viewport width, so on a 1920px+ display the telemetry grid's
    4 columns each get very wide and the cards stretch to match, which
@@ -2301,6 +2280,7 @@ body.offline-preview main.p-4 {
 .hg-dot-demo, .hg-sensor-status[data-state="demo"]::before { background: #ba92f5; }
 .hg-dot-error, .hg-sensor-status[data-state="error"]::before { background: var(--hg-error); }
 .hg-dot-waiting, .hg-sensor-status[data-state="waiting"]::before { background: #e5ac55; }
+.hg-dot-stale, .hg-sensor-status[data-state="stale"]::before { background: #e5ac55; }
 .hg-dot-muted, .hg-sensor-status[data-state="disabled"]::before,
 .hg-sensor-status[data-state="offline"]::before { background: #777; }
 .hg-legend-dot, .hg-sensor-status::before {
@@ -2338,3 +2318,8 @@ body.offline-preview main.p-4 {
     padding-bottom: 2rem;
   }
 }
+
+/* Keep compact hardware controls usable on touch screens. */
+[data-pin-field] { min-height: 44px; }
+.hg-toggle { min-height: 44px; align-items: center; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--hg-primary); outline-offset: 3px; }

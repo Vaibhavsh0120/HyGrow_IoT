@@ -59,9 +59,24 @@ void handleLogoutCommand(AsyncWebSocketClient *client, JsonDocument &doc);
 void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc);
 
 // ---------- firebase.cpp ----------
-// Fires one Firestore PATCH with the current sensor snapshot, at most once
-// per currentConfig.interval_fb_ms. Called from networkTaskLoop().
+// The network task only schedules; the dedicated worker owns TLS/uploads.
+void firebaseStartWorker();
+void firebaseRequestUpload();
+bool firebaseRequestTest(uint32_t clientId);
+void firebaseNetworkLoop(); // deliver completed manual-test acknowledgement
+void firebaseSetEnabled(bool enabled);
+struct FirebaseStatus
+{
+    bool ready;
+    uint32_t lastOkMs;
+    char lastError[64];
+};
+FirebaseStatus firebaseReadStatus();
+// One Firestore commit with the latest completed sensor snapshot, worker only.
 void firebaseUploadCycle();
+// Save credentials atomically with respect to worker/test configuration copies.
+void firebaseApplySettings(const char *api, const char *project, const char *email,
+                           const char *password, const char *collection);
 // Clears the cached Identity Toolkit ID token so the next upload cycle signs
 // in fresh. Call this any time fb_email/fb_pass/fb_project/fb_api_key change
 // — see save_firebase in command_handlers.cpp.

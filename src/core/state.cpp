@@ -5,6 +5,9 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <esp_partition.h> // esp_partition_find_first() — [FS DIAG] block in state_init()
+#include <esp_timer.h>
+#include <memory>
+#include <new>
 
 // ---------- Globals ----------
 ConfigState currentConfig;
@@ -54,12 +57,17 @@ struct LogEntry
 {
   uint8_t core;
   uint8_t level;
+  uint64_t uptimeMs;
+  uint32_t sequence;
   char msg[LOG_MSG_MAX];
 };
 
 static LogEntry s_logBacklog[LOG_BACKLOG_CAPACITY];
 static uint16_t s_logCount = 0;    // number of valid entries, caps at CAPACITY
 static uint16_t s_logNext = 0;     // next write slot (wraps)
+static uint32_t s_logSequence = 0;
+static uint32_t s_logBootId = 0;
+static portMUX_TYPE s_logMux = portMUX_INITIALIZER_UNLOCKED;
 
 // Maps LOG_INFO/LOG_WARN/LOG_ERR (config.h) to the exact strings the
 // frontend's updateTerminal() (data/js/app.js) already switches on for
@@ -89,21 +97,27 @@ static const char *levelToJsonString(uint8_t level)
 
 void webLog(uint8_t core, uint8_t level, const String &msg)
 {
-  // 1. Serial — unconditional, tagged with the same level word the web
-  // Terminal shows, and the core number so a mixed sensor/network boot log
-  // reads the same way in both places: "[CORE 1] [INFO] DHT22 initialized...".
-  Serial.println("[CORE " + String(core) + "] [" + String(levelToTag(level)) + "] " + msg);
-
-  // 2. Ring buffer — record this line before broadcasting, so a client that
-  // authenticates in the middle of a burst of logs (e.g. during boot) still
-  // gets it via the backlog replay even if it narrowly missed the live frame.
-  LogEntry &slot = s_logBacklog[s_logNext];
-  slot.core = core;
-  slot.level = level;
-  strncpy(slot.msg, msg.c_str(), LOG_MSG_MAX - 1);
-  slot.msg[LOG_MSG_MAX - 1] = '\0';
+  LogEntry entry{};
+  entry.core = core;
+  entry.level = level;
+  entry.uptimeMs = static_cast<uint64_t>(esp_timer_get_time()) / 1000ULL;
+  strlcpy(entry.msg, msg.c_str(), sizeof(entry.msg));
+  uint32_t bootId;
+  portENTER_CRITICAL(&s_logMux);
+  if (!s_logBootId) s_logBootId = esp_random();
+  bootId = s_logBootId;
+  entry.sequence = ++s_logSequence;
+  s_logBacklog[s_logNext] = entry;
   s_logNext = (s_logNext + 1) % LOG_BACKLOG_CAPACITY;
   if (s_logCount < LOG_BACKLOG_CAPACITY) s_logCount++;
+  portEXIT_CRITICAL(&s_logMux);
+
+  const uint64_t seconds = entry.uptimeMs / 1000ULL;
+  Serial.printf("%02llu:%02u:%02u %-5s %-7s %s\n",
+                static_cast<unsigned long long>(seconds / 3600ULL),
+                static_cast<unsigned>((seconds / 60ULL) % 60ULL),
+                static_cast<unsigned>(seconds % 60ULL), levelToTag(level),
+                core == 1 ? "Sensors" : "Device", msg.c_str());
 
   // 3. WS broadcast — same shape data/js/app.js's updateTerminal() already
   // parses (see the msg.type === "log" dispatch in app.js). wsBroadcastLog()
@@ -114,6 +128,11 @@ void webLog(uint8_t core, uint8_t level, const String &msg)
   doc["core"] = core;
   doc["level"] = levelToJsonString(level);
   doc["msg"] = msg;
+  doc["uptimeMs"] = entry.uptimeMs;
+  doc["sequence"] = entry.sequence;
+  char id[9];
+  snprintf(id, sizeof(id), "%08lx", static_cast<unsigned long>(bootId));
+  doc["logBootId"] = id;
   String payload;
   serializeJson(doc, payload);
   wsBroadcastLog(payload);
@@ -172,9 +191,7 @@ void webLogProgressDone()
 void printBootSection(const char *title)
 {
   Serial.println();
-  Serial.println(F("+------------------------------------------+"));
-  Serial.printf("|  %-40s|\n", title);
-  Serial.println(F("+------------------------------------------+"));
+  Serial.printf("--- %s ---\n", title);
 }
 
 // Replays the ring buffer to one newly-authenticated client, oldest first,
@@ -183,25 +200,38 @@ void printBootSection(const char *title)
 // handleAuthCommand() in auth.cpp right after a client passes auth.
 void webLogSendBacklog(AsyncWebSocketClient *client)
 {
-  if (!client || s_logCount == 0) return;
-
-  // s_logNext is the next WRITE slot, i.e. one past the newest entry. The
-  // oldest valid entry is s_logCount behind that (wrapping), whether or not
-  // the buffer has filled and started overwriting old entries yet.
-  uint16_t start = (s_logNext + LOG_BACKLOG_CAPACITY - s_logCount) % LOG_BACKLOG_CAPACITY;
-
-  for (uint16_t i = 0; i < s_logCount; i++)
+  if (!client) return;
+  // Copy on the heap, not the AsyncTCP task's stack. A single backlog frame
+  // avoids filling its 32-message queue with 40 individual boot messages.
+  std::unique_ptr<LogEntry[]> entries(new (std::nothrow) LogEntry[LOG_BACKLOG_CAPACITY]);
+  if (!entries) return;
+  uint16_t count;
+  uint32_t bootId;
+  portENTER_CRITICAL(&s_logMux);
+  count = s_logCount;
+  bootId = s_logBootId;
+  const uint16_t start = (s_logNext + LOG_BACKLOG_CAPACITY - count) % LOG_BACKLOG_CAPACITY;
+  for (uint16_t i = 0; i < count; ++i) entries[i] = s_logBacklog[(start + i) % LOG_BACKLOG_CAPACITY];
+  portEXIT_CRITICAL(&s_logMux);
+  if (!count) return;
+  char id[9];
+  snprintf(id, sizeof(id), "%08lx", static_cast<unsigned long>(bootId));
+  JsonDocument doc;
+  doc["type"] = "log_batch";
+  auto rows = doc["entries"].to<JsonArray>();
+  for (uint16_t i = 0; i < count; i++)
   {
-    LogEntry &e = s_logBacklog[(start + i) % LOG_BACKLOG_CAPACITY];
-    JsonDocument doc;
-    doc["type"] = "log";
-    doc["core"] = e.core;
-    doc["level"] = levelToJsonString(e.level);
-    doc["msg"] = e.msg;
-    String payload;
-    serializeJson(doc, payload);
-    client->text(payload);
+    auto row = rows.add<JsonObject>();
+    row["core"] = entries[i].core;
+    row["level"] = levelToJsonString(entries[i].level);
+    row["msg"] = entries[i].msg;
+    row["uptimeMs"] = entries[i].uptimeMs;
+    row["sequence"] = entries[i].sequence;
+    row["logBootId"] = id;
   }
+  String payload;
+  serializeJson(doc, payload);
+  client->text(payload);
 }
 
 // ---------- Helpers ----------
@@ -569,19 +599,15 @@ bool auth_is_configured()
   return strlen(s_adminPass) > 0;
 }
 
-// Boot-time-only convenience for the .ino's Serial banner (see setup()) —
-// deliberately NOT exposed over the network in any form (no WS command
-// returns this; the web UI never learns the current password, only whether
-// one is set — see sendAuthStatus()). Reading the plaintext password back
-// out over a physical USB serial connection is a different trust boundary
-// than the WiFi/WebSocket surface the rest of auth.cpp defends: anyone who
-// can already read this device's Serial output has physical access to it.
+// Boot convenience used by webLog: the same message goes to Serial and
+// authenticated terminal backlog. Credential display is intentional; both
+// physical access and an authenticated dashboard session are trusted.
 String auth_get_password_for_boot_display()
 {
   return auth_is_configured() ? String(s_adminPass) : String("(not set — open the web UI to create one)");
 }
 
-// Deliberately breaks the boundary described above: this value now travels
+// This value also travels
 // over the WebSocket to any client that has already passed auth (see
 // broadcastConfig(), task_network.cpp, which is the only caller). Once a
 // browser holds the dashboard session, it can also read back the plaintext

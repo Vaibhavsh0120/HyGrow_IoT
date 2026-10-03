@@ -15,6 +15,8 @@
 #include "task_network.h"
 #include "task_network_internal.h"
 #include "state.h"
+#include "telemetry.h"
+#include "local_network.h"
 #include <WiFi.h>
 #include <AsyncTCP.h>
 #include <ArduinoJson.h>
@@ -38,9 +40,11 @@ void wsBroadcastLog(const String &payload)
 void initNetworkTask()
 {
     printBootSection("NETWORK");
+    telemetryInit();
 
     // 1. Wi-Fi Setup with SoftAP Fallback
     WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
     if (String(currentConfig.wifi_ssid).length() > 0)
     {
         WiFi.begin(currentConfig.wifi_ssid, currentConfig.wifi_pass);
@@ -74,6 +78,9 @@ void initNetworkTask()
         reachableAt = WiFi.localIP().toString();
     }
 
+    // Register the concrete JSON route before the catch-all static handler.
+    localNetworkInit(server);
+
     // 2. Web Server & File System
     // NOTE: LittleFS is already mounted once in state_init() (see src/core/state.cpp),
     // and a bad mount there now halts boot before this task ever runs. Calling
@@ -97,6 +104,7 @@ void initNetworkTask()
 
     // 5. Start Server
     server.begin();
+    firebaseStartWorker();
     // Explicit host:port, not just a bare IP — this is the exact string to
     // type into a browser's address bar, and it matches what a person
     // troubleshooting a "can't reach the login page" issue actually needs
@@ -108,6 +116,8 @@ void initNetworkTask()
 void networkTaskLoop()
 {
     ws.cleanupClients();
+    localNetworkLoop();
+    firebaseNetworkLoop();
 
     unsigned long currentMillis = millis();
 
@@ -126,13 +136,12 @@ void networkTaskLoop()
         broadcastData();
     }
 
-    // Dynamic cadence for the Firestore upload cycle. firebaseUploadCycle()
-    // itself no-ops immediately if firebase_enabled/Wi-Fi/credentials aren't
-    // ready, so it's safe to call unconditionally here.
+    // Schedule one latest-state upload. TLS/HTTP runs on its own worker so
+    // slow internet cannot stop local dashboard pushes or socket upkeep.
     if (currentMillis - lastFirebaseTime >= currentConfig.interval_fb_ms)
     {
         lastFirebaseTime = currentMillis;
-        firebaseUploadCycle();
+        firebaseRequestUpload();
     }
 }
 
@@ -156,9 +165,10 @@ void broadcastVitals()
     // that old proxy reported "ready" even though no upload had ever been
     // attempted. If the feature is off, report false rather than a stale
     // last-known state.
-    doc["firebase_ready"] = currentConfig.firebase_enabled && currentVitals.firebase_ready;
-    doc["firebase_last_ok_ms"] = currentVitals.firebase_last_ok_ms;
-    doc["firebase_last_error"] = currentVitals.firebase_last_error;
+    const auto firebase = firebaseReadStatus();
+    doc["firebase_ready"] = firebase.ready;
+    doc["firebase_last_ok_ms"] = firebase.lastOkMs;
+    doc["firebase_last_error"] = firebase.lastError;
 
     String payload;
     serializeJson(doc, payload);
@@ -235,48 +245,8 @@ void broadcastData()
         return;
 
     JsonDocument doc;
-    doc["type"] = "data";
-    doc["core_id_of_producer"] = 1; // Sensors run on core 1
-
-    // Populated from the global currentSensors struct
-    doc["tds"] = currentSensors.tds_ppm;
-    doc["temp"] = currentSensors.temp_c;
-    doc["hum"] = currentSensors.humidity;
-    doc["w_t"] = currentSensors.water_temp_c;
-    doc["lux"] = currentSensors.lux;
-    doc["wl_percent"] = currentSensors.wl_percent;
-    doc["ph_val"] = currentSensors.ph_val;
-    doc["vpd_kpa"] = currentSensors.vpd_kpa;
-    // Only meaningful (and only sent as true) while TDS itself is live —
-    // see the comment on tds_comp_using_fake_water_temp in state.h. Lets
-    // the frontend show a small note on the TDS card instead of a
-    // temperature-compensated reading silently looking fully real while
-    // part of its own math came from Water Temp's demo simulation.
-    doc["tds_fake_wt_comp"] = currentSensors.tds_comp_using_fake_water_temp;
-
-    // Per-sensor status, one code per SensorID (same enum order as s_en[] in
-    // broadcastConfig() above: S_WL, S_LIGHT, S_TDS, S_DHT, S_PH, S_WTEMP):
-    //   0 = disabled (sensor_enabled[i] is false — not an error, just off)
-    //   1 = healthy   (enabled, last_err[i] empty — most recent read cycle ok)
-    //   2 = failing    (enabled, last_err[i] non-empty — most recent read cycle failed)
-    //   3 = waiting    (enabled, no successful reading yet this boot)
-    // This mirrors exactly what sensorTaskLoop() (task_sensor.cpp) already
-    // computes every cycle to drive the status LED, just serialized here too
-    // instead of being LED-only. The dashboard and per-sensor detail page use
-    // this to distinguish "disabled" from "enabled but not actually reading"
-    // — previously neither state reached the client at all.
-    JsonArray sOk = doc["s_ok"].to<JsonArray>();
-    for (int i = 0; i < S_COUNT; i++)
-    {
-        if (!currentConfig.sensor_enabled[i])
-            sOk.add(0);
-        else if (currentSensors.last_err[i][0] != '\0')
-            sOk.add(2);
-        else if (currentSensors.last_ok_ms[i] == 0)
-            sOk.add(3);
-        else
-            sOk.add(1);
-    }
+    const auto snapshot = telemetryRead();
+    writeDashboardTelemetry(doc.to<JsonObject>(), snapshot, telemetryUptimeMs());
 
     String payload;
     serializeJson(doc, payload);

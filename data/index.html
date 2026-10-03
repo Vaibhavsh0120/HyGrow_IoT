@@ -76,7 +76,7 @@
     <!-- Fonts/Icons are self-hosted from data/fonts/ via @font-face in
          style.css. No network requests — this device may only ever be
          reachable over its own SoftAP with no internet uplink at all. -->
-    <link rel="stylesheet" href="css/style.css?v=1.1.3">
+    <link rel="stylesheet" href="css/style.css?v=3.1.4">
 </head>
 <body class="bg-[#000000] text-on-background font-body-md h-screen w-screen overflow-hidden flex relative tracking-wide">
 
@@ -182,17 +182,14 @@
             <p class="font-label-sm text-label-sm text-on-surface-variant/70 text-center">Logging in here will sign out any other device that was previously logged in.</p>
         </div>
 
-        <!-- 4. Reboot confirmation modal — replaces the plain browser confirm()
-             every "this change needs a reboot" flow used to call directly
-             (Wi-Fi save, Pinout save, per-sensor Enabled toggle, Demo Mode
-             toggle). Rendered inside #auth-overlay so it shares the same
-             z-index/backdrop as the other three panels and the same
-             hg-modal-surface fix for light-mode contrast, but is opened/closed
-             independently of showAuthPanel() — see confirmReboot() in app.js. -->
-        <div id="reboot-confirm" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+    </div>
+
+    <!-- Application dialogs have their own overlay, independent of login. -->
+    <div id="app-dialog-overlay" class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl">
+        <div id="reboot-confirm" role="dialog" aria-modal="true" aria-labelledby="reboot-confirm-title" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
                 <span class="material-symbols-outlined text-primary text-[40px]" data-icon="restart_alt"></span>
-                <h2 class="font-headline-md text-headline-md text-white">Reboot Required</h2>
+                <h2 id="reboot-confirm-title" class="font-headline-md text-headline-md text-white">Reboot Required</h2>
                 <p id="reboot-confirm-text" class="font-body-md text-body-md text-on-surface-variant">The ESP32 must reboot to safely apply this change. Reboot now?</p>
             </div>
             <div class="flex flex-col gap-3">
@@ -208,7 +205,7 @@
              swaps between info and error styling via showAlertModal()'s
              `isError` argument. See showAlertModal()/closeAlertModal() in
              app.js. -->
-        <div id="alert-modal" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+        <div id="alert-modal" role="dialog" aria-modal="true" aria-labelledby="alert-modal-title" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
                 <span id="alert-modal-icon" class="material-symbols-outlined text-primary text-[40px]" data-icon="info"></span>
                 <h2 id="alert-modal-title" class="font-headline-md text-headline-md text-white">Notice</h2>
@@ -223,7 +220,7 @@
              wired per-call via confirmModal()'s onConfirm/onCancel
              callbacks, same contract confirm() had. See
              confirmModal()/closeConfirmModal() in app.js. -->
-        <div id="confirm-modal" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+        <div id="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
                 <span id="confirm-modal-icon" class="material-symbols-outlined text-primary text-[40px]" data-icon="help"></span>
                 <h2 id="confirm-modal-title" class="font-headline-md text-headline-md text-white">Are you sure?</h2>
@@ -240,13 +237,13 @@
              safeguard). A text input in place of the native prompt's input,
              checked against a required phrase before Confirm is enabled. See
              promptModal()/closePromptModal() in app.js. -->
-        <div id="prompt-modal" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
+        <div id="prompt-modal" role="dialog" aria-modal="true" aria-labelledby="prompt-modal-title" class="hidden hg-modal-surface rounded-3xl p-8 w-[90vw] max-w-sm flex flex-col gap-5">
             <div class="flex flex-col gap-1 items-center text-center">
                 <span id="prompt-modal-icon" class="material-symbols-outlined text-error text-[40px]" data-icon="warning"></span>
                 <h2 id="prompt-modal-title" class="font-headline-md text-headline-md text-white">Confirm Action</h2>
                 <p id="prompt-modal-text" class="font-body-md text-body-md text-on-surface-variant"></p>
             </div>
-            <input id="prompt-modal-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+            <input id="prompt-modal-input" type="text" aria-label="Confirmation phrase" autocomplete="off" autocapitalize="off" spellcheck="false"
                    class="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 font-body-md text-body-md text-white focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all" />
             <div class="flex flex-col gap-3">
                 <button id="btn-prompt-modal-confirm" disabled class="w-full bg-error-container/20 border border-error/50 text-error font-label-md py-3 rounded-xl hover:bg-error-container/40 disabled:opacity-40 disabled:cursor-not-allowed transition-all">Confirm</button>
@@ -255,35 +252,7 @@
         </div>
     </div>
 
-    <!-- MOBILE MENU BUTTON — dead below md AND at md/lg (chunk 4d). This
-         used to open #sideNav as a full-screen overlay below the 768px
-         `md` breakpoint (iPhone width); that overlay is gone, replaced by
-         #bottomNav further down. At md and up, #sideNav has always been a
-         fixed icon-rail/full sidebar (never an overlay there), so this
-         button never had a job at those widths either. Nothing currently
-         triggers it at any breakpoint — left in the DOM (unconditionally
-         `hidden`) rather than deleted, since #btn-mobile-menu-icon and the
-         aria-expanded wiring in initMobileNav() still reference it and
-         removing it isn't part of this chunk's requested scope. -->
-    <button id="btn-mobile-menu" aria-label="Open menu" aria-expanded="false" aria-controls="sideNav"
-        class="liquid-glass hidden fixed z-40 w-12 h-12 rounded-2xl items-center justify-center text-white"
-        style="top: calc(env(safe-area-inset-top, 0px) + 1rem); left: calc(env(safe-area-inset-left, 0px) + 1rem);">
-        <span class="material-symbols-outlined" aria-hidden="true" id="btn-mobile-menu-icon" data-icon="menu"></span>
-    </button>
-
-    <!-- SIDE NAVIGATION SHELL — lg and up only (breakpoint moved from md to
-         lg). Previously this appeared at md (768px) as an icon-only rail
-         (w-20, no labels — the lg:w-72/lg:px-4/label-reveal classes below
-         only kick in at 1024px) while #bottomNav disappeared at that same
-         md breakpoint, leaving a dead zone from 768–1024px with an
-         unlabeled icon rail and no bottom nav fallback. Moving both this
-         nav's appearance and #bottomNav's disappearance (below) to lg
-         closes that gap: #bottomNav now covers the full range below 1024px,
-         and #sideNav only ever appears already-labeled at lg, never in the
-         cramped icon-only state. Below lg, this is replaced entirely by
-         #bottomNav; the old hg-sidenav-mobile-hidden/-open overlay states,
-         #btn-mobile-menu, and #mobile-nav-scrim remain dead below lg (as
-         they already were below md). -->
+    <!-- Desktop sidebar; smaller screens use the bottom navigation. -->
     <nav class="liquid-glass rounded-3xl h-[calc(100vh-2rem)] lg:w-72 hidden lg:flex flex-col fixed left-4 top-4 z-40 py-6 lg:px-4 transition-all duration-300" id="sideNav">
         <div class="mb-8 flex flex-col gap-2 items-start overflow-hidden">
             <h1 class="text-headline-md font-headline-md font-bold text-primary dark:text-primary tracking-tight whitespace-nowrap">Web Doctor 🩺</h1>
@@ -293,48 +262,12 @@
         </ul>
     </nav>
 
-    <!-- BOTTOM NAVIGATION — everything below the 1024px `lg` breakpoint
-         (moved from `md`/768px — see the #sideNav comment above), covering
-         both phone AND iPad/tablet widths now, replacing the old
-         full-screen overlay sidebar entirely on those size classes.
-         Desktop (lg and up) is unaffected — #sideNav renders normally
-         there, exactly as before this chunk.
-
-         Only 3 destinations: Dashboard (tab 0), Settings (tab 8), Terminal
-         (tab 9) — the individual per-sensor detail pages (tabs 1,3,4,5,6
-         TDS/Water Temp/Light/Water Level/pH and the dual-sensor page for
-         Air Temp+Humidity, tab 2) are intentionally NOT here. Per the
-         user's own spec for this chunk: those are reached by tapping a
-         sensor's own card on the Dashboard instead (see the new
-         data-goto-tab hookup on each vitals-grid card in page-0, and
-         initSensorCardLinks() in app.js) — a bottom nav with 3 fixed slots
-         stays readable and thumb-reachable; cramming 6 more sensor
-         shortcuts in here would defeat that. "Live Calibration" (tab 7)
-         also isn't reachable from the iPhone layout at all currently —
-         it was never in #sideNav's icon-rail-only iPad view either in a
-         way distinct from the mobile overlay, and has no obvious card of
-         its own on the dashboard; flagging this as a known gap rather
-         than guessing at a placement not specified in the request.
-
-         Same 3-item role="tablist" pattern as #nav-tabs above (button,
-         not li — no need for a <ul> here, and a native <button> gets
-         keyboard/tap semantics for free instead of needing the manual
-         role="tab"/tabindex="0" treatment #nav-tabs's plain <li>s need).
-         z-40, same stacking context as the old sidebar/scrim it replaces,
-         still below the auth overlay's z-[100] so an unauthenticated
-         session never shows real navigation underneath it.
-
-         Uses safe-area-inset-bottom padding so it clears the iPhone home
-         indicator instead of sitting flush under it, same pattern as
-         #sideNav's existing safe-area padding (style.css, fix #1) and
-         #auth-overlay's (fix #1 block, same file). -->
+    <!-- Phone/tablet: Dashboard, Calibration, Terminal and Settings.
+         Individual sensor pages open from dashboard cards. -->
     <nav id="bottomNav" role="tablist" aria-label="Primary"
         class="liquid-glass lg:hidden fixed left-0 right-0 bottom-0 z-40 flex items-stretch justify-around rounded-t-3xl rounded-b-none border-t border-white/10"
         style="padding-bottom: env(safe-area-inset-bottom, 0px);">
     </nav>
-
-    <div id="connection-notice" role="status" aria-live="polite" class="hidden liquid-glass rounded-2xl border border-white/10 p-4 text-white font-body-md"
-         style="position:fixed;top:1rem;right:1rem;z-index:90;max-width:min(24rem,calc(100vw - 2rem));"></div>
 
     <button id="offline-preview-bar" type="button" class="hidden liquid-glass rounded-xl border border-error/50 px-3 py-2 text-white font-label-sm" style="position:fixed;top:calc(1rem + env(safe-area-inset-top, 0px));left:50%;transform:translateX(-50%);z-index:80;width:max-content;max-width:calc(100vw - 2rem);white-space:normal;text-align:center;">
         Offline · Reconnecting · Details
@@ -365,6 +298,7 @@
          fixed sidebar to clear, #bottomNav is a bottom-docked bar instead,
          so ml-0 now covers both phone and tablet widths. -->
     <main class="ml-0 lg:ml-[320px] flex-1 h-screen overflow-y-auto p-4 md:p-8 relative z-10 transition-all duration-300">
+        <div id="connection-notice" role="status" aria-live="polite" class="hidden liquid-glass rounded-2xl border border-white/10 p-4 mb-4 text-white font-body-md"></div>
 
         <!-- PAGE 0: Dashboard & Vitals -->
         <section class="page-section flex flex-col gap-8" id="page-0">
@@ -541,7 +475,7 @@
                     </button>
                     <div class="flex items-center">
                         <label class="hg-toggle">
-                            <input class="sr-only peer" id="sensor-demo-toggle" type="checkbox"/>
+                            <input class="sr-only peer" id="sensor-demo-toggle" aria-label="Simulate this sensor" type="checkbox"/>
                             <span class="hg-toggle-track"></span>
                         </label>
                         <span class="ml-3 font-label-md text-label-md text-white">Demo Mode</span>
@@ -549,7 +483,7 @@
                     </div>
                     <div class="flex items-center">
                         <label class="hg-toggle">
-                            <input checked="" class="sr-only peer" id="sensor-toggle" type="checkbox"/>
+                            <input checked="" class="sr-only peer" id="sensor-toggle" aria-label="Enable this sensor" type="checkbox"/>
                             <span class="hg-toggle-track"></span>
                         </label>
                         <span class="ml-3 font-label-md text-label-md text-white">Enabled</span>
@@ -586,7 +520,7 @@
                 <div class="flex flex-wrap items-center gap-4">
                     <div class="flex items-center">
                         <label class="hg-toggle">
-                            <input class="sr-only peer" id="dual-sensor-demo-toggle" type="checkbox"/>
+                            <input class="sr-only peer" id="dual-sensor-demo-toggle" aria-label="Simulate air temperature and humidity" type="checkbox"/>
                             <span class="hg-toggle-track"></span>
                         </label>
                         <span class="ml-3 font-label-md text-label-md text-white">Demo Mode</span>
@@ -594,7 +528,7 @@
                     </div>
                     <div class="flex items-center">
                         <label class="hg-toggle">
-                            <input checked="" class="sr-only peer" id="dual-sensor-toggle" type="checkbox"/>
+                            <input checked="" class="sr-only peer" id="dual-sensor-toggle" aria-label="Enable air temperature and humidity" type="checkbox"/>
                             <span class="hg-toggle-track"></span>
                         </label>
                         <span class="ml-3 font-label-md text-label-md text-white">Enabled</span>
@@ -698,7 +632,7 @@
                     </div>
 
                     <div class="bg-white/5 p-4 rounded-2xl border border-white/10">
-                        <div class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-1">Live Reading</div>
+                        <div class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest mb-1">Live Probe Voltage</div>
                         <div class="font-display-lg-mobile text-white" id="cal-ph-raw">--</div>
                     </div>
 
@@ -939,7 +873,7 @@
                                 <span class="font-label-sm text-label-sm text-on-surface-variant">Simulate sensor data instead of reading real hardware. Useful for testing the dashboard before wiring anything up.</span>
                             </span>
                             <label class="hg-toggle">
-                                <input class="sr-only peer" id="cfg-demo-mode" type="checkbox"/>
+                                <input class="sr-only peer" id="cfg-demo-mode" aria-label="Simulate all sensors" type="checkbox"/>
                                 <span class="hg-toggle-track"></span>
                             </label>
                         </div>
@@ -988,7 +922,7 @@
                                 <span class="font-label-sm text-label-sm text-on-surface-variant">Push sensor readings to Firestore on the interval configured below. Auto-disables after 5 consecutive failed uploads. Saved with the credentials below.</span>
                             </span>
                             <label class="hg-toggle">
-                                <input class="sr-only peer" id="cfg-fb-enabled" type="checkbox"/>
+                                <input class="sr-only peer" id="cfg-fb-enabled" aria-label="Upload sensor data to Firebase" type="checkbox"/>
                                 <span class="hg-toggle-track"></span>
                             </label>
                         </div>
@@ -1112,14 +1046,14 @@
                             </div>
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="text-on-surface-variant font-label-sm">Sig:</span>
-                                <input id="cfg-pin-wl" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="1"/>
+                                <input id="cfg-pin-wl" aria-label="Water level signal GPIO" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="1"/>
                                 <span class="text-on-surface-variant font-label-sm">Pwr:</span>
-                                <input id="cfg-pin-wlp" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="5"/>
+                                <input id="cfg-pin-wlp" aria-label="Water level power GPIO" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="5"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
                                 <label class="hg-toggle hg-toggle-sm">
-                                    <input class="sr-only peer" id="cfg-sensor-enabled-wl" data-sensor-enable="wl" type="checkbox"/>
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-wl" aria-label="Enable water level sensor" data-sensor-enable="wl" type="checkbox"/>
                                     <span class="hg-toggle-track"></span>
                                 </label>
                             </div>
@@ -1131,14 +1065,14 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">SDA/SCL:</span>
-                                <input id="cfg-pin-sda" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="8"/>
+                                <input id="cfg-pin-sda" aria-label="Light sensor I2C SDA GPIO" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="8"/>
                                 <span class="text-on-surface-variant font-label-sm">/</span>
-                                <input id="cfg-pin-scl" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="9"/>
+                                <input id="cfg-pin-scl" aria-label="Light sensor I2C SCL GPIO" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="9"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
                                 <label class="hg-toggle hg-toggle-sm">
-                                    <input class="sr-only peer" id="cfg-sensor-enabled-light" data-sensor-enable="light" type="checkbox"/>
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-light" aria-label="Enable light sensor" data-sensor-enable="light" type="checkbox"/>
                                     <span class="hg-toggle-track"></span>
                                 </label>
                             </div>
@@ -1150,12 +1084,12 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-tds" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="2"/>
+                                <input id="cfg-pin-tds" aria-label="TDS sensor GPIO" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="2"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
                                 <label class="hg-toggle hg-toggle-sm">
-                                    <input class="sr-only peer" id="cfg-sensor-enabled-tds" data-sensor-enable="tds" type="checkbox"/>
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-tds" aria-label="Enable TDS sensor" data-sensor-enable="tds" type="checkbox"/>
                                     <span class="hg-toggle-track"></span>
                                 </label>
                             </div>
@@ -1167,12 +1101,12 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-dht" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="6"/>
+                                <input id="cfg-pin-dht" aria-label="Air temperature sensor GPIO" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="6"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
                                 <label class="hg-toggle hg-toggle-sm">
-                                    <input class="sr-only peer" id="cfg-sensor-enabled-dht" data-sensor-enable="dht" type="checkbox"/>
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-dht" aria-label="Enable air temperature and humidity sensor" data-sensor-enable="dht" type="checkbox"/>
                                     <span class="hg-toggle-track"></span>
                                 </label>
                             </div>
@@ -1184,12 +1118,12 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-ph" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="7"/>
+                                <input id="cfg-pin-ph" aria-label="pH sensor GPIO" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="7"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
                                 <label class="hg-toggle hg-toggle-sm">
-                                    <input class="sr-only peer" id="cfg-sensor-enabled-ph" data-sensor-enable="ph" type="checkbox"/>
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-ph" aria-label="Enable pH sensor" data-sensor-enable="ph" type="checkbox"/>
                                     <span class="hg-toggle-track"></span>
                                 </label>
                             </div>
@@ -1201,12 +1135,12 @@
                             </div>
                             <div class="flex items-center gap-2">
                                 <span class="text-on-surface-variant font-label-sm">GPIO:</span>
-                                <input id="cfg-pin-wt" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="4"/>
+                                <input id="cfg-pin-wt" aria-label="Water temperature sensor GPIO" data-pin-field="1" min="1" max="47" class="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-white text-sm w-16" type="number" value="4"/>
                             </div>
                             <div class="flex items-center justify-between gap-2 mt-1">
                                 <span class="font-label-sm text-on-surface-variant">Enabled</span>
                                 <label class="hg-toggle hg-toggle-sm">
-                                    <input class="sr-only peer" id="cfg-sensor-enabled-wt" data-sensor-enable="wt" type="checkbox"/>
+                                    <input class="sr-only peer" id="cfg-sensor-enabled-wt" aria-label="Enable water temperature sensor" data-sensor-enable="wt" type="checkbox"/>
                                     <span class="hg-toggle-track"></span>
                                 </label>
                             </div>
@@ -1266,34 +1200,25 @@
 
         <!-- PAGE 9: Terminal -->
         <section class="page-section h-full flex-col hidden" id="page-9">
-            <header class="flex justify-between items-end pb-4 mb-4 border-b border-[rgba(255,255,255,0.08)]">
+            <header class="terminal-header">
                 <h2 class="font-headline-lg text-headline-lg text-white">System Terminal</h2>
-                <div class="flex gap-2">
-                    <!-- Mirrors the Dashboard's "Export CSV" button pattern —
-                         copies the current on-screen log (up to the 100-line
-                         cap in updateTerminal()) to the clipboard as plain
-                         text, timestamp-free (device doesn't send per-line
-                         timestamps today), one [CORE n] tag + message per
-                         line. See btn-term-export wiring in app.js. -->
-                    <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors flex items-center gap-1" id="btn-term-export">
-                        <span class="material-symbols-outlined text-[18px]" data-icon="content_copy"></span> Copy
-                    </button>
-                    <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors" id="btn-term-pause">Pause</button>
-                    <button class="liquid-glass text-white font-label-md text-label-md px-4 py-2 rounded-2xl hover:bg-white/10 transition-colors" id="btn-term-clear">Clear</button>
+                <div class="terminal-actions">
+                    <button class="terminal-control" id="btn-term-export">Copy visible</button>
+                    <button class="terminal-control" id="btn-term-pause" aria-pressed="false">Pause</button>
+                    <button class="terminal-control" id="btn-term-clear">Clear</button>
                 </div>
             </header>
-            <div class="flex-1 liquid-glass rounded-3xl p-4 overflow-hidden relative">
-                <div class="absolute inset-0 p-6 overflow-y-auto font-label-md text-label-sm text-primary flex flex-col gap-2" id="terminal-output">
-                    <div><span class="text-secondary opacity-70">[SYS]</span> Terminal initialized. Listening for WSS events...</div>
+            <div class="terminal-toolbar">
+                <label class="terminal-search"><span class="sr-only">Search messages</span><input id="terminal-search" type="search" placeholder="Search messages" autocomplete="off" class="terminal-control"/></label>
+                <label><span class="sr-only">Message level</span><select id="terminal-level" class="terminal-control"><option value="all">All messages</option><option value="issues">Warnings &amp; errors</option><option value="error">Errors only</option></select></label>
+            </div>
+            <div class="terminal-meta"><span id="terminal-summary" role="status" aria-live="polite">Waiting for device messages</span><span>Time since startup</span></div>
+            <div class="terminal-panel">
+                <div id="terminal-output" role="region" aria-label="Device messages" tabindex="0">
+                    <p class="terminal-empty">Device messages appear here when connected.</p>
                 </div>
-                <!-- Smart-autoscroll "jump to latest" pill (see updateTerminal()
-                     in app.js) — hidden by default. Shown only once the user has
-                     scrolled up away from the bottom AND a new line has arrived
-                     while they were up there, so autoscroll doesn't yank their
-                     place in the log out from under them mid-read. Tapping it
-                     jumps to the bottom and re-arms autoscroll. -->
-                <button id="btn-term-jump-latest" class="hidden absolute bottom-4 left-1/2 -translate-x-1/2 liquid-glass text-white font-label-sm text-label-sm px-4 py-2 rounded-full shadow-lg items-center gap-1 hover:bg-white/10 transition-colors z-10">
-                    <span class="material-symbols-outlined text-[16px]" data-icon="arrow_downward"></span> New logs
+                <button id="btn-term-jump-latest" class="hidden terminal-control terminal-jump">
+                    <span class="material-symbols-outlined" data-icon="arrow_downward" aria-hidden="true"></span> Latest messages
                 </button>
             </div>
         </section>
@@ -1301,8 +1226,10 @@
     </main>
 
     <!-- Load Local Modular Scripts -->
-    <script src="js/charts.js?v=1.1.3"></script>
-    <script src="js/app.js?v=1.1.3"></script>
+    <script src="js/charts.js?v=3.1.4"></script>
+    <script src="js/terminal.js?v=3.1.4"></script>
+    <script src="js/telemetry-view.js?v=3.1.4"></script>
+    <script src="js/app.js?v=3.1.4"></script>
 
 </body>
 </html>

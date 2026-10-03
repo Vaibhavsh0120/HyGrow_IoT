@@ -269,8 +269,10 @@ void setup()
         String lastReason = state_get_last_reset_reason();
         if (lastReason.length() > 0)
         {
-            webLog(0, LOG_WARN, "Previous boot ended with: " + lastReason);
+            webLog(0, LOG_INFO, "Previous startup cause: " + lastReason);
         }
+        webLog(0, (reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT || reason == ESP_RST_TASK_WDT || reason == ESP_RST_WDT || reason == ESP_RST_BROWNOUT) ? LOG_WARN : LOG_INFO,
+               "Current restart cause: " + String(resetReasonToString(reason)));
         state_log_reset_reason(resetReasonToString(reason));
     }
 
@@ -285,15 +287,9 @@ void setup()
     // first client connection.
     auth_init();
 
-    // Boot-time-only admin password display. This is a deliberate,
-    // physical-access-only trust boundary: whoever can read this device's
-    // USB Serial output already has physical access to it, which is a
-    // fundamentally different threat model than the WiFi/WebSocket surface
-    // the rest of auth.cpp defends (see auth_get_password_for_boot_display()
-    // in state.cpp — this value is never sent over the network in any
-    // form). Useful for exactly the situation that prompted this: confirming
-    // what the device currently thinks its password is, right after a BOOT-
-    // button auth reset, without guessing.
+    // Intentional password display: webLog sends this to Serial and stores
+    // it for authenticated terminal replay. Authenticated config also exposes
+    // saved credentials; the browser session and LAN are trusted by policy.
     webLog(0, LOG_INFO, "Admin password (current): " + auth_get_password_for_boot_display());
 
     // 1a. LittleFS is mounted inside state_init(). A failed mount here means
@@ -335,8 +331,8 @@ void setup()
     ledStatusInit();
 
     // 2. Pin Network Task to Core 0 (Handles Wi-Fi, the web server, WebSockets, LittleFS)
-    // Stack size is 10240 to give HTTPClient/WiFiClientSecure (Firestore uploads)
-    // and NVS operations comfortable headroom.
+    // Periodic cloud requests run on a separate notification-driven worker;
+    // keep the existing stack headroom for config/NVS and JSON operations.
     xTaskCreatePinnedToCore(
         networkTaskWrapper,
         "NetworkTask",

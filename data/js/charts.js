@@ -68,13 +68,16 @@ function drawChart(context, cvs, dataArr, role) {
     // is an arbitrary-but-harmless choice — there's nothing to connect a
     // single point to anyway.
     const step = w / Math.max(dataArr.length - 1, 1);
-    const max = Math.max(...dataArr, 10); // Minimum scale of 10 to prevent flatlining at 0
+    const max = Math.max(...dataArr.filter(Number.isFinite), 10);
+    let connected = false;
 
     dataArr.forEach((val, i) => {
+        if (!Number.isFinite(val)) { connected = false; return; }
         const x = i * step;
         const y = h - ((val / max) * h * 0.8) - 20;
-        if(i === 0) context.moveTo(x, y);
+        if(!connected) context.moveTo(x, y);
         else context.lineTo(x, y);
+        connected = true;
     });
 
     // Soft glow effect
@@ -83,6 +86,8 @@ function drawChart(context, cvs, dataArr, role) {
     context.stroke();
     context.shadowBlur = 0;
 
+    // Missing values break the line. A full-width fill would hide those gaps.
+    if (!dataArr.length || dataArr.some(value => !Number.isFinite(value))) return;
     // Fill gradient under line
     context.lineTo(w, h);
     context.lineTo(0, h);
@@ -109,12 +114,15 @@ function drawDualChart(context, cvs, dataArr1, dataArr2) {
     context.strokeStyle = `rgb(${getChartColorRgb('primary')})`;
     context.lineWidth = 3;
     const step = w / Math.max(dataArr1.length - 1, 1); // see drawChart() for why Math.max guards against a single-point buffer
+    let connected = false;
 
     dataArr1.forEach((val, i) => {
+        if (!Number.isFinite(val)) { connected = false; return; }
         const x = i * step;
         const y = h - ((val / 100) * h * 0.8) - 20; // Scaled to 0-100%
-        if(i === 0) context.moveTo(x, y);
+        if(!connected) context.moveTo(x, y);
         else context.lineTo(x, y);
+        connected = true;
     });
     context.stroke();
 
@@ -123,11 +131,14 @@ function drawDualChart(context, cvs, dataArr1, dataArr2) {
     context.strokeStyle = `rgb(${getChartColorRgb('secondary')})`;
     context.lineWidth = 3;
 
+    connected = false;
     dataArr2.forEach((val, i) => {
+        if (!Number.isFinite(val)) { connected = false; return; }
         const x = i * step;
         const y = h - ((val / 50) * h * 0.8) - 20; // Scaled to 0-50°C
-        if(i === 0) context.moveTo(x, y);
+        if(!connected) context.moveTo(x, y);
         else context.lineTo(x, y);
+        connected = true;
     });
     context.stroke();
 }
@@ -144,7 +155,7 @@ function exportSeriesToCsv(sensorName, dataArr) {
 
     dataArr.forEach((val, index) => {
         // Because we don't have NTP time yet, we use a simple reading index
-        csvContent += `${index},${val.toFixed(2)}\n`;
+        csvContent += `${index},${Number.isFinite(val) ? val.toFixed(2) : ''}\n`;
     });
 
     // Create a hidden link to trigger the download

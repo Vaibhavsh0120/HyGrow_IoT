@@ -26,6 +26,7 @@
  */
 #include "task_sensor.h"
 #include "state.h"
+#include "telemetry.h"
 #include "../utils/led_status.h"
 #include <Wire.h>
 #include <math.h>
@@ -355,20 +356,20 @@ static void initAllSensors()
 
   if (!anyRealSensorEnabled)
   {
-    webLog(1, LOG_INFO, "Demo mode: every enabled sensor is simulated — skipping real hardware init.");
+    webLog(1, LOG_INFO, "No enabled real sensors. Hardware initialization skipped.");
     readAllDemo();
     return;
   }
 
-  if (!sensorPinIsDemo(S_DHT))
+  if (currentConfig.sensor_enabled[S_DHT] && !sensorPinIsDemo(S_DHT))
     sensor_dht_init();
-  if (!sensorPinIsDemo(S_WTEMP))
+  if (currentConfig.sensor_enabled[S_WTEMP] && !sensorPinIsDemo(S_WTEMP))
     sensor_ds18b20_init();
-  if (!sensorPinIsDemo(S_TDS))
+  if (currentConfig.sensor_enabled[S_TDS] && !sensorPinIsDemo(S_TDS))
     sensor_tds_init();
-  if (!sensorPinIsDemo(S_PH))
+  if (currentConfig.sensor_enabled[S_PH] && !sensorPinIsDemo(S_PH))
     sensor_ph_init();
-  if (!sensorPinIsDemo(S_WL))
+  if (currentConfig.sensor_enabled[S_WL] && !sensorPinIsDemo(S_WL))
     sensor_wl_init();
 
   // BH1750 is the one sensor with a reliable "is it actually wired up" probe
@@ -561,6 +562,7 @@ void initSensorTask()
   // before either task starts, which is the safer point.
 
   initAllSensors();
+  s_kick = true; // publish a full first read immediately after startup validation
 }
 
 void sensorTaskLoop()
@@ -572,6 +574,10 @@ void sensorTaskLoop()
     s_kick = false;
     lastRead = now;
     readAll();
+    bool simulated[S_COUNT];
+    for (int i = 0; i < S_COUNT; ++i)
+      simulated[i] = sensorPinIsDemo(static_cast<SensorID>(i));
+    telemetryPublish(simulated);
 
     // Mirror live hardware health on the WS2812 status LED right after the
     // read that just happened above. last_err[i] reflects only the most

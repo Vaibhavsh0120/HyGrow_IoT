@@ -11,6 +11,8 @@ ASSETS = (
     "css/style.css",
     "js/app.js",
     "js/charts.js",
+    "js/terminal.js",
+    "js/telemetry-view.js",
     "fonts/symbols.woff2",
 )
 

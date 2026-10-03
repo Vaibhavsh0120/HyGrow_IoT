@@ -172,17 +172,16 @@ static bool isRealisticTdsPpm(float ppm)
 // coefficients, and a hand-crafted WS message (or a future client bug)
 // could otherwise persist a slope of exactly 0 or something wildly
 // unphysical with zero pushback from the device. A two-point pH 4/pH 7
-// fit has a slope magnitude usually well under ~1 V/pH-unit in practice;
-// +/-20 is a generous outer bound that only rejects clear typos/garbage
-// while leaving every real probe/ADC combination untouched. Offset is
-// bounded to +/-14 (a full pH-scale swing) for the same reason.
+// fit uses pH per volt, not volts per pH. Its intercept can exceed 14 even
+// when both buffer points are valid. Keep finite coefficient bounds aligned
+// with the dashboard's raw-voltage fit: slope +/-20 and intercept +/-100.
 static bool isRealisticPhCalibration(float offset, float slope)
 {
-    if (isnan(offset) || isnan(slope))
+    if (!isfinite(offset) || !isfinite(slope))
         return false;
     if (slope == 0.0f || slope < -20.0f || slope > 20.0f)
         return false;
-    if (offset < -14.0f || offset > 14.0f)
+    if (offset < -100.0f || offset > 100.0f)
         return false;
     return true;
 }
@@ -281,13 +280,9 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
         // account password on every such save.
         bool changingFbPass = doc["pass"].is<const char *>() && String((const char *)doc["pass"]).length() > 0;
 
-        strlcpy(currentConfig.fb_api_key, doc["api"] | "", sizeof(currentConfig.fb_api_key));
-        strlcpy(currentConfig.fb_project, projectId.c_str(), sizeof(currentConfig.fb_project));
-        strlcpy(currentConfig.fb_email, doc["email"] | "", sizeof(currentConfig.fb_email));
-        if (changingFbPass)
-            strlcpy(currentConfig.fb_pass, ((const char *)doc["pass"]), sizeof(currentConfig.fb_pass));
-        strlcpy(currentConfig.fb_collection, doc["col"] | "", sizeof(currentConfig.fb_collection));
-        firebaseInvalidateToken(); // credentials changed — don't keep uploading under the old identity
+        firebaseApplySettings(doc["api"] | "", projectId.c_str(), doc["email"] | "",
+                              changingFbPass ? doc["pass"].as<const char *>() : nullptr,
+                              doc["col"] | "");
         if (!state_save())
         {
             webLog(0, LOG_ERR, "save_firebase: state_save() failed — settings may not be fully persisted.");
@@ -488,7 +483,7 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
         bool wasFbEnabled = currentConfig.firebase_enabled;
         bool wasDemoMode = currentConfig.demo_mode;
         bool newDemoMode = doc["demo"] | currentConfig.demo_mode;
-        currentConfig.firebase_enabled = doc["fb_en"] | currentConfig.firebase_enabled;
+        firebaseSetEnabled(doc["fb_en"] | currentConfig.firebase_enabled);
 
         // Turning Firebase Upload back on (including right after an
         // auto-disable at FIREBASE_MAX_CONSECUTIVE_FAILURES) is an explicit
@@ -1012,24 +1007,10 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
     }
     else if (cmd == "test_firebase")
     {
-        // Real connectivity check against whatever is currently SAVED in
-        // currentConfig (see the contract note on firebaseTestConnection()
-        // in firebase.cpp) — the button is only meaningful after Save
-        // Credentials has run. Blocking call (~1-2 HTTPS round trips, each
-        // capped at 7s) is acceptable here: it only runs on an explicit user
-        // click, not on any periodic cadence.
-        String error;
-        bool ok = firebaseTestConnection(error);
-        if (ok)
-        {
-            webLog(0, LOG_INFO, "Firebase connection test succeeded.");
-            sendCmdAck(client, cmd, true);
-        }
-        else
-        {
-            webLog(0, LOG_ERR, "Firebase connection test failed: " + error);
-            sendCmdAck(client, cmd, false, error);
-        }
+        // Keep AsyncTCP callbacks free of HTTPS waits. The cloud worker
+        // returns the usual acknowledgement through firebaseNetworkLoop().
+        if (!firebaseRequestTest(client->id()))
+            sendCmdAck(client, cmd, false, "Cloud request already running or unavailable. Try Test Connection again shortly.");
     }
     else if (cmd == "request_vitals")
     {

@@ -4,16 +4,11 @@
 // Split out of the original task_network.cpp (see task_network_internal.h
 // for the full map of the split).
 //
-// Minimal, non-blocking-per-call REST client that keeps ONE Firestore
-// document per device — devices/{device_id} — in sync with the device's
-// CURRENT state. "Non-blocking" here means: it never runs more often than
-// currentConfig.interval_fb_ms, each HTTPClient call uses a short timeout, and
-// it never retries in a loop — a slow/failed request just waits for the next
-// cadence tick instead of stalling the network task. It does NOT run on a
-// separate thread; a single request can still take up to ~timeout ms of wall
-// time inside networkTaskLoop(), which is an accepted tradeoff for staying
-// within the existing single-loop task structure and library set already in
-// platformio.ini (no separate async-HTTP dependency).
+// REST uploads run on a dedicated, notification-driven worker. Local HTTP,
+// UDP discovery and dashboard telemetry never wait for cloud TLS requests.
+// Pending requests coalesce into one latest-state upload; no history queue
+// grows during an outage. Firebase settings are copied under a short lock,
+// so changing credentials cannot corrupt an in-flight request.
 //
 // ---------------------------------------------------------------------------
 // Device-state document contract:
@@ -27,7 +22,7 @@
 //                                 not a device-clock value), refreshed on
 //                                 every successful upload.
 //     uptime_s       integer   — measured seconds since this boot, informational.
-//     firmwareVersion string   — compile-time constant, see FIRMWARE_VERSION.
+//     firmwareVersion string   — compile-time HYGROW_FIRMWARE_VERSION.
 //     <8 sensor fields>        — one per telemetry value below.
 //
 // Two rules this file exists to enforce:
@@ -57,58 +52,102 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
-#include <esp_timer.h>
-
-// Bumped by hand when firmware behavior meaningfully changes. Purely
-// informational for the Firestore document / downstream apps — nothing in
-// this firmware reads it back. Kept here (not config.h) since it is not a
-// runtime-configurable value and has no NVS-backed override.
-#define FIRMWARE_VERSION "1.1.3"
+#include "telemetry.h"
+#include "firebase_retry.h"
 
 static String s_fbIdToken;
 static uint32_t s_fbTokenExpiryMs = 0; // millis() timestamp after which the cached token is considered stale
 
-// ----------------------------------------------------------------------------
-// Auto-disable on repeated upload failure
-// ----------------------------------------------------------------------------
-// If Firestore uploads fail FIREBASE_MAX_CONSECUTIVE_FAILURES times in a row
-// (sign-in failures and commit failures both count), Firebase Upload is
-// switched off automatically and persisted — the same single on/off switch
-// (currentConfig.firebase_enabled) the "Firebase Upload" toggle in Settings
-// controls, so the UI reflects this the moment it happens instead of the
-// device silently retrying bad credentials/an unreachable project forever.
-// The counter resets to 0 on any successful upload, and separately whenever
-// save_firebase saves new credentials (command_handlers.cpp) or the user
-// re-enables the toggle (save_features) — both are a fresh reason to try
-// again from zero.
+// Only repeated permanent 4xx configuration/permission errors auto-disable.
+// WAN outages, socket timeouts, 408/429 and 5xx keep the user's toggle ON.
 #define FIREBASE_MAX_CONSECUTIVE_FAILURES 5
-static uint8_t s_fbConsecutiveFailures = 0;
+static uint8_t s_fbConsecutiveFailures = 0; // worker-owned
+static int s_signInFailureCode = 0; // worker-owned
+static TaskHandle_t s_uploadWorker = nullptr;
+static portMUX_TYPE s_settingsMux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_settingsGeneration = 1;
+static uint32_t s_workerGeneration = 0;
+static uint32_t s_retryDelayMs = 0;
+static uint64_t s_nextAttemptMs = 0;
+static bool s_cloudBusy = false;
+static uint32_t s_testClientId = 0;
+static uint32_t s_resultClientId = 0;
+static bool s_resultOk = false;
+static char s_resultError[160]{};
 
-// Forces the next firebaseUploadCycle() to sign in again from scratch
-// instead of reusing a cached ID token. Must be called whenever
-// fb_email/fb_pass/fb_project/fb_api_key change (see save_firebase in
-// command_handlers.cpp) — without this, a credential change while a
-// still-valid cached token exists would keep uploading under the OLD
-// identity/project until that token's ~1hr lifetime naturally expired,
-// silently ignoring the just-saved credentials in the meantime. Also resets
-// the consecutive-failure counter — new credentials deserve a fresh set of
-// attempts rather than immediately auto-disabling on the leftover count
-// from the old (bad) ones.
-void firebaseInvalidateToken()
+struct FirebaseSettings
 {
-    s_fbIdToken = "";
-    s_fbTokenExpiryMs = 0;
-    s_fbConsecutiveFailures = 0;
+    char fb_api_key[128], fb_project[64], fb_email[64], fb_pass[64], fb_collection[32];
+    bool firebase_enabled;
+};
+
+static FirebaseSettings firebaseReadConfig(uint32_t *generation = nullptr)
+{
+    FirebaseSettings copy;
+    portENTER_CRITICAL(&s_settingsMux);
+    strlcpy(copy.fb_api_key, currentConfig.fb_api_key, sizeof(copy.fb_api_key));
+    strlcpy(copy.fb_project, currentConfig.fb_project, sizeof(copy.fb_project));
+    strlcpy(copy.fb_email, currentConfig.fb_email, sizeof(copy.fb_email));
+    strlcpy(copy.fb_pass, currentConfig.fb_pass, sizeof(copy.fb_pass));
+    strlcpy(copy.fb_collection, currentConfig.fb_collection, sizeof(copy.fb_collection));
+    copy.firebase_enabled = currentConfig.firebase_enabled;
+    if (generation) *generation = s_settingsGeneration;
+    portEXIT_CRITICAL(&s_settingsMux);
+    return copy;
 }
 
-// Called from save_features (command_handlers.cpp) whenever the user
-// switches Firebase Upload back ON — including right after an auto-disable.
-// Manually re-enabling is an explicit "try again" signal, so the failure
-// count starts over instead of auto-disabling again on the very next tick
-// with 0 fresh attempts made.
+void firebaseSetEnabled(bool enabled)
+{
+    portENTER_CRITICAL(&s_settingsMux);
+    currentConfig.firebase_enabled = enabled;
+    portEXIT_CRITICAL(&s_settingsMux);
+}
+
+FirebaseStatus firebaseReadStatus()
+{
+    FirebaseStatus copy;
+    portENTER_CRITICAL(&s_settingsMux);
+    copy.ready = currentConfig.firebase_enabled && currentVitals.firebase_ready;
+    copy.lastOkMs = currentVitals.firebase_last_ok_ms;
+    memcpy(copy.lastError, currentVitals.firebase_last_error, sizeof(copy.lastError));
+    portEXIT_CRITICAL(&s_settingsMux);
+    return copy;
+}
+
+static void firebaseUpdateStatus(bool ready, const char *error = "")
+{
+    portENTER_CRITICAL(&s_settingsMux);
+    currentVitals.firebase_ready = ready;
+    if (ready) currentVitals.firebase_last_ok_ms = millis();
+    strlcpy(currentVitals.firebase_last_error, error, sizeof(currentVitals.firebase_last_error));
+    portEXIT_CRITICAL(&s_settingsMux);
+}
+
+void firebaseApplySettings(const char *api, const char *project, const char *email,
+                           const char *password, const char *collection)
+{
+    portENTER_CRITICAL(&s_settingsMux);
+    strlcpy(currentConfig.fb_api_key, api, sizeof(currentConfig.fb_api_key));
+    strlcpy(currentConfig.fb_project, project, sizeof(currentConfig.fb_project));
+    strlcpy(currentConfig.fb_email, email, sizeof(currentConfig.fb_email));
+    if (password && password[0])
+        strlcpy(currentConfig.fb_pass, password, sizeof(currentConfig.fb_pass));
+    strlcpy(currentConfig.fb_collection, collection, sizeof(currentConfig.fb_collection));
+    ++s_settingsGeneration;
+    portEXIT_CRITICAL(&s_settingsMux);
+}
+
+void firebaseInvalidateToken()
+{
+    // The worker is the only task allowed to mutate its String/token state.
+    portENTER_CRITICAL(&s_settingsMux);
+    ++s_settingsGeneration;
+    portEXIT_CRITICAL(&s_settingsMux);
+}
+
 void firebaseResetFailureCount()
 {
-    s_fbConsecutiveFailures = 0;
+    firebaseInvalidateToken();
 }
 
 // On-demand connectivity check for the Settings > Cloud Provisioning
@@ -125,14 +164,15 @@ void firebaseResetFailureCount()
 // written when this returns false.
 bool firebaseTestConnection(String &errorOut)
 {
-    if (String(currentConfig.fb_api_key).length() == 0 ||
-        String(currentConfig.fb_email).length() == 0 ||
-        String(currentConfig.fb_pass).length() == 0)
+    const auto settings = firebaseReadConfig();
+    if (String(settings.fb_api_key).length() == 0 ||
+        String(settings.fb_email).length() == 0 ||
+        String(settings.fb_pass).length() == 0)
     {
         errorOut = "Missing Web API Key, Email, or Password.";
         return false;
     }
-    if (String(currentConfig.fb_project).length() == 0)
+    if (String(settings.fb_project).length() == 0)
     {
         errorOut = "Missing Project ID.";
         return false;
@@ -146,10 +186,12 @@ bool firebaseTestConnection(String &errorOut)
     // 1. Sign in — proves the API key + email/password are valid together.
     WiFiClientSecure signInClient;
     signInClient.setInsecure();
+    signInClient.setHandshakeTimeout(2);
     HTTPClient signInHttps;
-    signInHttps.setTimeout(7000);
+    signInHttps.setConnectTimeout(2000);
+    signInHttps.setTimeout(3000);
 
-    String signInUrl = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + String(currentConfig.fb_api_key);
+    String signInUrl = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + String(settings.fb_api_key);
     if (!signInHttps.begin(signInClient, signInUrl))
     {
         errorOut = "Could not start sign-in request.";
@@ -158,8 +200,8 @@ bool firebaseTestConnection(String &errorOut)
     signInHttps.addHeader("Content-Type", "application/json");
 
     JsonDocument signInBody;
-    signInBody["email"] = currentConfig.fb_email;
-    signInBody["password"] = currentConfig.fb_pass;
+    signInBody["email"] = settings.fb_email;
+    signInBody["password"] = settings.fb_pass;
     signInBody["returnSecureToken"] = true;
     String signInBodyStr;
     serializeJson(signInBody, signInBodyStr);
@@ -206,17 +248,20 @@ bool firebaseTestConnection(String &errorOut)
     // is real and this account can actually reach it, not just that the
     // Identity Toolkit login worked in isolation (a valid login against the
     // wrong project would otherwise report a false "ok").
-    String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "devices";
-    String docId = String(currentConfig.device_id).length() > 0 ? String(currentConfig.device_id) : "esp32_device";
+    String collection = String(settings.fb_collection).length() > 0 ? String(settings.fb_collection) : "devices";
+    const auto snapshot = telemetryRead();
+    String docId = snapshot.deviceId;
 
     WiFiClientSecure fsClient;
     fsClient.setInsecure();
+    fsClient.setHandshakeTimeout(2);
     HTTPClient fsHttps;
-    fsHttps.setTimeout(7000);
+    fsHttps.setConnectTimeout(2000);
+    fsHttps.setTimeout(3000);
 
-    String fsUrl = "https://firestore.googleapis.com/v1/projects/" + String(currentConfig.fb_project) +
+    String fsUrl = "https://firestore.googleapis.com/v1/projects/" + String(settings.fb_project) +
                    "/databases/(default)/documents/" + collection + "/" + docId +
-                   "?key=" + String(currentConfig.fb_api_key);
+                   "?key=" + String(settings.fb_api_key);
     if (!fsHttps.begin(fsClient, fsUrl))
     {
         errorOut = "Signed in, but could not start the Firestore check.";
@@ -252,42 +297,47 @@ bool firebaseTestConnection(String &errorOut)
 // Exchange fb_email/fb_pass for a Firebase Identity Toolkit ID token.
 // Caches the token and its expiry so normal upload cycles don't sign in
 // every time — only when the cache is empty or has expired.
-static bool firebaseEnsureIdToken()
+static bool firebaseEnsureIdToken(const FirebaseSettings &settings)
 {
+    s_signInFailureCode = 0;
     if (s_fbIdToken.length() > 0 && (int32_t)(millis() - s_fbTokenExpiryMs) < 0)
     {
         return true; // cached token still valid
     }
 
-    if (String(currentConfig.fb_api_key).length() == 0 ||
-        String(currentConfig.fb_email).length() == 0 ||
-        String(currentConfig.fb_pass).length() == 0)
+    if (String(settings.fb_api_key).length() == 0 ||
+        String(settings.fb_email).length() == 0 ||
+        String(settings.fb_pass).length() == 0)
     {
-        strncpy(currentVitals.firebase_last_error, "Missing Firebase email/password/API key", sizeof(currentVitals.firebase_last_error) - 1);
+        s_signInFailureCode = 400;
+        firebaseUpdateStatus(false, "Missing Firebase email/password/API key");
         return false;
     }
 
     WiFiClientSecure client;
     client.setInsecure(); // Google's public CA chain rotates; verifying isn't practical on-device with limited flash for a CA bundle here.
+    client.setHandshakeTimeout(5);
     HTTPClient https;
+    https.setConnectTimeout(5000);
     https.setTimeout(5000);
 
-    String url = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + String(currentConfig.fb_api_key);
+    String url = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + String(settings.fb_api_key);
     if (!https.begin(client, url))
     {
-        strncpy(currentVitals.firebase_last_error, "signIn: HTTPClient begin() failed", sizeof(currentVitals.firebase_last_error) - 1);
+        firebaseUpdateStatus(false, "signIn: HTTPClient begin() failed");
         return false;
     }
     https.addHeader("Content-Type", "application/json");
 
     JsonDocument body;
-    body["email"] = currentConfig.fb_email;
-    body["password"] = currentConfig.fb_pass;
+    body["email"] = settings.fb_email;
+    body["password"] = settings.fb_pass;
     body["returnSecureToken"] = true;
     String bodyStr;
     serializeJson(body, bodyStr);
 
     int code = https.POST(bodyStr);
+    s_signInFailureCode = code;
     bool ok = false;
 
     if (code == 200)
@@ -304,256 +354,211 @@ static bool firebaseEnsureIdToken()
         }
         else
         {
-            strncpy(currentVitals.firebase_last_error, "signIn: malformed token response", sizeof(currentVitals.firebase_last_error) - 1);
+            firebaseUpdateStatus(false, "signIn: malformed token response");
         }
     }
     else
     {
         String err = "signIn HTTP " + String(code);
-        strncpy(currentVitals.firebase_last_error, err.c_str(), sizeof(currentVitals.firebase_last_error) - 1);
+        firebaseUpdateStatus(false, err.c_str());
     }
 
     https.end();
     return ok;
 }
 
-// Counts one failed upload attempt (sign-in failure OR commit failure both
-// call this). Once FIREBASE_MAX_CONSECUTIVE_FAILURES is hit in a row,
-// switches currentConfig.firebase_enabled off, persists it, and broadcasts
-// the new config so the Settings > Firebase Upload toggle flips to OFF in
-// every open browser tab immediately — the same live-reflects-device-state
-// path save_features already uses (command_handlers.cpp), just triggered
-// from here instead of a user click.
-static void firebaseRegisterFailure()
+// Failures from older credentials cannot disable freshly saved settings.
+static void firebaseRegisterFailure(int code, uint32_t generation)
 {
-    if (s_fbConsecutiveFailures < 255)
-        s_fbConsecutiveFailures++;
-
-    if (s_fbConsecutiveFailures >= FIREBASE_MAX_CONSECUTIVE_FAILURES && currentConfig.firebase_enabled)
+    if (!firebaseFailureIsPermanent(code))
     {
-        currentConfig.firebase_enabled = false;
+        s_fbConsecutiveFailures = 0;
+        s_retryDelayMs = s_retryDelayMs ? (s_retryDelayMs < 30000 ? s_retryDelayMs * 2 : 60000) : 5000;
+        s_nextAttemptMs = telemetryUptimeMs() + s_retryDelayMs;
+        return;
+    }
+    bool disabled = false;
+    portENTER_CRITICAL(&s_settingsMux);
+    if (generation == s_settingsGeneration)
+    {
+        if (s_fbConsecutiveFailures < 255) ++s_fbConsecutiveFailures;
+        if (s_fbConsecutiveFailures >= FIREBASE_MAX_CONSECUTIVE_FAILURES && currentConfig.firebase_enabled)
+        {
+            currentConfig.firebase_enabled = false;
+            disabled = true;
+        }
+    }
+    portEXIT_CRITICAL(&s_settingsMux);
+    if (disabled)
+    {
         state_save();
-        webLog(0, LOG_ERR, "Firebase upload failed " + String(FIREBASE_MAX_CONSECUTIVE_FAILURES) +
-                                " times in a row — Firebase Upload turned OFF automatically. "
-                                "Fix the credentials/connection in Settings, Test Connection, then re-enable.");
+        webLog(0, LOG_ERR, "Firebase has 5 permanent configuration/permission failures. Fix Cloud Provisioning, then re-enable uploads.");
         broadcastConfig();
     }
 }
 
-// Fires one Firestore commit with the current device-state snapshot. Called
-// at most once per currentConfig.interval_fb_ms from networkTaskLoop()
-// (task_network.cpp). Every call writes the FULL set of 8 telemetry fields
-// plus deviceId/status/uptime_s/firmwareVersion — a field for a disabled or
-// currently-failed sensor is written as an explicit Firestore null rather
-// than omitted, so the document always reflects current sensor availability
-// (see the file-level comment above for the full contract).
+// Called exclusively by the cloud worker. Upload the newest complete sensor
+// cycle after sign-in, with the exact same JSON fields as GET /status.
 void firebaseUploadCycle()
 {
-    if (!currentConfig.firebase_enabled)
-        return;
-    if (WiFi.status() != WL_CONNECTED)
-        return;
-    if (String(currentConfig.fb_project).length() == 0 || String(currentConfig.fb_api_key).length() == 0)
-        return;
+    uint32_t generation;
+    const auto settings = firebaseReadConfig(&generation);
+    if (!settings.firebase_enabled || WiFi.status() != WL_CONNECTED ||
+        !settings.fb_project[0] || !settings.fb_api_key[0]) return;
 
-    if (!firebaseEnsureIdToken())
+    if (generation != s_workerGeneration)
     {
-        currentVitals.firebase_ready = false;
-        webLog(0, LOG_ERR, "Firebase upload skipped: " + String(currentVitals.firebase_last_error));
-        firebaseRegisterFailure();
+        s_fbIdToken = "";
+        s_fbTokenExpiryMs = 0;
+        s_fbConsecutiveFailures = 0;
+        s_retryDelayMs = 0;
+        s_nextAttemptMs = 0;
+        s_workerGeneration = generation;
+    }
+    if (telemetryUptimeMs() < s_nextAttemptMs) return;
+    if (!firebaseEnsureIdToken(settings))
+    {
+        const auto status = firebaseReadStatus();
+        webLog(0, LOG_ERR, "Firebase upload skipped: " + String(status.lastError));
+        firebaseRegisterFailure(s_signInFailureCode, generation);
         return;
     }
+    // Save/disable may have happened during the sign-in request.
+    uint32_t latestGeneration;
+    const auto latestSettings = firebaseReadConfig(&latestGeneration);
+    if (latestGeneration != generation || !latestSettings.firebase_enabled) return;
+    const auto snapshot = telemetryRead();
+    if (!snapshot.sampleSequence) return; // startup has not produced a real cycle
 
+    const String collection = settings.fb_collection[0] ? settings.fb_collection : "devices";
+    const String documentPath = "projects/" + String(settings.fb_project) +
+        "/databases/(default)/documents/" + collection + "/" + snapshot.deviceId;
+    const String url = "https://firestore.googleapis.com/v1/projects/" + String(settings.fb_project) +
+        "/databases/(default)/documents:commit?key=" + String(settings.fb_api_key);
     WiFiClientSecure client;
-    client.setInsecure();
+    client.setInsecure(); // existing TLS policy; no change to trust configuration
+    client.setHandshakeTimeout(5);
     HTTPClient https;
+    https.setConnectTimeout(5000);
     https.setTimeout(5000);
-
-    // "devices" is the default collection (one document per physical
-    // device, keyed by device_id). Still fully driven by
-    // currentConfig.fb_collection, same as before, so an
-    // existing deployment that has already renamed its collection in
-    // Settings keeps working without any firmware-side hardcoding.
-    String collection = String(currentConfig.fb_collection).length() > 0 ? String(currentConfig.fb_collection) : "devices";
-    String docId = String(currentConfig.device_id).length() > 0 ? String(currentConfig.device_id) : "esp32_device";
-    String docPath = "projects/" + String(currentConfig.fb_project) +
-                      "/databases/(default)/documents/" + collection + "/" + docId;
-
-    // ------------------------------------------------------------------
-    // Per-sensor availability -> null vs. real value.
-    //
-    // A sensor's field is REAL (doubleValue) only when it is enabled AND
-    // its most recent read this boot succeeded (last_err[i] empty AND at
-    // least one successful read has happened, i.e. last_ok_ms[i] != 0).
-    // Every other case — disabled, never yet read, or currently erroring —
-    // sends an explicit null. This is what actually clears a stale value
-    // out of Firestore the moment a sensor stops being trustworthy, instead
-    // of just no longer refreshing it.
-    //
-    // vpd_kpa is derived from DHT22 (computeVPD() in task_sensor.cpp) and
-    // has no reading of its own, so it follows S_DHT's availability exactly
-    // — if DHT22 is unavailable, vpd_kpa can't have been (re)computed this
-    // cycle either, so it goes null right alongside temp_c/humidity.
-    //
-    // ALL 8 fields are listed in updateMask.fieldPaths on every request,
-    // whether the value is a real number or null — that's what makes this a
-    // full, atomic "current state" write instead of a partial patch: the
-    // update mask controls which fields Firestore touches, and every field
-    // in this document is meant to be touched every cycle. (Compare to the
-    // previous version, which left a disabled sensor's field out of the
-    // mask entirely — that meant Firestore silently kept whatever value was
-    // written the last time the sensor was enabled, forever.)
-    // Deliberately does NOT check sensorPinIsDemo() — a sensor currently
-    // simulating data (demo_mode, or the per-sensor save_sensor_demo
-    // toggle) still counts as "available" here and uploads exactly like a
-    // real reading, with no distinguishing flag anywhere in the document.
-    // Confirmed intentional: demo readings are meant to exercise the full
-    // pipeline including the real Firestore write path, not just the
-    // dashboard. If that ever needs to change, sensorPinIsDemo(id) (see
-    // task_sensor.cpp) is the per-sensor check to add here.
-    auto sensorAvailable = [](SensorID id) -> bool
-    {
-        return currentConfig.sensor_enabled[id] &&
-               currentSensors.last_ok_ms[id] != 0 &&
-               currentSensors.last_err[id][0] == '\0';
-    };
-
-    bool haveTds = sensorAvailable(S_TDS);
-    bool haveDht = sensorAvailable(S_DHT); // also gates vpd_kpa
-    bool haveWtemp = sensorAvailable(S_WTEMP);
-    bool haveLight = sensorAvailable(S_LIGHT);
-    bool havePh = sensorAvailable(S_PH);
-    bool haveWl = sensorAvailable(S_WL);
-
-    // Uses documents:commit (POST), NOT documents.patch (PATCH). This is a
-    // deliberate choice, not a style preference: the plain PATCH endpoint's
-    // body is only {"fields": {...}} — it has no field-transform mechanism
-    // at all, so a "REQUEST_TIME" server timestamp is NOT achievable through
-    // it (a previous version of this file tried sending a timestampValue
-    // string through PATCH, which Firestore either rejects or stores as a
-    // useless literal — see the removed NOTE this replaced). A genuine
-    // server timestamp is only available via Write.updateTransforms, and
-    // Write is a shape that only the :commit endpoint accepts. commit with
-    // a single Write entry (update + updateMask + updateTransforms) is the
-    // documented way to apply an ordinary field update and a server-value
-    // transform to the same document atomically in one request.
-    String url = "https://firestore.googleapis.com/v1/projects/" + String(currentConfig.fb_project) +
-                 "/databases/(default)/documents:commit?key=" + String(currentConfig.fb_api_key);
-
     if (!https.begin(client, url))
     {
-        currentVitals.firebase_ready = false;
-        strncpy(currentVitals.firebase_last_error, "commit: HTTPClient begin() failed", sizeof(currentVitals.firebase_last_error) - 1);
+        firebaseUpdateStatus(false, "commit: HTTPClient begin() failed");
+        firebaseRegisterFailure(-1, generation);
         return;
     }
     https.addHeader("Content-Type", "application/json");
     https.addHeader("Authorization", "Bearer " + s_fbIdToken);
 
-    // Firestore REST documents use a typed-value wrapper for every field.
-    // A field set to {"nullValue": null} is a REAL, explicit null in
-    // Firestore (distinct from the field not existing at all) — exactly
-    // what "sensor unavailable" should mean downstream.
     JsonDocument doc;
-    JsonArray writes = doc["writes"].to<JsonArray>();
-    JsonObject write = writes.add<JsonObject>();
-    JsonArray maskPaths = write["updateMask"]["fieldPaths"].to<JsonArray>();
-    maskPaths.add("deviceId");
-    maskPaths.add("status");
-    maskPaths.add("uptime_s");
-    maskPaths.add("firmwareVersion");
-    maskPaths.add("tds_ppm");
-    maskPaths.add("temp_c");
-    maskPaths.add("humidity");
-    maskPaths.add("vpd_kpa");
-    maskPaths.add("water_temp_c");
-    maskPaths.add("lux");
-    maskPaths.add("ph_val");
-    maskPaths.add("wl_percent");
-
-    // lastUpdated is deliberately NOT in updateMask.fieldPaths above and NOT
-    // in fields{} below — it is set exclusively via updateTransforms, the
-    // only mechanism that produces a genuine Firestore SERVER timestamp
-    // (setToServerValue: REQUEST_TIME). A plain fields["lastUpdated"] value
-    // here would use whatever the ESP32 thinks the time is, which point 3
-    // of the architecture explicitly forbids relying on for Offline
-    // detection. Firestore applies updateTransforms AFTER update in the
-    // same Write, so this and the fields{} below land atomically together.
-    JsonObject transform = write["updateTransforms"].to<JsonArray>().add<JsonObject>();
-    transform["fieldPath"] = "lastUpdated";
-    transform["setToServerValue"] = "REQUEST_TIME";
-
-    write["update"]["name"] = docPath;
-    JsonObject fields = write["update"]["fields"].to<JsonObject>();
-
-    fields["deviceId"]["stringValue"] = docId;
-    fields["status"]["stringValue"] = "Online"; // connectivity, not sensor health — see file header
-    fields["firmwareVersion"]["stringValue"] = FIRMWARE_VERSION;
-    // Read the board's elapsed time at upload, rather than deriving uptime
-    // from the configured upload interval. The 64-bit timer also avoids the
-    // millis() wrap after roughly 49 days of continuous operation.
-    char uptimeSeconds[24];
-    snprintf(uptimeSeconds, sizeof(uptimeSeconds), "%lld",
-             static_cast<long long>(esp_timer_get_time() / 1000000LL));
-    fields["uptime_s"]["integerValue"] = uptimeSeconds;
-
-    if (haveTds)
-        fields["tds_ppm"]["doubleValue"] = currentSensors.tds_ppm;
-    else
-        fields["tds_ppm"]["nullValue"] = nullptr;
-
-    if (haveDht)
-    {
-        fields["temp_c"]["doubleValue"] = currentSensors.temp_c;
-        fields["humidity"]["doubleValue"] = currentSensors.humidity;
-        fields["vpd_kpa"]["doubleValue"] = currentSensors.vpd_kpa;
-    }
-    else
-    {
-        fields["temp_c"]["nullValue"] = nullptr;
-        fields["humidity"]["nullValue"] = nullptr;
-        fields["vpd_kpa"]["nullValue"] = nullptr;
-    }
-
-    if (haveWtemp)
-        fields["water_temp_c"]["doubleValue"] = currentSensors.water_temp_c;
-    else
-        fields["water_temp_c"]["nullValue"] = nullptr;
-
-    if (haveLight)
-        fields["lux"]["doubleValue"] = currentSensors.lux;
-    else
-        fields["lux"]["nullValue"] = nullptr;
-
-    if (havePh)
-        fields["ph_val"]["doubleValue"] = currentSensors.ph_val;
-    else
-        fields["ph_val"]["nullValue"] = nullptr;
-
-    if (haveWl)
-        fields["wl_percent"]["doubleValue"] = currentSensors.wl_percent;
-    else
-        fields["wl_percent"]["nullValue"] = nullptr;
-
+    JsonObject write = doc["writes"].to<JsonArray>().add<JsonObject>();
+    writeTelemetryFirestore(write, snapshot, telemetryUptimeMs(), documentPath.c_str());
     String payload;
     serializeJson(doc, payload);
-
-    int code = https.POST(payload);
-
+    const int code = https.POST(payload);
     if (code >= 200 && code < 300)
     {
-        currentVitals.firebase_ready = true;
-        currentVitals.firebase_last_ok_ms = millis();
-        currentVitals.firebase_last_error[0] = '\0';
-        s_fbConsecutiveFailures = 0; // any successful upload clears the streak
+        firebaseUpdateStatus(true);
+        s_fbConsecutiveFailures = 0;
+        s_retryDelayMs = 0;
+        s_nextAttemptMs = 0;
     }
     else
     {
-        currentVitals.firebase_ready = false;
-        String err = "Firestore commit HTTP " + String(code);
-        strncpy(currentVitals.firebase_last_error, err.c_str(), sizeof(currentVitals.firebase_last_error) - 1);
-        webLog(0, LOG_ERR, "Firebase upload failed: " + err);
-        firebaseRegisterFailure();
+        const String error = "Firestore commit HTTP " + String(code);
+        firebaseUpdateStatus(false, error.c_str());
+        if (code == 401) s_fbTokenExpiryMs = 0; // force a fresh token next time
+        webLog(0, LOG_ERR, "Firebase upload failed: " + error);
+        firebaseRegisterFailure(code, generation);
     }
-
     https.end();
+}
+
+static void firebaseWorker(void *)
+{
+    for (;;)
+    {
+        // pdTRUE clears all pending notifications: a bounded latest-state
+        // request, rather than replaying each missed cadence/history item.
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        portENTER_CRITICAL(&s_settingsMux);
+        s_cloudBusy = true;
+        const uint32_t testClientId = s_testClientId;
+        s_testClientId = 0;
+        const uint32_t generation = s_settingsGeneration;
+        portEXIT_CRITICAL(&s_settingsMux);
+        if (testClientId)
+        {
+            String error;
+            bool ok = firebaseTestConnection(error);
+            portENTER_CRITICAL(&s_settingsMux);
+            const bool changed = generation != s_settingsGeneration;
+            portEXIT_CRITICAL(&s_settingsMux);
+            if (changed)
+            {
+                ok = false;
+                error = "Cloud settings changed during the test. Test again after saving.";
+            }
+            portENTER_CRITICAL(&s_settingsMux);
+            s_resultOk = ok;
+            strlcpy(s_resultError, error.c_str(), sizeof(s_resultError));
+            s_resultClientId = testClientId;
+            portEXIT_CRITICAL(&s_settingsMux);
+        }
+        else firebaseUploadCycle();
+        portENTER_CRITICAL(&s_settingsMux);
+        s_cloudBusy = false;
+        portEXIT_CRITICAL(&s_settingsMux);
+    }
+}
+
+void firebaseStartWorker()
+{
+    if (s_uploadWorker) return;
+    if (xTaskCreatePinnedToCore(firebaseWorker, "FirebaseUpload", 12288, nullptr,
+                               1, &s_uploadWorker, 0) != pdPASS)
+    {
+        s_uploadWorker = nullptr;
+        webLog(0, LOG_ERR, "Firebase worker could not start. Local telemetry remains available.");
+    }
+}
+
+void firebaseRequestUpload()
+{
+    portENTER_CRITICAL(&s_settingsMux);
+    const bool ready = !s_cloudBusy && !s_testClientId;
+    portEXIT_CRITICAL(&s_settingsMux);
+    if (ready && s_uploadWorker && currentConfig.firebase_enabled && WiFi.status() == WL_CONNECTED)
+        xTaskNotifyGive(s_uploadWorker);
+}
+
+bool firebaseRequestTest(uint32_t clientId)
+{
+    if (!s_uploadWorker || !clientId) return false;
+    portENTER_CRITICAL(&s_settingsMux);
+    const bool available = !s_cloudBusy && !s_testClientId && !s_resultClientId;
+    if (available) s_testClientId = clientId;
+    portEXIT_CRITICAL(&s_settingsMux);
+    if (available) xTaskNotifyGive(s_uploadWorker);
+    return available;
+}
+
+void firebaseNetworkLoop()
+{
+    uint32_t clientId;
+    bool ok;
+    char error[sizeof(s_resultError)];
+    portENTER_CRITICAL(&s_settingsMux);
+    clientId = s_resultClientId;
+    ok = s_resultOk;
+    memcpy(error, s_resultError, sizeof(error));
+    s_resultClientId = 0;
+    portEXIT_CRITICAL(&s_settingsMux);
+    if (!clientId) return;
+    webLog(0, ok ? LOG_INFO : LOG_ERR, ok ? "Firebase connection test succeeded." : "Firebase connection test failed: " + String(error));
+    // Resolve the client again after the request; never retain a WS pointer
+    // while waiting for HTTPS or send a result to a logged-out connection.
+    auto *client = ws.client(clientId);
+    if (client && client->status() == WS_CONNECTED && wsClientIsAuthed(clientId))
+        sendCmdAck(client, "test_firebase", ok, error);
 }

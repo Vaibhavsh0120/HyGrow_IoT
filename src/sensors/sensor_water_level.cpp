@@ -25,19 +25,25 @@
 #define WL_SAMPLE_GAP_MS 2
 
 static bool s_wlReady = false;
+static int s_signalPin = -1;
+static int s_powerPin = -1;
 
 void initWaterLevel()
 {
-    pinMode(currentConfig.pin_wl_power, OUTPUT);
+    // Pin saves require a reboot. This driver owns its initialized pins so
+    // an async settings/demo change cannot redirect a pulse or strand HIGH.
+    s_signalPin = currentConfig.pin_wl;
+    s_powerPin = currentConfig.pin_wl_power;
+    pinMode(s_powerPin, OUTPUT);
     // Keep the probe unpowered until a read is actually requested — this is
     // the whole point of the power gate (minimize time under voltage).
-    digitalWrite(currentConfig.pin_wl_power, LOW);
+    digitalWrite(s_powerPin, LOW);
 
-    pinMode(currentConfig.pin_wl, INPUT);
+    pinMode(s_signalPin, INPUT);
 
     s_wlReady = true;
-    webLog(1, LOG_INFO, "Water level sensor initialized (Sig: " + String(currentConfig.pin_wl) +
-                             ", Pwr: " + String(currentConfig.pin_wl_power) + ")");
+    webLog(1, LOG_INFO, "Water level sensor initialized (Sig: " + String(s_signalPin) +
+                             ", Pwr: " + String(s_powerPin) + ")");
 }
 
 void sensor_wl_init()
@@ -61,19 +67,19 @@ float readWaterLevel()
     // first conversion after power-on/channel switching, then collect a
     // burst. Cut power before filtering; the nominal on-time is ~66ms plus
     // ADC conversion time, with the probe off between sensor cycles.
-    digitalWrite(currentConfig.pin_wl_power, HIGH);
+    digitalWrite(s_powerPin, HIGH);
     delay(WL_SETTLE_MS);
 
-    (void)analogReadMilliVolts(currentConfig.pin_wl);
+    (void)analogReadMilliVolts(s_signalPin);
     int samples[WL_SAMPLE_COUNT];
     for (int i = 0; i < WL_SAMPLE_COUNT; i++)
     {
-        samples[i] = analogReadMilliVolts(currentConfig.pin_wl);
+        samples[i] = analogReadMilliVolts(s_signalPin);
         if (i + 1 < WL_SAMPLE_COUNT)
             delay(WL_SAMPLE_GAP_MS);
     }
 
-    digitalWrite(currentConfig.pin_wl_power, LOW);
+    digitalWrite(s_powerPin, LOW);
 
     // Sort this small stack buffer and use its middle value. Zero remains
     // a valid sample: sustained dry readings must still reach the graph.

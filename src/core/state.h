@@ -91,6 +91,7 @@ struct SensorState
   float tds_ppm;
   float lux;
   float ph_val;
+  float ph_voltage_mv; // raw calibrated ADC millivolts for real pH calibration
   float wl_percent;
   float vpd_kpa;
 
@@ -202,12 +203,11 @@ void auth_set_password(const String &newPass); // first-time setup OR admin-init
 String auth_issue_token();                 // generates + persists a new random session token, returns it
 bool auth_check_token(const String &candidate);
 void auth_reset();                         // wipe ONLY the password + token (BOOT button 10s hold)
-// Boot-time Serial banner only (HyGrow_IoT.ino setup()) — never sent over
-// the network. See the comment on the definition in state.cpp.
+// Used by the boot webLog banner, including authenticated terminal replay.
+// See the deliberate credential-display policy in state.cpp.
 String auth_get_password_for_boot_display();
 // Returns the current plaintext admin password, or "" if unconfigured.
-// Unlike auth_get_password_for_boot_display() above, this IS sent over the
-// network — see the comment on its definition in state.cpp for the trust
+// Sent to authenticated dashboard clients — see its definition for the trust
 // tradeoff this represents before calling it from anywhere new.
 String auth_get_password_for_ws();
 

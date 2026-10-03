@@ -1,7 +1,7 @@
 #include "../core/state.h"
 #include <Arduino.h>
 
-float readPH();
+static float readPH(float offset, float slope);
 
 // Assuming a standard 12-bit ADC for ESP32 and 3.3V reference
 
@@ -18,28 +18,24 @@ void sensor_ph_init()
 
 bool sensor_ph_read(float ph_offset, float ph_slope, float &ph_value)
 {
-    // NOTE: ph_offset/ph_slope are accepted as parameters to match the other
-    // sensor_*_read() signatures' style, but readPH() below reads
-    // currentConfig.ph_offset/ph_slope directly — and the call site
-    // (task_sensor.cpp) always passes those exact same fields back in, so
-    // there's nothing to apply here. (This used to write the parameters back
-    // into currentConfig.ph_offset/ph_slope, which was a pure self-assignment
-    // no-op every single read — removed.)
-    float value = readPH();
+    float value = readPH(ph_offset, ph_slope);
     ph_value = value;
     return !isnan(value);
 }
 
-float readPH()
+static float readPH(float offset, float slope)
 {
     // 1. Read the raw analog value in true Volts using hardware calibration.
     // sensor_enabled[S_PH] is what decides whether this ever gets called in
     // practice — see validateSensor()/readAll() in task_sensor.cpp.
-    float voltage = analogReadMilliVolts(currentConfig.pin_ph) / 1000.0;
+    const int pin = currentConfig.pin_ph;
+    const float milliVolts = analogReadMilliVolts(pin);
+    currentSensors.ph_voltage_mv = milliVolts;
+    float voltage = milliVolts / 1000.0f;
 
     // 2. Calculate pH value using live calibration variables from NVS
     // Linear equation: pH = (slope * voltage) + offset
-    float phValue = (currentConfig.ph_slope * voltage) + currentConfig.ph_offset;
+    float phValue = (slope * voltage) + offset;
 
     // 3. Sanity bounds check (pH is strictly 0 to 14)
     if (phValue < 0.0)

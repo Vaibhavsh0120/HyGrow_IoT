@@ -51,6 +51,8 @@ const context = vm.createContext({
     console,
 });
 const app = fs.readFileSync(path.join(__dirname, '..', 'data', 'js', 'app.js'), 'utf8');
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'data', 'js', 'terminal.js'), 'utf8'), context);
+vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'data', 'js', 'telemetry-view.js'), 'utf8'), context);
 vm.runInContext(app, context);
 vm.runInContext('websocket = new WebSocket()', context);
 

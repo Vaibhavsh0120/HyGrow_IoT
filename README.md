@@ -5,6 +5,12 @@ its own web dashboard, so you can view readings and change settings on a
 local connection. Internet access is only needed for optional Firestore
 uploads.
 
+Apps can discover the board on the local network over UDP **39400**, then
+read the latest sensor JSON at **`http://<device-ip>/status`**. This works on
+Wi-Fi even when the router has no internet. See the
+[app developer integration handoff](docs/APP_LOCAL_TELEMETRY_HANDOFF.md) for
+the discovery messages, JSON fields and mobile permissions.
+
 Sensor reading and networking run on separate FreeRTOS cores. Settings,
 calibration, and pin assignments are saved on the board across normal reboots.
 
@@ -170,17 +176,27 @@ arduino-cli compile --fqbn esp32:esp32:esp32s3:UploadSpeed=115200,USBMode=hwcdc,
 - **Dashboard:** view current readings and device connection state. A green
   sensor dot means a healthy real reading; purple means simulated Demo Mode;
   red means a read error; gray means disabled or device offline. A waiting
-  sensor uses amber until its first successful reading. A missing or failed
+  sensor uses amber until its first successful reading or when its last sample
+  becomes stale. A missing or failed
   reading shows `--` instead of an old value.
 - **Sensor pages:** see a sensor's reading, pin, state, Demo Mode switch, and
   power switch. A sensor can be enabled yet still have a read error.
 - **Calibration:** use the one-point TDS and two-point pH guides, but only
   after a healthy real reading.
-  Demo, disabled, failed, and offline sensors cannot be calibrated.
+  Demo, disabled, failed, stale, and offline sensors cannot be calibrated.
+  The pH guide captures raw probe voltage, so it also works before the first
+  calibration. Graph history contains completed sensor cycles; CSV exports
+  retain sample identity and sensor state, with blanks for missing values.
 - **Settings:** change Wi-Fi, password, cloud credentials, Demo Mode, sensor
   pins, and timing. An **Unsaved changes** control stays visible across pages
   when Settings edits are pending; open it to save or discard each section.
-- **Terminal:** see device logs, including sensor errors and reboot reasons.
+- **Terminal:** search device messages and filter warnings/errors. Consecutive
+  repeats collapse with a count, and timestamps show time since device startup.
+  Pause freezes the view while retaining incoming messages; Resume catches up.
+  Copy visible works over local HTTP and respects filters. The browser retains
+  up to 200 grouped rows from a bounded 800-event window; the device replays its
+  latest 40 messages in one batch after login. Serial uses the same readable
+  time, severity and Device/Sensors labels.
 
 Global Demo Mode simulates every sensor and requires a reboot to apply.
 Turning it off leaves all sensors enabled. Individual sensor pages also have
@@ -214,6 +230,13 @@ The device cannot write an “Offline” update after it loses power or network
 access. A separate reader must compare `lastUpdated` against the current
 time to detect stale devices. A failed sensor does not mean the whole device
 is offline.
+
+Local status, dashboard updates and cloud uploads use the same completed
+sensor sample. Cloud requests run on a separate worker so internet timeouts
+do not hold up local updates. Internet outages keep the Firebase toggle on
+and retry with a capped backoff; repeated permanent credentials/permission
+errors can still turn it off. Firestore also receives sample freshness and
+per-sensor demo/health metadata alongside the existing reading fields.
 
 ## Recovery and troubleshooting
 

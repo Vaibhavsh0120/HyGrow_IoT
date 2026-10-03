@@ -50,6 +50,7 @@ static bool powered = false;
 static unsigned long now = 0, powerOn = 0, onDuration = 0, warmup = 0;
 static unsigned sampleIndex = 0, pulses = 0;
 static std::vector<uint32_t> samples;
+static bool mutatePinsDuringPulse = false;
 
 static void require(bool ok, const char* message) {
     if (!ok) { std::cerr << message << '\n'; std::exit(1); }
@@ -57,7 +58,7 @@ static void require(bool ok, const char* message) {
 void pinMode(int, int) {}
 void webLog(int, int, const std::string&) {}
 void digitalWrite(int pin, int value) {
-    require(pin == currentConfig.pin_wl_power, "Wrong power gate pin");
+    require(pin == 5, "Wrong initialized power gate pin");
     if (value == HIGH) {
         require(!powered, "Probe was left powered between reads");
         powered = true; powerOn = now; ++pulses;
@@ -66,9 +67,12 @@ void digitalWrite(int pin, int value) {
         powered = false;
     }
 }
-void delay(unsigned long ms) { now += ms; }
+void delay(unsigned long ms) {
+    now += ms;
+    if (mutatePinsDuringPulse) { currentConfig.pin_wl = 10; currentConfig.pin_wl_power = -42; }
+}
 uint32_t analogReadMilliVolts(uint8_t pin) {
-    require(pin == currentConfig.pin_wl, "Wrong signal pin");
+    require(pin == 1, "Wrong initialized signal pin");
     require(powered, "ADC sampled while probe was off");
     if (now - powerOn < warmup) return 0;
     return samples[std::min<size_t>(sampleIndex++, samples.size() - 1)];
@@ -90,6 +94,13 @@ int main() {
             "Uninitialized probe must not publish a false zero");
     sensor_wl_init();
     require(!powered, "Initialization must leave the probe unpowered");
+    mutatePinsDuringPulse = true;
+    require(std::fabs(read({1650}, 30) - 50.0f) < 0.01f,
+            "A settings change during the pulse must not change either GPIO");
+    mutatePinsDuringPulse = false;
+    require(std::fabs(read({1650}, 30) - 50.0f) < 0.01f,
+            "Saved pins must wait for reinitialization before touching hardware");
+    currentConfig.pin_wl = 1; currentConfig.pin_wl_power = 5;
 
     // A probe that needs 30 ms to settle must not publish its startup zero.
     require(std::fabs(read({1650}, 30) - 50.0f) < 0.01f,
