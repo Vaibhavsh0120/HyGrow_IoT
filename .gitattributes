@@ -1,0 +1,5 @@
+# Precompressed assets must match a clean checkout on every operating system.
+/data/index.html text eol=lf
+/data/css/*.css text eol=lf
+/data/js/*.js text eol=lf
+*.gz binary
