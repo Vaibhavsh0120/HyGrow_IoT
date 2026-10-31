@@ -317,3 +317,16 @@ LittleFS; the longer former font filename could not be packaged with `.gz`.
 
 This repository has no license file yet. Add one before redistributing the
 project if you want to state what others may do with the code.
+
+## Connected-board verification (31 October 2026)
+
+The incomplete local Arduino framework package was reinstalled, followed by a
+clean successful build. Firmware 3.1.4 and LittleFS were uploaded to the connected
+ESP32-S3, with flash hashes verified. NVS settings were preserved and Firebase
+settings updated through the authenticated device interface. Encrypted
+`secrets.h.age` backs up ignored `secrets.h` using the owner's existing age key.
+
+Fresh local and canonical Firestore readings were verified before removing the
+obsolete telemetry document and rule. See
+`docs/HARDWARE_VERIFICATION_2026_10_31.json` for artifact hashes and the browser
+LAN-only test boundary.

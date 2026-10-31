@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-31",
+  "board": "ESP32-S3, embedded 8MB PSRAM",
+  "port": "COM4",
+  "deviceId": "ESP32S3_001",
+  "firmwareVersion": "3.1.4",
+  "frameworkRepair": "Reinstalled incomplete framework-arduinoespressif32 package; clean build passed",
+  "firmwareUpload": "passed; flash hash verified",
+  "littlefsUpload": "passed; flash hash verified",
+  "localStatus": "http://192.168.0.111/status",
+  "schemaVersion": 1,
+  "cloudDocument": "devices/ESP32S3_001",
+  "freshHardwareCloudUploadVerified": true,
+  "legacyDocumentBackedUpAndRemoved": "sensor_readings/ESP32S3_001",
+  "offlineWebTest": {
+    "externalRequestsBlocked": [
+      "firestore.googleapis.com",
+      "identitytoolkit.googleapis.com",
+      "www.google.com"
+    ],
+    "lanAllowed": true,
+    "reloadPassed": true,
+    "source": "local",
+    "sampleSequenceBefore": 155,
+    "sampleSequenceAfter": 158,
+    "physicalWanDisconnectTested": false
+  },
+  "firmware.binSha256": "375a98c68f5c87fae006fa5889de91cd8776b69df9724d1a458cd22c8d2bc799",
+  "littlefs.binSha256": "582657b1015e685772e16b2d83d633defec99c75f312d46efa26145c82689afe"
+}
