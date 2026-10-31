@@ -14,6 +14,42 @@ the discovery messages, JSON fields and mobile permissions.
 Sensor reading and networking run on separate FreeRTOS cores. Settings,
 calibration, and pin assignments are saved on the board across normal reboots.
 
+## System architecture
+
+```mermaid
+flowchart LR
+    Sensors["DHT22, DS18B20, BH1750, TDS, pH and water-level sensors"]
+
+    subgraph Controller["ESP32-S3 controller"]
+        Sampling["Sensor task: sampling and calibration"]
+        Snapshot["Shared telemetry snapshot: schema 1"]
+        Network["Network task and web services"]
+        NVS["NVS: saved settings, calibration and pins"]
+        Files["LittleFS: dashboard assets"]
+        Sampling --> Snapshot
+        Snapshot --> Network
+        NVS -->|Sensor configuration| Sampling
+        NVS <-->|Load and save settings| Network
+        Files -->|Serve dashboard| Network
+    end
+
+    Sensors --> Sampling
+    Network <-->|Authenticated dashboard WebSocket| Browser["Browser: local dashboard"]
+    Network -->|Read-only GET /status| Client["LAN client: configured device address"]
+    Discovery["Discovery client"] <-->|UDP port 39400| Network
+    Network -->|Optional telemetry uploads| Cloud["Firebase / Firestore"]
+```
+
+The sensor task produces readings independently of network work. Local HTTP,
+WebSocket telemetry, and cloud uploads share the same measurement snapshot.
+Settings persist in NVS; the dashboard files live in LittleFS. The local dashboard
+and LAN telemetry work without internet; cloud uploads require configured access.
+
+Demo Mode supplies labelled simulated readings for setup. Sensor health and sample
+freshness remain separate from network reachability. The firmware provides UDP
+discovery, while the current HyGrow app uses a configured `/status` URL.
+Physical pump control and irrigation automation are not implemented.
+
 ## What you need
 
 - An **ESP32-S3 N16R8** board (16 MB flash, 8 MB PSRAM).
