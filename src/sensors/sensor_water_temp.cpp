@@ -1,6 +1,7 @@
 #include "../core/state.h"
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <math.h>
 
 float readWaterTemp();
 
@@ -59,7 +60,7 @@ float readWaterTemp()
     float tempC = waterTempSensor->getTempCByIndex(0);
 
     // 3. Error Handling
-    if (tempC == DEVICE_DISCONNECTED_C)
+    if (!isfinite(tempC) || tempC == DEVICE_DISCONNECTED_C || tempC < -55.0f || tempC > 125.0f)
     {
         webLog(1, LOG_ERR, "DS18B20 sensor disconnected or not found!");
         return NAN;

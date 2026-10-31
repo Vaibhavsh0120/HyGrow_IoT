@@ -89,7 +89,7 @@ const SETTINGS_FIELDS = {
 function isSettingsGroupDirty(group) {
     if (group === 'features') return featuresDirty;
     if (group === 'pinout') return pinoutDirty;
-    if (group === 'password') return ['cfg-pass-new', 'cfg-pass-confirm'].some(id => !!document.getElementById(id)?.value);
+    if (group === 'password') return ['cfg-pass-current', 'cfg-pass-new', 'cfg-pass-confirm'].some(id => !!document.getElementById(id)?.value);
     const fields = SETTINGS_FIELDS[group];
     const fieldChanged = Object.keys(fields).some(id => {
         const input = document.getElementById(id);
@@ -124,7 +124,7 @@ function discardSettingsGroup(group) {
     if (group === 'features' || group === 'pinout') {
         document.getElementById(SETTINGS_GROUPS[group].discard)?.click();
     } else if (group === 'password') {
-        ['cfg-pass-new', 'cfg-pass-confirm'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        ['cfg-pass-current', 'cfg-pass-new', 'cfg-pass-confirm'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
         document.getElementById('cfg-pass-error')?.classList.add('hidden');
     } else {
         Object.entries(SETTINGS_FIELDS[group]).forEach(([id, key]) => {
@@ -923,13 +923,7 @@ function handleChangePasswordResult(msg) {
             btn.innerText = 'Password Updated!';
             setTimeout(() => { btn.innerText = original; }, 2000);
         }
-        // cfg-admin-pass-display is intentionally NOT cleared here — it's
-        // read-only and will refresh itself with the new password via the
-        // "config" frame the server broadcasts right after a successful
-        // change (see broadcastConfig() in handleChangePasswordCommand(),
-        // auth.cpp), so clearing it would just show a blank field for a
-        // moment for no reason.
-        ['cfg-pass-new', 'cfg-pass-confirm'].forEach((id) => {
+        ['cfg-pass-current', 'cfg-pass-new', 'cfg-pass-confirm'].forEach((id) => {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
@@ -1154,6 +1148,11 @@ function runSaveButton(btn, payload, savedText, idleText) {
     sendCommand(payload).then(() => {
         btn.disabled = false;
         btn.innerText = savedText || 'Saved!';
+        if (payload.command === 'save_firebase') {
+            const password = document.getElementById('cfg-fb-pass');
+            if (password && password.value === payload.pass) password.value = '';
+            updateUnsavedChanges();
+        }
         setTimeout(() => { btn.innerText = original; }, 2000);
     }).catch((err) => {
         btn.disabled = false;
@@ -1661,17 +1660,6 @@ function updateConfigForm(msg) {
         });
     });
 
-    // Plaintext credentials (see broadcastConfig(), task_network.cpp, and
-    // auth_get_password_for_ws(), state.cpp, for the tradeoff this
-    // represents). wifi-pass/ap-pass are the same "leave blank to keep
-    // current" inputs used for saving — pre-filling them means an untouched
-    // Update Network click now re-submits the current password instead of
-    // leaving it unchanged server-side, so save_wifi (command_handlers.cpp)
-    // must treat "unchanged from msg.wifi_pass" the same as blank. cfg-fb-pass
-    // gets the same treatment for consistency with cfg-fb-api just above.
-    // cfg-admin-pass-display is read-only and never submitted anywhere.
-    if(document.getElementById('cfg-admin-pass-display')) document.getElementById('cfg-admin-pass-display').value = msg.admin_pass || "";
-
     // Re-run form validation now that fresh values landed in these fields —
     // same reasoning as the pin-field re-validation below.
     if (typeof validateWifiForm === 'function') validateWifiForm();
@@ -2057,7 +2045,6 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById(SETTINGS_GROUPS[group].card)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
     document.querySelectorAll('#page-8 input').forEach(input => {
-        if (input.id === 'cfg-admin-pass-display') return;
         input.addEventListener('input', updateUnsavedChanges);
         input.addEventListener('change', updateUnsavedChanges);
     });
@@ -2239,12 +2226,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnChangePassword = document.getElementById('btn-change-password');
     if (btnChangePassword) {
         btnChangePassword.addEventListener('click', () => {
-            // cfg-pass-current (a separate typed re-entry field) was
-            // removed as redundant: cfg-admin-pass-display already shows
-            // the device's live current password, so its value is the
-            // "current" field sent to the server — no separate typed
-            // field needed. See the comment on that field in index.html.
-            const current = document.getElementById('cfg-admin-pass-display').value;
+            const current = document.getElementById('cfg-pass-current').value;
             const next = document.getElementById('cfg-pass-new').value;
             const confirmNext = document.getElementById('cfg-pass-confirm').value;
             const err = document.getElementById('cfg-pass-error');
@@ -2297,16 +2279,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!validateWifiForm() || !validateApPassField()) return;
             const apPassEl = document.getElementById('cfg-ap-pass');
             const rawApPass = apPassEl ? apPassEl.value : '';
-            // cfg-ap-pass/cfg-wifi-pass now arrive pre-filled with the
-            // device's live password (updateConfigForm() -> msg.ap_pass/
-            // msg.wifi_pass) so the reveal-eye has something to show. That
-            // means the field is no longer blank just because the user
-            // didn't touch it, so "did the user actually change this" has
-            // to be a comparison against the last value the device sent us,
-            // not a blank check — otherwise every save (even one that only
-            // touched the SSID) would resend the current password and
-            // needlessly re-trip save_wifi's changingWifiPass/changingApPass
-            // branches (command_handlers.cpp) on every click.
+            // Blank password fields retain saved values.
             const newApPass = (rawApPass && rawApPass !== (globalConfigCache.ap_pass || '')) ? rawApPass : '';
             const wifiPassEl = document.getElementById('cfg-wifi-pass');
             const rawWifiPass = wifiPassEl ? wifiPassEl.value : '';
@@ -2320,6 +2293,7 @@ document.addEventListener('DOMContentLoaded', () => {
             sendCommand(payload).then(() => {
                 btnSaveWifi.innerText = "Saved!";
                 setTimeout(() => { btnSaveWifi.innerText = "Update Network"; }, 2000);
+                if (wifiPassEl) wifiPassEl.value = '';
                 if (apPassEl) apPassEl.value = ''; // never leave a saved password sitting in the field
                 updateUnsavedChanges();
                 // Fix (gap #6): if the new credentials are wrong, the device
@@ -2382,10 +2356,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if(btnSaveFb) {
         btnSaveFb.addEventListener('click', () => {
             if (!validateFirebaseForm()) return;
-            // cfg-fb-pass is pre-filled with the live device value the same
-            // way cfg-wifi-pass/cfg-ap-pass are (see the save_wifi handler
-            // above) — same "only send it if it actually changed" guard,
-            // for the same reason.
             const fbPassEl = document.getElementById('cfg-fb-pass');
             const rawFbPass = fbPassEl ? fbPassEl.value : '';
             const newFbPass = (rawFbPass && rawFbPass !== (globalConfigCache.fb_pass || '')) ? rawFbPass : '';

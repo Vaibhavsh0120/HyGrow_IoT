@@ -203,14 +203,6 @@ void auth_set_password(const String &newPass); // first-time setup OR admin-init
 String auth_issue_token();                 // generates + persists a new random session token, returns it
 bool auth_check_token(const String &candidate);
 void auth_reset();                         // wipe ONLY the password + token (BOOT button 10s hold)
-// Used by the boot webLog banner, including authenticated terminal replay.
-// See the deliberate credential-display policy in state.cpp.
-String auth_get_password_for_boot_display();
-// Returns the current plaintext admin password, or "" if unconfigured.
-// Sent to authenticated dashboard clients — see its definition for the trust
-// tradeoff this represents before calling it from anywhere new.
-String auth_get_password_for_ws();
-
 // Log helper — core is 0 (network) or 1 (sensor); level is LOG_INFO/WARN/ERR.
 // Every call does three things, always in this order, so the Serial monitor
 // and the web Terminal (data/index.html Page 9) never drift apart:

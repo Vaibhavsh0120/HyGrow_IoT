@@ -210,7 +210,18 @@ connection.
 the `HyGrow-Setup` network. Reconnect to it and return to 192.168.4.1 to
 correct the settings.
 
+Passwords are write-only in Settings. Leave Wi-Fi, recovery AP and Firebase
+password fields blank to retain saved values. Changing the admin password
+requires typing the current password. Saved passwords are not returned in
+config frames or boot logs.
+
 ## Cloud upload (optional)
+
+Cloud connections verify Google TLS certificate chains. The cloud worker starts
+network time synchronization and waits for a valid clock without blocking the
+local dashboard. Networks that block SNTP can therefore prevent cloud uploads;
+local telemetry remains available. Public trust anchors live in
+`src/core/firebase_tls.h` and need updating before CA rotation or June 2036.
 
 The device can update one Firestore document at `devices/{device_id}` by
 default. You can change the collection in Cloud Provisioning. The document

@@ -54,6 +54,8 @@
 #include <WiFiClientSecure.h>
 #include "telemetry.h"
 #include "firebase_retry.h"
+#include "firebase_tls.h"
+#include <time.h>
 
 static String s_fbIdToken;
 static uint32_t s_fbTokenExpiryMs = 0; // millis() timestamp after which the cached token is considered stale
@@ -70,6 +72,7 @@ static uint32_t s_workerGeneration = 0;
 static uint32_t s_retryDelayMs = 0;
 static uint64_t s_nextAttemptMs = 0;
 static bool s_cloudBusy = false;
+static uint32_t s_pendingDisableGeneration = 0;
 static uint32_t s_testClientId = 0;
 static uint32_t s_resultClientId = 0;
 static bool s_resultOk = false;
@@ -150,6 +153,18 @@ void firebaseResetFailureCount()
     firebaseInvalidateToken();
 }
 
+// Start SNTP without blocking local telemetry; fail closed until time is set.
+static bool firebaseClockReady()
+{
+    static bool started = false;
+    if (!started)
+    {
+        configTime(0, 0, "time.google.com", "pool.ntp.org", "time.nist.gov");
+        started = true;
+    }
+    return time(nullptr) >= 1735689600; // 2025-01-01, reject unset epoch
+}
+
 // On-demand connectivity check for the Settings > Cloud Provisioning
 // "Test Connection" button (test_firebase command, command_handlers.cpp).
 // Performs a REAL sign-in against Identity Toolkit with whatever is
@@ -183,9 +198,15 @@ bool firebaseTestConnection(String &errorOut)
         return false;
     }
 
-    // 1. Sign in — proves the API key + email/password are valid together.
+    if (!firebaseClockReady())
+    {
+        errorOut = "Waiting for network time for TLS certificate validation.";
+        return false;
+    }
+
+    // 1. Sign in - proves the API key + email/password are valid together.
     WiFiClientSecure signInClient;
-    signInClient.setInsecure();
+    signInClient.setCACert(FIREBASE_ROOT_CA);
     signInClient.setHandshakeTimeout(2);
     HTTPClient signInHttps;
     signInHttps.setConnectTimeout(2000);
@@ -253,7 +274,7 @@ bool firebaseTestConnection(String &errorOut)
     String docId = snapshot.deviceId;
 
     WiFiClientSecure fsClient;
-    fsClient.setInsecure();
+    fsClient.setCACert(FIREBASE_ROOT_CA);
     fsClient.setHandshakeTimeout(2);
     HTTPClient fsHttps;
     fsHttps.setConnectTimeout(2000);
@@ -314,8 +335,13 @@ static bool firebaseEnsureIdToken(const FirebaseSettings &settings)
         return false;
     }
 
+    if (!firebaseClockReady())
+    {
+        firebaseUpdateStatus(false, "Waiting for network time for TLS validation");
+        return false;
+    }
     WiFiClientSecure client;
-    client.setInsecure(); // Google's public CA chain rotates; verifying isn't practical on-device with limited flash for a CA bundle here.
+    client.setCACert(FIREBASE_ROOT_CA);
     client.setHandshakeTimeout(5);
     HTTPClient https;
     https.setConnectTimeout(5000);
@@ -386,14 +412,13 @@ static void firebaseRegisterFailure(int code, uint32_t generation)
         {
             currentConfig.firebase_enabled = false;
             disabled = true;
+            s_pendingDisableGeneration = generation;
         }
     }
     portEXIT_CRITICAL(&s_settingsMux);
     if (disabled)
     {
-        state_save();
         webLog(0, LOG_ERR, "Firebase has 5 permanent configuration/permission failures. Fix Cloud Provisioning, then re-enable uploads.");
-        broadcastConfig();
     }
 }
 
@@ -436,7 +461,7 @@ void firebaseUploadCycle()
     const String url = "https://firestore.googleapis.com/v1/projects/" + String(settings.fb_project) +
         "/databases/(default)/documents:commit?key=" + String(settings.fb_api_key);
     WiFiClientSecure client;
-    client.setInsecure(); // existing TLS policy; no change to trust configuration
+    client.setCACert(FIREBASE_ROOT_CA);
     client.setHandshakeTimeout(5);
     HTTPClient https;
     https.setConnectTimeout(5000);
@@ -545,6 +570,16 @@ bool firebaseRequestTest(uint32_t clientId)
 
 void firebaseNetworkLoop()
 {
+    portENTER_CRITICAL(&s_settingsMux);
+    const bool persistDisable = s_pendingDisableGeneration &&
+        s_pendingDisableGeneration == s_settingsGeneration && !currentConfig.firebase_enabled;
+    s_pendingDisableGeneration = 0;
+    portEXIT_CRITICAL(&s_settingsMux);
+    if (persistDisable)
+    {
+        state_save();
+        broadcastConfig();
+    }
     uint32_t clientId;
     bool ok;
     char error[sizeof(s_resultError)];

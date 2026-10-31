@@ -729,11 +729,6 @@
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-wifi-pass">Password</label>
-                            <!-- Pre-filled with the device's live plaintext value (see
-                                 updateConfigForm() -> msg.wifi_pass) and paired with the
-                                 eye-toggle like the other secret fields below. Saving still
-                                 works exactly as before: clear the field to "Leave blank to
-                                 keep current password", or edit it to change. -->
                             <div class="hg-secret-field">
                                 <input id="cfg-wifi-pass" maxlength="64" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-wifi-pass" aria-label="Show Wi-Fi Password">
@@ -760,31 +755,14 @@
                         <p id="cfg-wifi-error" role="alert" class="hidden font-label-sm text-label-sm text-error"></p>
                         <button id="btn-save-wifi" class="w-full bg-white/10 text-white font-label-md py-3 rounded-xl hover:bg-white/20 transition-all mt-2">Update Network</button>
                     </div>
-
-                    <!-- Change Password card (single-owner admin auth). Requires
-                         the CURRENT password server-side even though this
-                         session is already authenticated — see
-                         handleChangePasswordCommand() in task_network.cpp.
-
-                         cfg-admin-pass-display is the ONLY "current password"
-                         field now — read-only, shows the device's actual live
-                         admin password (msg.admin_pass, updateConfigForm()).
-                         There used to be a second, typed cfg-pass-current
-                         field the user re-entered manually to authorize a
-                         change, which was redundant (the live value is
-                         already shown right above it) and has been removed;
-                         the submit handler below now reads the "current"
-                         value straight from cfg-admin-pass-display itself
-                         (see handleChangePassword() in app.js). Never written
-                         back to the device by this field. -->
                     <div id="settings-password-card" class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-6">
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Change Password</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Update the admin password used to access this device's dashboard.</p>
                         <div class="flex flex-col gap-2">
-                            <label class="font-label-md text-on-surface-variant" for="cfg-admin-pass-display">Current Password</label>
+                            <label class="font-label-md text-on-surface-variant" for="cfg-pass-current">Current Password</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-admin-pass-display" maxlength="64" readonly autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-on-surface-variant outline-none font-body-md" type="password"/>
-                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-admin-pass-display" aria-label="Show Current Password">
+                                <input id="cfg-pass-current" maxlength="64" autocomplete="current-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-on-surface-variant outline-none font-body-md" type="password"/>
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-current" aria-label="Show Current Password">
                                     <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>

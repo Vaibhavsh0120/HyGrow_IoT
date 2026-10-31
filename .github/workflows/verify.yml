@@ -1,0 +1,21 @@
+name: Verify firmware
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install platformio==6.1.18
+      - name: Compile with example configuration
+        run: |
+          cp example.secrets.h secrets.h
+          pio run -e esp32-s3-n16r8
+      - run: python tools/test-web-assets.py

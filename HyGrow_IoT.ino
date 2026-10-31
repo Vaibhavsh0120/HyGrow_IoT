@@ -287,10 +287,8 @@ void setup()
     // first client connection.
     auth_init();
 
-    // Intentional password display: webLog sends this to Serial and stores
-    // it for authenticated terminal replay. Authenticated config also exposes
-    // saved credentials; the browser session and LAN are trusted by policy.
-    webLog(0, LOG_INFO, "Admin password (current): " + auth_get_password_for_boot_display());
+    // Log setup state without disclosing credentials.
+    webLog(0, LOG_INFO, auth_is_configured() ? "Admin password configured." : "Admin password setup required.");
 
     // 1a. LittleFS is mounted inside state_init(). A failed mount here means
     // the web UI (and everything served from it) is unavailable — continuing

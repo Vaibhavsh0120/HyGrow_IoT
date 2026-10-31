@@ -13,6 +13,7 @@
 #include "task_network_internal.h"
 #include "state.h"
 #include <set>
+#include <mutex>
 
 // ----------------------------------------------------------------------------
 // WebSocket auth gatekeeper (single-owner login)
@@ -24,6 +25,7 @@
 // websocket.cpp's WS_EVT_DISCONNECT) removes it, so this set never grows
 // unbounded and never confuses one browser tab's session with another's.
 static std::set<uint32_t> s_authedClients;
+static std::mutex s_authedClientsMutex;
 
 // ----------------------------------------------------------------------------
 // Failed-password lockout
@@ -72,16 +74,19 @@ static unsigned long authBackoffForAttempt(uint16_t attempts)
 
 bool wsClientIsAuthed(uint32_t clientId)
 {
+    std::lock_guard<std::mutex> lock(s_authedClientsMutex);
     return s_authedClients.find(clientId) != s_authedClients.end();
 }
 
 void wsMarkClientAuthed(uint32_t clientId)
 {
+    std::lock_guard<std::mutex> lock(s_authedClientsMutex);
     s_authedClients.insert(clientId);
 }
 
 void wsForgetClient(uint32_t clientId)
 {
+    std::lock_guard<std::mutex> lock(s_authedClientsMutex);
     s_authedClients.erase(clientId);
 }
 
@@ -119,7 +124,10 @@ void auth_reset_session_and_lockout()
 {
     s_failedAuthAttempts = 0;
     s_authLockoutUntilMs = 0;
-    s_authedClients.clear();
+    {
+        std::lock_guard<std::mutex> lock(s_authedClientsMutex);
+        s_authedClients.clear();
+    }
     broadcastAuthStatus();
 }
 
@@ -270,7 +278,10 @@ void handleLogoutCommand(AsyncWebSocketClient *client, JsonDocument &doc)
 {
     (void)doc; // logout takes no fields today; kept for dispatch-signature consistency with the other handlers
     auth_issue_token();      // invalidate the stored token everywhere — nothing currently in localStorage (this browser or any other) will silently reauth
-    s_authedClients.clear(); // every open tab, including this one, goes back to the login screen on its next command/reconnect
+    {
+        std::lock_guard<std::mutex> lock(s_authedClientsMutex);
+        s_authedClients.clear();
+    } // every open tab, including this one, goes back to the login screen on its next command/reconnect
     broadcastAuthStatus();   // re-sends auth_status to every connection so already-open tabs show the login/setup overlay immediately, not just on next reload
 
     JsonDocument resp;
@@ -329,22 +340,12 @@ void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc
         // broadcastAuthStatus() below and is forced back to the login
         // screen, same as an explicit Logout would do to them.
         String freshToken = auth_issue_token();
-        s_authedClients.clear();
+        {
+            std::lock_guard<std::mutex> lock(s_authedClientsMutex);
+            s_authedClients.clear();
+        }
         wsMarkClientAuthed(client->id());
         broadcastAuthStatus(client->id()); // only the other tabs need to authenticate again
-        // The Settings page's "Current Password" field (cfg-admin-pass-display
-        // in index.html) is the client's only source of truth for the
-        // password it will send as `current` on the NEXT change attempt —
-        // there is no separate typed re-entry field anymore. Without
-        // refreshing it here, it would keep showing the password that was
-        // JUST replaced, and a second change attempt right after this one
-        // would send that stale value and get correctly rejected as wrong.
-        // broadcastConfig() re-sends admin_pass (state.cpp) in a fresh
-        // "config" frame; by this point s_authedClients contains ONLY this
-        // client (cleared + re-added just above), so wsTextAllAuthed() —
-        // which checks auth status live at send time — delivers it to this
-        // client alone, not to the other tabs that were just logged out.
-        broadcastConfig();
         resp["ok"] = true;
         resp["token"] = freshToken;
         webLog(0, LOG_INFO, "Admin password changed by client " + String(client->id()) + "; all other sessions invalidated.");

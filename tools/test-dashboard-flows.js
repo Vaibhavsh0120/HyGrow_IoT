@@ -141,3 +141,16 @@ context.refreshSensorStatuses();
 assert.equal(element('dash-dot-tds').title, 'Device offline');
 
 console.log('Dashboard auth, reboot, pin, unsaved-settings, and sensor-state checks passed.');
+
+// Password changes must erase all typed credentials on success.
+element('cfg-pass-current').value = 'typed-current';
+element('cfg-pass-new').value = 'typed-new';
+element('cfg-pass-confirm').value = 'typed-new';
+context.handleChangePasswordResult({ok: true});
+assert.equal(element('cfg-pass-current').value, '');
+
+// A saved cloud password is write-only and must stop looking unsaved.
+vm.runInContext('sendCommand = () => ({ then(fn) { fn(); return { catch() {} }; } })', context);
+element('cfg-fb-pass').value = 'new-cloud-password';
+context.runSaveButton(element('btn-save-firebase'), {command: 'save_firebase', pass: 'new-cloud-password'});
+assert.equal(element('cfg-fb-pass').value, '');

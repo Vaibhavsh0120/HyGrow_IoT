@@ -44,6 +44,7 @@ inline unsigned ulTaskNotifyTake(int, uint32_t) {
     const auto n = fakeNotifications; fakeNotifications = 0; return n;
 }
 uint32_t millis();
+inline void configTime(long, int, const char*, const char*, const char*) {}
 inline String hostString(const char* value) { return value; }
 inline String hostString(char* value) { return value; }
 inline String hostString(const String& value) { return value; }
@@ -58,21 +59,23 @@ HTTP = r"""
 extern int fakeSignInCode, fakeCommitCode;
 extern unsigned fakeSignIns, fakeCommits, fakeGets;
 extern String fakePayload;
+extern bool fakeTrusted;
 extern std::function<void()> fakeCommitHook;
 class HTTPClient {
     String url;
 public:
     void setConnectTimeout(unsigned) {}
     void setTimeout(unsigned) {}
-    template<typename T> bool begin(T&, const String& value) { url = value; return true; }
+    template<typename T> bool begin(T& client, const String& value) { url = value; fakeTrusted = client.trusted; return true; }
     void addHeader(const String&, const String&) {}
     int POST(const String& payload) {
+        if (!fakeTrusted) return -1;
         if (url.find("identitytoolkit") != String::npos) { ++fakeSignIns; return fakeSignInCode; }
         ++fakeCommits; fakePayload = payload;
         if (fakeCommitHook) { auto hook = fakeCommitHook; fakeCommitHook = nullptr; hook(); }
         return fakeCommitCode;
     }
-    int GET() { ++fakeGets; return 404; }
+    int GET() { if (!fakeTrusted) return -1; ++fakeGets; return 404; }
     String getString() { return R"({"idToken":"test-token","expiresIn":"3600"})"; }
     void end() {}
 };
@@ -96,6 +99,7 @@ unsigned fakeNotifications = 0, fakeWorkerCount = 0;
 int fakeSignInCode = 200, fakeCommitCode = 200;
 unsigned fakeSignIns = 0, fakeCommits = 0, fakeGets = 0;
 String fakePayload;
+bool fakeTrusted = false;
 std::function<void()> fakeCommitHook;
 FakeWS ws;
 AsyncWebSocketClient client;
@@ -127,7 +131,7 @@ int main() {
     firebaseRequestUpload(); firebaseRequestUpload(); firebaseRequestUpload();
     require(fakeCommits == 0 && fakeSignIns == 0, "Local loop performed synchronous HTTPS");
     workerOnce();
-    require(fakeCommits == 1 && fakeSignIns == 1, "Pending uploads must coalesce into one latest-state write");
+    require(fakeCommits == 1 && fakeSignIns == 1, "Cloud requests must verify a CA before sending credentials or tokens");
     firebaseUploadCycle();
     require(fakeCommits == 2 && fakeSignIns == 1, "Valid Firebase token was not cached");
     JsonDocument commit;
@@ -151,7 +155,9 @@ int main() {
     firebaseUploadCycle();
     require(currentConfig.firebase_enabled, "Old in-flight credentials disabled newly saved settings");
     for (int i = 0; i < 5; ++i) firebaseUploadCycle();
-    require(!currentConfig.firebase_enabled && saves == 1, "Repeated permissions errors did not disable once");
+    require(!currentConfig.firebase_enabled && saves == 0, "Cloud worker must defer NVS persistence to the network loop");
+    firebaseNetworkLoop();
+    require(saves == 1, "Network loop did not persist auto-disable once");
 
     provision(); fakeSignInCode = 503;
     for (int i = 0; i < 6; ++i) { nowMs += 61000; firebaseUploadCycle(); }
@@ -184,14 +190,14 @@ def main():
         work = Path(folder)
         core = work / "src/core"
         core.mkdir(parents=True)
-        for name in sources + ["state.h", "telemetry.h", "firebase_retry.h"]:
+        for name in sources + ["state.h", "telemetry.h", "firebase_retry.h", "firebase_tls.h"]:
             shutil.copyfile(root / "src/core" / name, core / name)
         (work / "Arduino.h").write_text(shared["ARDUINO"] + RTOS)
         (core / "task_network_internal.h").write_text(NETWORK)
         (core / "task_network.h").write_text('#pragma once\n#include "task_network_internal.h"\n')
         (work / "HTTPClient.h").write_text(HTTP)
         (work / "WiFi.h").write_text("#pragma once\nconstexpr int WL_CONNECTED=3;\nstruct FakeWiFi { int status() { return WL_CONNECTED; } };\ninline FakeWiFi WiFi;\n")
-        (work / "WiFiClientSecure.h").write_text("#pragma once\nstruct WiFiClientSecure { void setInsecure() {} void setHandshakeTimeout(unsigned) {} };\n")
+        (work / "WiFiClientSecure.h").write_text("#pragma once\nstruct WiFiClientSecure { bool trusted = false; void setInsecure() {} void setCACert(const char* cert) { trusted = cert && strstr(cert, \"BEGIN CERTIFICATE\"); } void setHandshakeTimeout(unsigned) {} };\n")
         (work / "esp_timer.h").write_text("#pragma once\n#include <cstdint>\nint64_t esp_timer_get_time();\n")
         (work / "esp_system.h").write_text("#pragma once\n#include <cstdint>\nuint32_t esp_random();\n")
         enum = re.search(r"enum SensorID\s*\{[^}]+\};", (root / "config.h").read_text()).group()

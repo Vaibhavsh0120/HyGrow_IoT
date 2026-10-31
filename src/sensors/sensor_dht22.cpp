@@ -52,7 +52,7 @@ void readDHT22(float &outTemp, float &outHum)
     float hum = dhtSensor->readHumidity();
 
     // 3. Error Handling
-    if (isnan(temp) || isnan(hum))
+    if (!isfinite(temp) || !isfinite(hum) || temp < -40.0f || temp > 80.0f || hum < 0.0f || hum > 100.0f)
     {
         webLog(1, LOG_ERR, "Failed to read from DHT22!");
         // Every other sensor driver in this codebase (TDS, pH, light, water

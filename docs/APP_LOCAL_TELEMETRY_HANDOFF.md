@@ -288,9 +288,11 @@ files with `python tools/build-web-assets.py` before building LittleFS.
 local static server with mocked device traffic; it requires Playwright.
 No board was flashed as part of implementation. Firmware build and
 host checks do not establish radio behavior, physical sensor accuracy, live
-Firestore rules or device performance. Existing cloud TLS certificate
-verification is still disabled (`setInsecure`) and is outside this transport
-change; this implementation does not claim to resolve that trust policy.
+Firestore rules or device performance. Cloud requests now verify hostname/certificate chains against Google Trust
+Services R1/R3/R4 roots and wait for network time before sending credentials.
+SNTP is nonblocking; unavailable time or a rejected certificate keeps cloud
+uploads offline while local telemetry continues. Trust roots require maintenance
+before expiry/rotation. Physical TLS and WAN recovery still need hardware tests.
 
 After flashing, use the read-only probe:
 

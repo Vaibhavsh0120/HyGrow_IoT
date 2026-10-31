@@ -1,6 +1,7 @@
 #include "../core/state.h"
 #include <Wire.h>
 #include <BH1750.h>
+#include <math.h>
 
 float readLight();
 
@@ -52,7 +53,7 @@ float readLight()
     float lux = lightMeter.readLightLevel();
 
     // 3. Error Handling
-    if (lux < 0.0)
+    if (!isfinite(lux) || lux < 0.0f)
     {
         webLog(1, LOG_ERR, "Error reading from BH1750!");
         return NAN;
