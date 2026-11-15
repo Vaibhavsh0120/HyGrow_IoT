@@ -151,6 +151,18 @@ settings in NVS across normal reboots.
 ### PlatformIO troubleshooting
 
 The project pins Espressif32 7.1.3 and the library versions below.
+
+On Windows, the build selects the ESP32-S3 assembler and linker directly
+from PlatformIO's Espressif package. This prevents
+`as: unrecognized option '--longcalls'` when toolchain aliases are missing
+and a host assembler such as MSYS2's `as.exe` is on `PATH`.
+Reinstall the toolchain if PlatformIO reports missing ESP32-S3 binutils.
+
+```powershell
+pio pkg install --global --tool "espressif/toolchain-xtensa-esp32s3@8.4.0+2021r2-patch5" --force
+pio run -e esp32-s3-n16r8
+```
+
 If a build reports `sdkconfig.h: No such file or directory` and VS Code also
 reports missing ESP32 SDK folders, reinstall the incomplete framework package,
 then regenerate IntelliSense:
