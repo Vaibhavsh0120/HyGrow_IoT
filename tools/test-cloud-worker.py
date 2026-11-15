@@ -135,8 +135,11 @@ int main() {
     firebaseUploadCycle();
     require(fakeCommits == 2 && fakeSignIns == 1, "Valid Firebase token was not cached");
     JsonDocument commit;
-    require(!deserializeJson(commit, fakePayload, DeserializationOption::NestingLimit(16)), "Actual cloud request was not JSON");
+    const auto error = deserializeJson(commit, fakePayload, DeserializationOption::NestingLimit(20));
+    require(!error, error.c_str());
     require(commit["writes"][0]["update"]["fields"]["tds_ppm"]["doubleValue"] == 950.25f, "Cloud worker bypassed shared snapshot");
+    const auto grouped = commit["writes"][0]["update"]["fields"]["telemetry"]["mapValue"]["fields"];
+    require(grouped["schemaVersion"]["integerValue"] == "2", "Cloud worker did not send grouped telemetry");
 
     fakeCommitCode = 503;
     firebaseUploadCycle();

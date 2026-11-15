@@ -30,7 +30,7 @@ uint64_t telemetryUptimeMs();
 uint8_t telemetrySensorStatus(const TelemetrySnapshot &snapshot, SensorID id);
 void writeTelemetryJson(JsonObject out, const TelemetrySnapshot &snapshot, uint64_t nowMs);
 void writeDashboardTelemetry(JsonObject out, const TelemetrySnapshot &snapshot, uint64_t nowMs);
-void writeTelemetryFirestore(JsonObject write, const TelemetrySnapshot &snapshot,
+bool writeTelemetryFirestore(JsonObject write, const TelemetrySnapshot &snapshot,
                              uint64_t nowMs, const char *documentPath);
 
 #endif

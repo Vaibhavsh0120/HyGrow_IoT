@@ -92,7 +92,7 @@ int main() {
 
     JsonDocument dashboard, commit;
     writeDashboardTelemetry(dashboard.to<JsonObject>(), snap, 1500);
-    writeTelemetryFirestore(commit.to<JsonObject>(), snap, 1500, "projects/test/databases/(default)/documents/devices/grow-01");
+    require(writeTelemetryFirestore(commit.to<JsonObject>(), snap, 1500, "projects/test/databases/(default)/documents/devices/grow-01"), "Firestore payload failed to build");
     require(dashboard["tds"] == status["tds_ppm"] && dashboard["hum"] == status["humidity"], "Dashboard aliases must equal canonical values");
     require(dashboard["s_ok"][S_TDS] == 1 && dashboard["type"] == "data", "Existing dashboard protocol must continue working");
     auto fields = commit["update"]["fields"];
@@ -101,6 +101,15 @@ int main() {
     require(fields["sensorStatus"]["mapValue"]["fields"]["ph"]["mapValue"]["fields"]["simulated"]["booleanValue"] == true, "Firestore lost sensor provenance");
     require(commit["updateTransforms"][0]["setToServerValue"] == "REQUEST_TIME", "Keep server timestamp for remote stale detection");
     require(fields["lastUpdated"].isNull(), "Device clock must never masquerade as server time");
+    require(status["telemetry"].isNull() && dashboard["telemetry"].isNull(), "Grouped schema must only be sent to Firestore");
+    const auto grouped = fields["telemetry"]["mapValue"]["fields"];
+    const auto sample = grouped["sample"]["mapValue"]["fields"];
+    const auto sensors = grouped["sensors"]["mapValue"]["fields"];
+    require(grouped["schemaVersion"]["integerValue"] == "2" && sample["ageMs"]["integerValue"] == "500", "Grouped sample version or timing is incorrect");
+    require(sensors["tds"]["mapValue"]["fields"]["readings"]["mapValue"]["fields"]["ppm"]["doubleValue"] == 950.25f, "Grouped TDS diverged from the sample");
+    require(sensors["ph"]["mapValue"]["fields"]["health"]["mapValue"]["fields"]["simulated"]["booleanValue"] == true, "Grouped pH lost simulation metadata");
+    require(commit["updateTransforms"][1]["fieldPath"] == "telemetry.uploadedAt" &&
+            commit["updateTransforms"][1]["setToServerValue"] == "REQUEST_TIME", "Grouped sample must have its own server timestamp");
 
     snap.enabled[S_TDS] = false;
     strcpy(snap.sensors.last_err[S_DHT], "read failed");
@@ -114,6 +123,10 @@ int main() {
     require(status["water_temp_c"].isNull() && status["lux"].isNull(), "Waiting or nonfinite values must be null");
     require(commit["update"]["fields"]["tds_ppm"]["nullValue"].isNull(), "Cloud must explicitly clear disabled fields");
     require(commit["update"]["fields"]["tds_ppm"].as<JsonObjectConst>().size() == 1, "Cloud null cannot mean omitted field");
+    const auto groupedTds = commit["update"]["fields"]["telemetry"]["mapValue"]["fields"]["sensors"]["mapValue"]["fields"]["tds"]["mapValue"]["fields"];
+    const auto groupedPpm = groupedTds["readings"]["mapValue"]["fields"]["ppm"]["nullValue"];
+    require(!groupedPpm.isUnbound() && groupedPpm.isNull() &&
+            groupedTds["health"]["mapValue"]["fields"]["state"]["stringValue"] == "disabled", "Grouped cloud sample retained an invalid TDS value");
     require(dashboard["s_ok"][S_TDS] == 0 && dashboard["s_ok"][S_DHT] == 2 && dashboard["s_ok"][S_WTEMP] == 3, "Sensor health codes changed");
     const JsonArrayConst mask = commit["updateMask"]["fieldPaths"].as<JsonArrayConst>();
     for (auto pair : status.as<JsonObjectConst>()) {

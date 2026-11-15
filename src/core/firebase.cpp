@@ -23,20 +23,13 @@
 //                                 every successful upload.
 //     uptime_s       integer   — measured seconds since this boot, informational.
 //     firmwareVersion string   — compile-time HYGROW_FIRMWARE_VERSION.
-//     <8 sensor fields>        — one per telemetry value below.
+//     telemetry      map       — versioned latest sample and sensor groups.
+//     <legacy fields>          — flat sample and readings for installed apps.
 //
 // Two rules this file exists to enforce:
 //
-//   1. EVERY enabled sensor's field is written on EVERY upload — either a
-//      real doubleValue, or an explicit Firestore nullValue if that sensor
-//      is disabled/unavailable/mid-failure. A field is only left out of the
-//      update mask entirely when the sensor was disabled at compile-time-
-//      never (S_COUNT is fixed at 6, all 8 telemetry fields always exist).
-//      This is the fix for the old behavior, where a disabled sensor's
-//      field was dropped from BOTH the body and the update mask — which
-//      left Firestore holding that sensor's last real value forever, with
-//      nothing downstream able to tell "still reading 6.2" apart from
-//      "hasn't reported since the probe was unplugged three weeks ago".
+//   1. Every reading is written on every upload, with explicit nulls for
+//      unavailable readings. Both layouts come from the same snapshot.
 //   2. status/lastUpdated always mean "this device (Wi-Fi + Firestore
 //      reachability) is alive", never "every sensor is healthy". A single
 //      failed sensor still uploads successfully (as null) and still marks
@@ -477,7 +470,13 @@ void firebaseUploadCycle()
 
     JsonDocument doc;
     JsonObject write = doc["writes"].to<JsonArray>().add<JsonObject>();
-    writeTelemetryFirestore(write, snapshot, telemetryUptimeMs(), documentPath.c_str());
+    if (!writeTelemetryFirestore(write, snapshot, telemetryUptimeMs(), documentPath.c_str()) || doc.overflowed())
+    {
+        https.end();
+        firebaseUpdateStatus(false, "Could not build Firestore payload.");
+        firebaseRegisterFailure(-1, generation);
+        return;
+    }
     String payload;
     serializeJson(doc, payload);
     const int code = https.POST(payload);

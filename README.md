@@ -297,6 +297,42 @@ and retry with a capped backoff; repeated permanent credentials/permission
 errors can still turn it off. Firestore also receives sample freshness and
 per-sensor demo/health metadata alongside the existing reading fields.
 
+### Firestore telemetry layout
+
+LAN `GET /status` uses schema 1 with flat readings such as `temp_c` and
+`tds_ppm`, sample timing fields, and a separate `sensorStatus` map.
+The dashboard WebSocket includes this payload with its dashboard aliases.
+The Firestore document carries those fields at the root for installed apps,
+along with provisioning fields (`owner_uid`, `device_auth_uid`),
+`status`, and the server timestamp `lastUpdated`.
+
+Firestore also receives a versioned `telemetry` map in the same commit.
+
+```text
+devices/{device_id}/
+  telemetry
+    schemaVersion = 2
+    uploadedAt = Firestore timestamp
+    sample = {bootId, sequence, sampledUptimeMs, ageMs, readIntervalMs}
+    sensors
+      air               → {health, readings: {temperatureC, humidityPercent, vpdKpa}}
+      waterTemperature  → {health, readings: {temperatureC}}
+      waterLevel        → {health, readings: {percent}}
+      light             → {health, readings: {lux}}
+      tds               → {health, readings: {ppm}, usesFallbackWaterTemperature}
+      ph                → {health, readings: {value, voltageMv}}
+```
+
+Every `health` map carries `enabled`, `simulated`, and `state`. Unavailable
+readings are explicit `null` values. The `telemetry` map replaces the previous
+grouped sample on each upload. To confirm it represents the latest upload,
+check that `telemetry.uploadedAt` equals `lastUpdated`. Firmware that still
+writes only schema 1 advances `lastUpdated` independently.
+
+Deploy the matching `devices/{id}` validation from the HyGrow Software rules
+before flashing this firmware. The first successful upload populates the
+grouped map automatically on the existing provisioned document.
+
 ## Recovery and troubleshooting
 
 | Problem | What to do |

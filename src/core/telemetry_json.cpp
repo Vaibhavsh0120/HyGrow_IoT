@@ -75,7 +75,43 @@ void writeDashboardTelemetry(JsonObject out, const TelemetrySnapshot &s, uint64_
         codes.add(telemetrySensorStatus(s, static_cast<SensorID>(i)));
 }
 
-// Encode the same JSON in Firestore's REST typed Value representation.
+static JsonObject groupedSensor(JsonObject sensors, JsonObjectConst health,
+                                const char *name, const char *localName)
+{
+    JsonObject sensor = sensors[name].to<JsonObject>();
+    sensor["health"].set(health[localName]);
+    return sensor;
+}
+
+// Project the same values already used by /status and legacy cloud readers.
+static void writeGroupedTelemetry(JsonObject out, JsonObjectConst local)
+{
+    out["schemaVersion"] = 2;
+    JsonObject sample = out["sample"].to<JsonObject>();
+    sample["bootId"].set(local["bootId"]);
+    sample["sequence"].set(local["sampleSequence"]);
+    sample["sampledUptimeMs"].set(local["sampledUptimeMs"]);
+    sample["ageMs"].set(local["sampleAgeMs"]);
+    sample["readIntervalMs"].set(local["readIntervalMs"]);
+
+    const JsonObjectConst health = local["sensorStatus"].as<JsonObjectConst>();
+    JsonObject sensors = out["sensors"].to<JsonObject>();
+    JsonObject air = groupedSensor(sensors, health, "air", "dht");
+    air["readings"]["temperatureC"].set(local["temp_c"]);
+    air["readings"]["humidityPercent"].set(local["humidity"]);
+    air["readings"]["vpdKpa"].set(local["vpd_kpa"]);
+    JsonObject tds = groupedSensor(sensors, health, "tds", "tds");
+    tds["readings"]["ppm"].set(local["tds_ppm"]);
+    tds["usesFallbackWaterTemperature"].set(local["tds_comp_using_fake_water_temp"]);
+    JsonObject ph = groupedSensor(sensors, health, "ph", "ph");
+    ph["readings"]["value"].set(local["ph_val"]);
+    ph["readings"]["voltageMv"].set(local["ph_voltage_mv"]);
+    groupedSensor(sensors, health, "waterTemperature", "water_temp")["readings"]["temperatureC"].set(local["water_temp_c"]);
+    groupedSensor(sensors, health, "waterLevel", "water_level")["readings"]["percent"].set(local["wl_percent"]);
+    groupedSensor(sensors, health, "light", "light")["readings"]["lux"].set(local["lux"]);
+}
+
+// Encode JSON in Firestore's REST typed Value representation.
 static void firestoreValue(JsonObject out, JsonVariantConst value)
 {
     if (value.isNull()) out["nullValue"] = nullptr;
@@ -96,11 +132,13 @@ static void firestoreValue(JsonObject out, JsonVariantConst value)
     else out["doubleValue"] = value.as<double>();
 }
 
-void writeTelemetryFirestore(JsonObject write, const TelemetrySnapshot &s,
+bool writeTelemetryFirestore(JsonObject write, const TelemetrySnapshot &s,
                              uint64_t nowMs, const char *documentPath)
 {
     JsonDocument canonical;
     writeTelemetryJson(canonical.to<JsonObject>(), s, nowMs);
+    writeGroupedTelemetry(canonical["telemetry"].to<JsonObject>(), canonical.as<JsonObjectConst>());
+    if (canonical.overflowed()) return false;
     JsonArray paths = write["updateMask"]["fieldPaths"].to<JsonArray>();
     write["update"]["name"] = documentPath;
     JsonObject fields = write["update"]["fields"].to<JsonObject>();
@@ -111,7 +149,12 @@ void writeTelemetryFirestore(JsonObject write, const TelemetrySnapshot &s,
     }
     paths.add("status");
     fields["status"]["stringValue"] = "Online";
-    JsonObject transform = write["updateTransforms"].to<JsonArray>().add<JsonObject>();
-    transform["fieldPath"] = "lastUpdated";
-    transform["setToServerValue"] = "REQUEST_TIME";
+    JsonArray transforms = write["updateTransforms"].to<JsonArray>();
+    for (const char *path : {"lastUpdated", "telemetry.uploadedAt"})
+    {
+        JsonObject transform = transforms.add<JsonObject>();
+        transform["fieldPath"] = path;
+        transform["setToServerValue"] = "REQUEST_TIME";
+    }
+    return true;
 }
