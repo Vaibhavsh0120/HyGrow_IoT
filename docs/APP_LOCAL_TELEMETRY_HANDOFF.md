@@ -1,6 +1,6 @@
 # HyGrow app integration: local discovery and sensor status
 
-Firmware: **3.1.4**, telemetry schema: **1**, discovery protocol: **1**.
+Firmware: **3.1.5**, telemetry schema: **1**, discovery protocol: **1**.
 Implementation scope is `HyGrow_IoT`; no app or AI code was changed.
 
 ## Message to the app developer
@@ -51,7 +51,7 @@ and source port, through the same network interface:
   "requestId": "scan_7fd94",
   "deviceId": "grow-01",
   "hardwareId": "esp32-aabbccddeeff",
-  "firmwareVersion": "3.1.4",
+  "firmwareVersion": "3.1.5",
   "ip": "192.168.0.42",
   "port": 80,
   "statusPath": "/status",
@@ -94,7 +94,7 @@ Example values below are illustrative, not measurements from a physical board:
   "deviceId": "grow-01",
   "hardwareId": "esp32-aabbccddeeff",
   "bootId": "c9573122a7152930",
-  "firmwareVersion": "3.1.4",
+  "firmwareVersion": "3.1.5",
   "sampleSequence": 42,
   "sampledUptimeMs": 84000,
   "sampleAgeMs": 350,
@@ -281,14 +281,13 @@ flags, request validation, rate limits, HTTP/cache/CORS, STA/AP/DHCP replies,
 cloud worker coalescing, token reuse, outage recovery, configuration races,
 permanent-error disable and asynchronous manual-test acknowledgements.
 
-Version 3.1.4 needs **both a firmware upload and a LittleFS upload** to apply
-the embedded dashboard repairs and terminal improvements. Regenerate gzip
-files with `python tools/build-web-assets.py` before building LittleFS.
+Firmware and the LittleFS dashboard carry matching version metadata. Upload
+both to install a complete release, and regenerate gzip files with
+`python tools/build-web-assets.py` before building LittleFS.
 `tools/test-dashboard-browser.js` adds real DOM/browser regressions against a
 local static server with mocked device traffic; it requires Playwright.
-No board was flashed as part of implementation. Firmware build and
-host checks do not establish radio behavior, physical sensor accuracy, live
-Firestore rules or device performance. Cloud requests now verify hostname/certificate chains against Google Trust
+The host checks use simulated inputs. Verify radio behavior, sensor accuracy,
+Firestore rules and device performance on the target setup. Cloud requests verify hostname/certificate chains against Google Trust
 Services R1/R3/R4 roots and wait for network time before sending credentials.
 SNTP is nonblocking; unavailable time or a rejected certificate keeps cloud
 uploads offline while local telemetry continues. Trust roots require maintenance
