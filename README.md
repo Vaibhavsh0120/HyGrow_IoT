@@ -297,6 +297,39 @@ and retry with a capped backoff; repeated permanent credentials/permission
 errors can still turn it off. Firestore also receives sample freshness and
 per-sensor demo/health metadata alongside the existing reading fields.
 
+### Device identity and ownership
+
+With the default Firestore collection, each board publishes to
+`devices/{device_id}`, where `{device_id}` is the Device ID configured on the
+ESP32. For example, the board with Device ID `ESP32S3_001` publishes to
+`devices/ESP32S3_001`.
+
+| Document field | Value |
+| --- | --- |
+| `deviceId` | The board's configured Device ID, which matches the document ID. |
+| `owner_uid` | The Firebase Authentication UID of the person who owns the device. |
+| `device_auth_uid` | The Firebase Authentication UID of the account the board uses to upload. Use the UID of the email/password account entered in Cloud Provisioning. |
+
+Set the two UID fields when provisioning the device document. The ESP32
+preserves them when uploading telemetry. You can find both UIDs under
+**Authentication → Users** in Firebase.
+
+An owner can have multiple devices. Use the same `owner_uid` on each of their
+documents and give every board its own Device ID and upload account.
+
+```text
+devices/ESP32S3_001
+  owner_uid      = <owner Firebase Auth UID>
+  device_auth_uid = <board 001 Firebase Auth UID>
+
+devices/ESP32S3_002
+  owner_uid      = <same owner Firebase Auth UID>
+  device_auth_uid = <board 002 Firebase Auth UID>
+```
+
+The HyGrow app's Device ID setting selects which device to display. Enter
+the configured Device ID, such as `ESP32S3_001`, in that setting.
+
 ### Firestore telemetry layout
 
 LAN `GET /status` uses schema 1 with flat readings such as `temp_c` and
