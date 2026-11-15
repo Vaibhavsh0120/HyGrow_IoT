@@ -512,7 +512,7 @@ bool state_device_account(const char *project, const char *hardwareId, char (&em
   else if (create)
   {
     strlcpy(account.project, project, sizeof(account.project));
-    snprintf(account.email, sizeof(account.email), "%s@devices.hygrow.local", hardwareId);
+    snprintf(account.email, sizeof(account.email), "%s@devices.hygrow", hardwareId);
     memcpy(account.password, "Hg1!", 4);
     for (unsigned i = 0; i < 4; ++i)
       snprintf(account.password + 4 + i * 8, 9, "%08lx", static_cast<unsigned long>(esp_random()));

@@ -147,7 +147,7 @@ bool state_pairing_identity(char (&code)[33], char (&hash)[65], bool create) {
     return true;
 }
 bool state_device_account(const char*, const char*, char (&email)[64], char (&password)[64], bool) {
-    strcpy(email, "esp32-test@devices.hygrow.local");
+    strcpy(email, "esp32-test@devices.hygrow");
     strcpy(password, "another-test-password");
     return true;
 }
