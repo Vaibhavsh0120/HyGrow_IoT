@@ -22,7 +22,7 @@ flowchart LR
 
     subgraph Controller["ESP32-S3 controller"]
         Sampling["Sensor task: sampling and calibration"]
-        Snapshot["Shared telemetry snapshot: schema 1"]
+        Snapshot["Shared telemetry snapshot"]
         Network["Network task and web services"]
         NVS["NVS: saved settings, calibration and pins"]
         Files["LittleFS: dashboard assets"]
@@ -271,15 +271,16 @@ local dashboard. Networks that block SNTP can therefore prevent cloud uploads;
 local telemetry remains available. Public trust anchors live in
 `src/core/firebase_tls.h` and need updating before CA rotation or June 2036.
 
-The device can update one Firestore document at `devices/{device_id}` by
+The device can update one Firestore document at `devices/{firebaseUid}` by
 default. You can change the collection in Cloud Provisioning. The document
 holds current readings and status, **not** a reading history. A disabled or
 failed sensor sends `null` for its reading; it does not make the whole device
 offline. `uptime_s` is measured in seconds since the current boot.
 
 1. Create a Firebase project and enable Firestore.
-2. Enable Email/Password sign-in and create a device account.
-3. Set Firestore rules that restrict this account to its device document.
+2. Enable Email/Password sign-in. For a new board, leave the Firebase Email
+   field blank to create a persistent device account automatically.
+3. Enroll the device account under the project’s Firestore authorization rules.
 4. In **Settings → Cloud Provisioning**, enter the Project ID, Web API Key,
    email, password, and collection. Save, then use **Test Connection**.
 5. Enable **Firebase Upload** in the same card and save it. The default upload
@@ -297,74 +298,47 @@ and retry with a capped backoff; repeated permanent credentials/permission
 errors can still turn it off. Firestore also receives sample freshness and
 per-sensor demo/health metadata alongside the existing reading fields.
 
-### Device identity and ownership
+### Device name and pairing
 
-With the default Firestore collection, each board publishes to
-`devices/{device_id}`, where `{device_id}` is the Device ID configured on the
-ESP32. For example, the board with Device ID `ESP32S3_001` publishes to
-`devices/ESP32S3_001`.
+With the default collection, the ESP32 publishes to `devices/{firebaseUid}`.
+The UID comes from the board’s Firebase Auth account. The **Device Name**
+field in **System Settings → Cloud Provisioning** changes the displayed name
+without changing the document path. Newly provisioned boards derive their
+Firebase email from their permanent hardware ID and save a generated password
+on the board.
 
-| Document field | Value |
-| --- | --- |
-| `deviceId` | The board's configured Device ID, which matches the document ID. |
-| `owner_uid` | The Firebase Authentication UID of the person who owns the device. |
-| `device_auth_uid` | The Firebase Authentication UID of the account the board uses to upload. Use the UID of the email/password account entered in Cloud Provisioning. |
+Open **Pair Device** from the Web Doctor sidebar or **Pair** from the mobile
+navigation. A signed-in Web Doctor admin can show the device’s permanent QR
+and block or unblock linked HyGrow accounts. Farmers scan the QR in HyGrow
+while signed in. Each account can link multiple devices. Each device can link
+multiple accounts.
 
-Set the two UID fields when provisioning the device document. The ESP32
-preserves them when uploading telemetry. You can find both UIDs under
-**Authentication → Users** in Firebase.
-
-An owner can have multiple devices. Use the same `owner_uid` on each of their
-documents and give every board its own Device ID and upload account.
+### Telemetry layout
 
 ```text
-devices/ESP32S3_001
-  owner_uid      = <owner Firebase Auth UID>
-  device_auth_uid = <board 001 Firebase Auth UID>
-
-devices/ESP32S3_002
-  owner_uid      = <same owner Firebase Auth UID>
-  device_auth_uid = <board 002 Firebase Auth UID>
+devices/{firebaseUid}
+  name              Device Name
+  status            Connection status
+  lastUpdated       Firestore server time of the latest upload
+  device            hardwareId, firmwareVersion
+  sample            bootId, sequence, sampledUptimeMs, ageMs, readIntervalMs
+  sensors
+    dht             state, simulated, temperatureC, humidityPercent, vpdKpa
+    tds             state, simulated, ppm, usesFallbackWaterTemperature
+    ph              state, simulated, value, voltageMv
+    light           state, simulated, lux
+    waterTemperature state, simulated, temperatureC
+    waterLevel      state, simulated, percent
 ```
 
-The HyGrow app's Device ID setting selects which device to display. Enter
-the configured Device ID, such as `ESP32S3_001`, in that setting.
+The firmware fills missing telemetry fields and refreshes its sensor maps
+with each sample. Unavailable readings are `null`. LAN `GET /status` uses the
+same JSON layout. Its `lastUpdated` is an ISO timestamp from the latest
+confirmed Firebase upload, or `null` if none is known. LAN sample timing
+continues updating whenever the board can read its sensors.
 
-### Firestore telemetry layout
-
-LAN `GET /status` uses schema 1 with flat readings such as `temp_c` and
-`tds_ppm`, sample timing fields, and a separate `sensorStatus` map.
-The dashboard WebSocket includes this payload with its dashboard aliases.
-The Firestore document carries those fields at the root for installed apps,
-along with provisioning fields (`owner_uid`, `device_auth_uid`),
-`status`, and the server timestamp `lastUpdated`.
-
-Firestore also receives a versioned `telemetry` map in the same commit.
-
-```text
-devices/{device_id}/
-  telemetry
-    schemaVersion = 2
-    uploadedAt = Firestore timestamp
-    sample = {bootId, sequence, sampledUptimeMs, ageMs, readIntervalMs}
-    sensors
-      air               → {health, readings: {temperatureC, humidityPercent, vpdKpa}}
-      waterTemperature  → {health, readings: {temperatureC}}
-      waterLevel        → {health, readings: {percent}}
-      light             → {health, readings: {lux}}
-      tds               → {health, readings: {ppm}, usesFallbackWaterTemperature}
-      ph                → {health, readings: {value, voltageMv}}
-```
-
-Every `health` map carries `enabled`, `simulated`, and `state`. Unavailable
-readings are explicit `null` values. The `telemetry` map replaces the previous
-grouped sample on each upload. To confirm it represents the latest upload,
-check that `telemetry.uploadedAt` equals `lastUpdated`. Firmware that still
-writes only schema 1 advances `lastUpdated` independently.
-
-Deploy the matching `devices/{id}` validation from the HyGrow Software rules
-before flashing this firmware. The first successful upload populates the
-grouped map automatically on the existing provisioned document.
+Deploy the matching Firestore rules and app reader before flashing this
+firmware.
 
 ## Recovery and troubleshooting
 

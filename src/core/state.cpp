@@ -8,6 +8,7 @@
 #include <esp_timer.h>
 #include <memory>
 #include <new>
+#include <mbedtls/sha256.h>
 
 // ---------- Globals ----------
 ConfigState currentConfig;
@@ -457,6 +458,75 @@ void state_init()
 // Deliberately non-short-circuiting (plain `&=`, not `&&` with early
 // return): every field still gets its write attempted even if an earlier
 // one failed, so one bad key doesn't leave the rest silently unsaved too.
+bool state_save_device_id(const char *id)
+{
+  return prefs.putString("dev_id", id) > 0;
+}
+
+bool state_pairing_identity(char (&code)[33], char (&hash)[65], bool create)
+{
+  // Keep the printed pairing QR tied to the hardware across settings resets.
+  Preferences pairing;
+  if (!pairing.begin("hygrow_pair", false)) return false;
+  bool ok = false;
+  if (pairing.isKey("code"))
+    ok = pairing.getString("code", code, sizeof(code)) == sizeof(code);
+  else if (create)
+  {
+    for (unsigned i = 0; i < 4; ++i)
+      snprintf(code + i * 8, 9, "%08lx", static_cast<unsigned long>(esp_random()));
+    ok = pairing.putString("code", code) == sizeof(code) - 1;
+  }
+  pairing.end();
+  if (!ok || strspn(code, "0123456789abcdef") != sizeof(code) - 1) return false;
+
+  unsigned char digest[32];
+  if (mbedtls_sha256_ret(reinterpret_cast<const unsigned char *>(code), sizeof(code) - 1, digest, 0) != 0)
+    return false;
+  for (size_t i = 0; i < sizeof(digest); ++i)
+    snprintf(hash + i * 2, 3, "%02x", static_cast<unsigned>(digest[i]));
+  return true;
+}
+
+bool state_device_account(const char *project, const char *hardwareId, char (&email)[64],
+                          char (&password)[64], bool create)
+{
+  if (!project[0]) return false;
+  unsigned char digest[32];
+  if (mbedtls_sha256_ret(reinterpret_cast<const unsigned char *>(project), strlen(project), digest, 0) != 0)
+    return false;
+  char key[15]{};
+  for (unsigned i = 0; i < 7; ++i) snprintf(key + i * 2, 3, "%02x", static_cast<unsigned>(digest[i]));
+
+  struct DeviceAccount { char project[64], email[64], password[64]; } account{};
+  Preferences accounts;
+  if (!accounts.begin("hygrow_cloud", false)) return false;
+  bool ok = false;
+  if (accounts.isKey(key))
+  {
+    ok = accounts.getBytes(key, &account, sizeof(account)) == sizeof(account) &&
+         strncmp(project, account.project, sizeof(account.project)) == 0 &&
+         memchr(account.email, 0, sizeof(account.email)) && memchr(account.password, 0, sizeof(account.password)) &&
+         account.email[0] && account.password[0];
+  }
+  else if (create)
+  {
+    strlcpy(account.project, project, sizeof(account.project));
+    snprintf(account.email, sizeof(account.email), "%s@devices.hygrow.local", hardwareId);
+    memcpy(account.password, "Hg1!", 4);
+    for (unsigned i = 0; i < 4; ++i)
+      snprintf(account.password + 4 + i * 8, 9, "%08lx", static_cast<unsigned long>(esp_random()));
+    ok = accounts.putBytes(key, &account, sizeof(account)) == sizeof(account);
+  }
+  accounts.end();
+  if (ok)
+  {
+    strlcpy(email, account.email, sizeof(email));
+    strlcpy(password, account.password, sizeof(password));
+  }
+  return ok;
+}
+
 bool state_save()
 {
   bool ok = true;
@@ -597,6 +667,11 @@ void auth_init()
 bool auth_is_configured()
 {
   return strlen(s_adminPass) > 0;
+}
+
+String auth_read_password()
+{
+  return String(s_adminPass);
 }
 
 bool auth_check_password(const String &candidate)

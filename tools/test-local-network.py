@@ -67,6 +67,7 @@ struct AsyncWebServerRequest {
     ~AsyncWebServerRequest() { delete response; }
     AsyncWebServerResponse* beginResponse(int code,const String& type="",const String& payload="") { return new AsyncWebServerResponse{code,type,payload,{}}; }
     void send(AsyncWebServerResponse* result) { response=result; }
+    void send(int code) { response=beginResponse(code); }
 };
 struct AsyncWebServer {
     std::map<int,std::function<void(AsyncWebServerRequest*)>> routes;
@@ -80,6 +81,7 @@ TEST = r"""
 #include <ESPAsyncWebServer.h>
 #include <esp_netif.h>
 #include <iostream>
+String firebaseLastUpdated() { return ""; }
 #include <cstdlib>
 ConfigState currentConfig{};
 SensorState currentSensors{};
@@ -120,7 +122,7 @@ int main() {
     require(get.response->headers["Cache-Control"].find("no-store")!=String::npos,"Status may be cached");
     require(get.response->headers["Access-Control-Allow-Origin"]=="*","Read-only status CORS missing");
     JsonDocument status;
-    require(!deserializeJson(status,get.response->payload) && status["tds_ppm"]==950.25,"HTTP handler bypassed snapshot");
+    require(!deserializeJson(status,get.response->payload) && status["sensors"]["tds"]["ppm"]==950.25 && status["lastUpdated"].isNull(),"HTTP handler bypassed snapshot");
     AsyncWebServerRequest options; server.routes[HTTP_OPTIONS](&options);
     require(options.response->code==204,"Status preflight failed");
     JsonDocument reply;
@@ -162,6 +164,7 @@ def main():
         (work/"ESPAsyncWebServer.h").write_text(HTTP)
         (work/"esp_netif.h").write_text(NETIF)
         (work/"WiFi.h").write_text("#pragma once\n")
+        (core/"task_network_internal.h").write_text("String firebaseLastUpdated();\n")
         (work/"esp_timer.h").write_text("#pragma once\n#include <cstdint>\nint64_t esp_timer_get_time();\n")
         (work/"esp_system.h").write_text("#pragma once\n#include <cstdint>\nuint32_t esp_random();\n")
         enum=re.search(r"enum SensorID\s*\{[^}]+\};",(root/"config.h").read_text()).group()

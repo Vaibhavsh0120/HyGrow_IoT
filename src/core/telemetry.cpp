@@ -18,12 +18,30 @@ static TelemetrySnapshot makeSnapshot()
     TelemetrySnapshot next{};
     strlcpy(next.hardwareId, s_hardwareId, sizeof(next.hardwareId));
     strlcpy(next.bootId, s_bootId, sizeof(next.bootId));
-    strlcpy(next.deviceId, currentConfig.device_id[0] ? currentConfig.device_id : s_hardwareId,
-            sizeof(next.deviceId));
     next.readIntervalMs = currentConfig.interval_read_ms;
     for (int i = 0; i < S_COUNT; ++i)
         next.enabled[i] = currentConfig.sensor_enabled[i];
     return next;
+}
+
+static void publishSnapshot(TelemetrySnapshot &next)
+{
+    portENTER_CRITICAL(&s_snapshotMux);
+    strlcpy(next.deviceId, currentConfig.device_id[0] ? currentConfig.device_id : s_hardwareId,
+            sizeof(next.deviceId));
+    s_snapshot = next;
+    portEXIT_CRITICAL(&s_snapshotMux);
+}
+
+void telemetrySetDeviceId(const char *id)
+{
+    portENTER_CRITICAL(&s_snapshotMux);
+    strlcpy(currentConfig.device_id, id, sizeof(currentConfig.device_id));
+    // Do not upload the measurement associated with the old ID again.
+    strlcpy(s_snapshot.deviceId, id, sizeof(s_snapshot.deviceId));
+    s_snapshot.sampleSequence = 0;
+    s_snapshot.sampledUptimeMs = 0;
+    portEXIT_CRITICAL(&s_snapshotMux);
 }
 
 void telemetryInit()
@@ -34,9 +52,7 @@ void telemetryInit()
              static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
     s_sequence = 0;
     auto next = makeSnapshot();
-    portENTER_CRITICAL(&s_snapshotMux);
-    s_snapshot = next;
-    portEXIT_CRITICAL(&s_snapshotMux);
+    publishSnapshot(next);
 }
 
 void telemetryPublish(const bool simulated[S_COUNT])
@@ -47,9 +63,7 @@ void telemetryPublish(const bool simulated[S_COUNT])
         next.simulated[i] = simulated[i];
     next.sampledUptimeMs = telemetryUptimeMs();
     next.sampleSequence = ++s_sequence;
-    portENTER_CRITICAL(&s_snapshotMux);
-    s_snapshot = next;
-    portEXIT_CRITICAL(&s_snapshotMux);
+    publishSnapshot(next);
 }
 
 TelemetrySnapshot telemetryRead()

@@ -63,6 +63,11 @@ void handleChangePasswordCommand(AsyncWebSocketClient *client, JsonDocument &doc
 void firebaseStartWorker();
 void firebaseRequestUpload();
 bool firebaseRequestTest(uint32_t clientId);
+bool firebaseRequestPairing(uint32_t clientId, const char *action, const char *argument);
+bool firebaseValidDeviceName(const char *name);
+String firebaseSavedPassword();
+String firebaseAutomaticEmail();
+String firebaseLastUpdated();
 void firebaseNetworkLoop(); // deliver completed manual-test acknowledgement
 void firebaseSetEnabled(bool enabled);
 struct FirebaseStatus

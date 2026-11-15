@@ -96,20 +96,18 @@ int main() {
     require(dashboard["tds"] == status["tds_ppm"] && dashboard["hum"] == status["humidity"], "Dashboard aliases must equal canonical values");
     require(dashboard["s_ok"][S_TDS] == 1 && dashboard["type"] == "data", "Existing dashboard protocol must continue working");
     auto fields = commit["update"]["fields"];
-    require(fields["tds_ppm"]["doubleValue"] == status["tds_ppm"], "Firestore and local values diverged");
-    require(fields["sampleSequence"]["integerValue"] == "1", "Firestore integer wrapper incorrect");
-    require(fields["sensorStatus"]["mapValue"]["fields"]["ph"]["mapValue"]["fields"]["simulated"]["booleanValue"] == true, "Firestore lost sensor provenance");
-    require(commit["updateTransforms"][0]["setToServerValue"] == "REQUEST_TIME", "Keep server timestamp for remote stale detection");
+    const auto sample = fields["sample"]["mapValue"]["fields"];
+    const auto sensors = fields["sensors"]["mapValue"]["fields"];
+    require(fields.size() == 4 && fields["humidity"].isNull() && fields["telemetry"].isNull() &&
+            fields["schemaVersion"].isNull(), "Cloud must only write the compact device, sample, sensors and status fields");
+    require(sensors.size() == 6 && sensors["air"].isNull(), "Each physical sensor should have one group");
+    const auto dht = sensors["dht"]["mapValue"]["fields"];
+    require(dht["humidityPercent"]["doubleValue"] == status["humidity"], "DHT humidity diverged from LAN");
+    require(sample["sequence"]["integerValue"] == "1" && sample["ageMs"]["integerValue"] == "500", "Sample timing incorrect");
+    require(sensors["ph"]["mapValue"]["fields"]["simulated"]["booleanValue"] == true, "Firestore lost sensor provenance");
+    require(commit["updateTransforms"][0]["fieldPath"] == "lastUpdated" &&
+            commit["updateTransforms"][0]["setToServerValue"] == "REQUEST_TIME", "Keep server timestamp for remote stale detection");
     require(fields["lastUpdated"].isNull(), "Device clock must never masquerade as server time");
-    require(status["telemetry"].isNull() && dashboard["telemetry"].isNull(), "Grouped schema must only be sent to Firestore");
-    const auto grouped = fields["telemetry"]["mapValue"]["fields"];
-    const auto sample = grouped["sample"]["mapValue"]["fields"];
-    const auto sensors = grouped["sensors"]["mapValue"]["fields"];
-    require(grouped["schemaVersion"]["integerValue"] == "2" && sample["ageMs"]["integerValue"] == "500", "Grouped sample version or timing is incorrect");
-    require(sensors["tds"]["mapValue"]["fields"]["readings"]["mapValue"]["fields"]["ppm"]["doubleValue"] == 950.25f, "Grouped TDS diverged from the sample");
-    require(sensors["ph"]["mapValue"]["fields"]["health"]["mapValue"]["fields"]["simulated"]["booleanValue"] == true, "Grouped pH lost simulation metadata");
-    require(commit["updateTransforms"][1]["fieldPath"] == "telemetry.uploadedAt" &&
-            commit["updateTransforms"][1]["setToServerValue"] == "REQUEST_TIME", "Grouped sample must have its own server timestamp");
 
     snap.enabled[S_TDS] = false;
     strcpy(snap.sensors.last_err[S_DHT], "read failed");
@@ -121,20 +119,25 @@ int main() {
     require(status["tds_ppm"].isNull() && dashboard["tds"].isNull(), "Disabled sensor leaked stale value");
     require(status["temp_c"].isNull() && status["humidity"].isNull() && status["vpd_kpa"].isNull(), "DHT failure must also invalidate derived VPD");
     require(status["water_temp_c"].isNull() && status["lux"].isNull(), "Waiting or nonfinite values must be null");
-    require(commit["update"]["fields"]["tds_ppm"]["nullValue"].isNull(), "Cloud must explicitly clear disabled fields");
-    require(commit["update"]["fields"]["tds_ppm"].as<JsonObjectConst>().size() == 1, "Cloud null cannot mean omitted field");
-    const auto groupedTds = commit["update"]["fields"]["telemetry"]["mapValue"]["fields"]["sensors"]["mapValue"]["fields"]["tds"]["mapValue"]["fields"];
-    const auto groupedPpm = groupedTds["readings"]["mapValue"]["fields"]["ppm"]["nullValue"];
+    const auto groupedTds = commit["update"]["fields"]["sensors"]["mapValue"]["fields"]["tds"]["mapValue"]["fields"];
+    const auto groupedPpm = groupedTds["ppm"]["nullValue"];
     require(!groupedPpm.isUnbound() && groupedPpm.isNull() &&
-            groupedTds["health"]["mapValue"]["fields"]["state"]["stringValue"] == "disabled", "Grouped cloud sample retained an invalid TDS value");
+            groupedTds["state"]["stringValue"] == "disabled", "Grouped cloud sample retained an invalid TDS value");
     require(dashboard["s_ok"][S_TDS] == 0 && dashboard["s_ok"][S_DHT] == 2 && dashboard["s_ok"][S_WTEMP] == 3, "Sensor health codes changed");
     const JsonArrayConst mask = commit["updateMask"]["fieldPaths"].as<JsonArrayConst>();
     for (auto pair : status.as<JsonObjectConst>()) {
         bool masked = false;
         for (auto path : mask)
             if (strcmp(path.as<const char*>(), pair.key().c_str()) == 0) masked = true;
-        require(masked, "Every canonical field must be in Firestore update mask");
+        require(masked, "Old flat fields must be cleared by the Firestore mask");
     }
+    bool clearLegacyGroup = false;
+    for (auto path : mask) {
+        const char *name = path;
+        require(strcmp(name, "owner_uid") != 0, "Telemetry must preserve provisioned ownership");
+        clearLegacyGroup |= strcmp(name, "telemetry") == 0;
+    }
+    require(clearLegacyGroup, "Firestore must remove the old duplicated telemetry map");
     const auto output = json(status.as<JsonVariantConst>());
     require(output.find("password") == String::npos && output.find("fb_api") == String::npos, "Read-only telemetry leaked configuration secrets");
 
@@ -184,6 +187,12 @@ int main() {
             require(value.sensors.temp_c == value.sensors.humidity, "Torn cross-core snapshot");
     }
     producer.join();
+    telemetrySetDeviceId("grow-new");
+    auto renamed = telemetryRead();
+    require(strcmp(renamed.deviceId, "grow-new") == 0 && renamed.sampleSequence == 0, "Device ID change must wait for a fresh sample");
+    telemetryPublish(demo);
+    renamed = telemetryRead();
+    require(strcmp(renamed.deviceId, "grow-new") == 0 && renamed.sampleSequence > 0, "Fresh samples must use the new Device ID");
     std::cout << "Snapshot consistency, freshness, local/dashboard/cloud parity, nulls, discovery validation, rate limits and outage retry checks passed.\n";
 }
 """

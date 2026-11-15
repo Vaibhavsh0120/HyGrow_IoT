@@ -76,7 +76,7 @@
     <!-- Fonts/Icons are self-hosted from data/fonts/ via @font-face in
          style.css. No network requests — this device may only ever be
          reachable over its own SoftAP with no internet uplink at all. -->
-    <link rel="stylesheet" href="css/style.css?v=3.1.6">
+    <link rel="stylesheet" href="css/style.css?v=3.1.7">
 </head>
 <body class="bg-[#000000] text-on-background font-body-md h-screen w-screen overflow-hidden flex relative tracking-wide">
 
@@ -731,7 +731,7 @@
                             <label class="font-label-md text-on-surface-variant" for="cfg-wifi-pass">Password</label>
                             <div class="hg-secret-field">
                                 <input id="cfg-wifi-pass" maxlength="64" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
-                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-wifi-pass" aria-label="Show Wi-Fi Password">
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-wifi-pass" data-saved-password="wifi" aria-label="Show Wi-Fi Password">
                                     <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
@@ -740,7 +740,7 @@
                             <label class="font-label-md text-on-surface-variant" for="cfg-ap-pass">SoftAP Recovery Password</label>
                             <div class="hg-secret-field">
                                 <input id="cfg-ap-pass" maxlength="64" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
-                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-ap-pass" aria-label="Show SoftAP Recovery Password">
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-ap-pass" data-saved-password="recovery" aria-label="Show SoftAP Recovery Password">
                                     <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
@@ -762,7 +762,7 @@
                             <label class="font-label-md text-on-surface-variant" for="cfg-pass-current">Current Password</label>
                             <div class="hg-secret-field">
                                 <input id="cfg-pass-current" maxlength="64" autocomplete="current-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-on-surface-variant outline-none font-body-md" type="password"/>
-                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-current" aria-label="Show Current Password">
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-current" data-saved-password="admin" aria-label="Show Current Password">
                                     <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
@@ -770,7 +770,7 @@
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-pass-new">New Password</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-pass-new" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                                <input id="cfg-pass-new" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Empty" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-new" aria-label="Show New Password">
                                     <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
@@ -779,7 +779,7 @@
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-pass-confirm">Confirm New Password</label>
                             <div class="hg-secret-field">
-                                <input id="cfg-pass-confirm" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="••••••••" type="password"/>
+                                <input id="cfg-pass-confirm" maxlength="64" autocomplete="new-password" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Empty" type="password"/>
                                 <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-pass-confirm" aria-label="Show Confirm New Password">
                                     <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
@@ -882,6 +882,16 @@
                         <h3 class="font-headline-md text-headline-md text-white border-b border-white/10 pb-2">Cloud Provisioning</h3>
                         <p class="text-on-surface-variant text-body-md mb-2">Configure connection to Cloud Firestore.</p>
 
+                        <div class="flex flex-col gap-2">
+                            <label class="font-label-md text-on-surface-variant" for="cfg-device-name">Device Name</label>
+                            <input id="cfg-device-name" maxlength="31" spellcheck="false" autocomplete="off"
+                                class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary outline-none"
+                                type="text" required aria-describedby="cfg-device-help"/>
+                            <p id="cfg-device-help" class="text-on-surface-variant font-label-sm">Choose the name farmers see in HyGrow.</p>
+                            <button type="button" id="btn-save-device-name" class="bg-white/10 text-white font-label-md py-3 rounded-xl">Save Device Name</button>
+                            <button type="button" id="btn-open-pairing" class="bg-white/10 text-white font-label-md py-3 rounded-xl">Pair device</button>
+                        </div>
+
                         <!-- Firebase Upload lives here — everything about
                              whether/how this device talks to Firebase is in
                              this one card: the toggle, the credentials, and
@@ -920,22 +930,16 @@
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-email">Email</label>
-                            <input id="cfg-fb-email" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="device@project.com" type="email"/>
+                            <input id="cfg-fb-email" maxlength="63" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Created automatically when blank" type="email"/>
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-pass">Password</label>
                             <div class="hg-secret-field">
                                 <input id="cfg-fb-pass" maxlength="63" autocomplete="off" class="bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:border-primary focus:ring-1 focus:ring-primary outline-none font-body-md" placeholder="Leave blank to keep current password" type="password"/>
-                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-fb-pass" aria-label="Show Firebase Password">
+                                <button type="button" class="hg-secret-toggle" data-reveal-target="cfg-fb-pass" data-saved-password="firebase" aria-label="Show Firebase Password">
                                     <span class="material-symbols-outlined" data-icon="visibility"></span>
                                 </button>
                             </div>
-                            <!-- Unlike the Web API Key above, this field is
-                                 never repopulated with the saved value — the
-                                 device intentionally never sends the stored
-                                 Firebase password back down over the wire, so
-                                 there's nothing to reveal until you type a new
-                                 one here. -->
                         </div>
                         <div class="flex flex-col gap-2">
                             <label class="font-label-md text-on-surface-variant" for="cfg-fb-col">Firestore Collection</label>
@@ -1176,6 +1180,25 @@
             </div>
         </section>
 
+        <section class="page-section flex-col gap-8 hidden" id="page-10">
+            <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-4">
+                <button type="button" id="pair-back" class="text-left text-primary font-label-md">Back to Settings</button>
+                <h2 class="font-headline-lg text-headline-lg text-white">Pair device</h2>
+                <p class="text-on-surface-variant" id="pair-instructions">Scan this code in HyGrow to link the device to your account.</p>
+                <button type="button" id="pair-generate" class="bg-white/10 text-white font-label-md py-3 rounded-xl">Show pairing QR</button>
+                <canvas id="pair-qr" role="img" aria-label="Device pairing QR code" style="width:min(100%,256px);height:auto" hidden></canvas>
+                <code id="pair-code" class="text-white" style="overflow-wrap:anywhere" hidden></code>
+                <p id="pair-status" role="status" class="text-on-surface-variant"></p>
+            </div>
+            <div class="liquid-glass rounded-3xl p-6 md:p-8 flex flex-col gap-4">
+                <h3 class="font-headline-md text-white">Linked accounts</h3>
+                <button type="button" id="pair-refresh" class="bg-white/10 text-white font-label-md py-3 rounded-xl">Refresh linked accounts</button>
+                <ul id="pair-owners" class="flex flex-col gap-3 text-white"></ul>
+                <button type="button" id="pair-more" class="bg-white/10 text-white font-label-md py-3 rounded-xl" hidden>Load more accounts</button>
+                <p id="pair-owners-status" role="status" class="text-on-surface-variant"></p>
+            </div>
+        </section>
+
         <!-- PAGE 9: Terminal -->
         <section class="page-section h-full flex-col hidden" id="page-9">
             <header class="terminal-header">
@@ -1204,10 +1227,11 @@
     </main>
 
     <!-- Load Local Modular Scripts -->
-    <script src="js/charts.js?v=3.1.6"></script>
-    <script src="js/terminal.js?v=3.1.6"></script>
-    <script src="js/telemetry-view.js?v=3.1.6"></script>
-    <script src="js/app.js?v=3.1.6"></script>
+    <script src="js/charts.js?v=3.1.7"></script>
+    <script src="js/terminal.js?v=3.1.7"></script>
+    <script src="js/telemetry-view.js?v=3.1.7"></script>
+    <script src="js/qrcode.js"></script>
+    <script src="js/app.js?v=3.1.7"></script>
 
 </body>
 </html>

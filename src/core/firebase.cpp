@@ -11,34 +11,10 @@
 // so changing credentials cannot corrupt an in-flight request.
 //
 // ---------------------------------------------------------------------------
-// Device-state document contract:
-//
-//   devices/{device_id}
-//     deviceId       string    — mirrors currentConfig.device_id
-//     status         string    — "Online", set by every successful upload
-//                                 from THIS device. Never set to "Offline"
-//                                 by the ESP32 — see point 2 below.
-//     lastUpdated    timestamp — Firestore SERVER timestamp (fieldTransforms,
-//                                 not a device-clock value), refreshed on
-//                                 every successful upload.
-//     uptime_s       integer   — measured seconds since this boot, informational.
-//     firmwareVersion string   — compile-time HYGROW_FIRMWARE_VERSION.
-//     telemetry      map       — versioned latest sample and sensor groups.
-//     <legacy fields>          — flat sample and readings for installed apps.
-//
-// Two rules this file exists to enforce:
-//
-//   1. Every reading is written on every upload, with explicit nulls for
-//      unavailable readings. Both layouts come from the same snapshot.
-//   2. status/lastUpdated always mean "this device (Wi-Fi + Firestore
-//      reachability) is alive", never "every sensor is healthy". A single
-//      failed sensor still uploads successfully (as null) and still marks
-//      the device Online. This firmware NEVER writes "Offline" itself —
-//      that has to be derived by whatever reads this collection (e.g. a
-//      scheduled backend job that flags a device Offline once lastUpdated
-//      goes stale). That split (connectivity vs. sensor health) is
-//      deliberate — see README.md's Cloud Sync section.
-// ---------------------------------------------------------------------------
+// Document path: devices/{Firebase Auth UID} (collection configurable).
+// The firmware replaces device, sample and sensors on each successful upload
+// and updates the server-side heartbeat. Firestore provisioning owns the
+// owner link documents. Names are initialized once and edited separately.
 #include "task_network_internal.h"
 #include "task_network.h"
 #include "state.h"
@@ -48,9 +24,11 @@
 #include "telemetry.h"
 #include "firebase_retry.h"
 #include "firebase_tls.h"
+#include <new>
 #include <time.h>
 
 static String s_fbIdToken;
+static String s_fbDeviceUid;
 static uint32_t s_fbTokenExpiryMs = 0; // millis() timestamp after which the cached token is considered stale
 
 // Only repeated permanent 4xx configuration/permission errors auto-disable.
@@ -71,6 +49,51 @@ static uint32_t s_resultClientId = 0;
 static bool s_resultOk = false;
 static char s_resultError[160]{};
 
+enum class PairAction : uint8_t { Show, Owners, Block, Unblock, ReadName, Rename };
+
+struct PairRequest
+{
+    uint32_t clientId;
+    PairAction action;
+    char argument[512];
+};
+
+struct PairReply
+{
+    uint32_t clientId;
+    bool ok;
+    String payload;
+};
+
+static PairRequest s_pairRequest{};
+static PairReply *s_pairReply = nullptr;
+static char s_pairingCode[33]{}, s_pairingHash[65]{};
+static char s_liveCloudName[32]{}, s_cloudTimestamp[40]{};
+static uint32_t s_cloudNameGeneration = 0;
+static uint64_t s_nextNameCheckMs = 0;
+
+static bool safePathId(const char *id, size_t limit)
+{
+    size_t length = 0;
+    for (; id[length]; ++length)
+    {
+        const char c = id[length];
+        if (length >= limit || !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                                 (c >= '0' && c <= '9') || c == '_' || c == '-'))
+            return false;
+    }
+    return length != 0;
+}
+
+bool firebaseValidDeviceName(const char *name)
+{
+    const size_t size = strlen(name);
+    if (!size || size > 31 || name[0] == ' ' || name[size - 1] == ' ') return false;
+    for (const unsigned char *p = reinterpret_cast<const unsigned char *>(name); *p; ++p)
+        if (*p < 0x20 || *p == 0x7f) return false;
+    return true;
+}
+
 struct FirebaseSettings
 {
     char fb_api_key[128], fb_project[64], fb_email[64], fb_pass[64], fb_collection[32];
@@ -90,6 +113,26 @@ static FirebaseSettings firebaseReadConfig(uint32_t *generation = nullptr)
     if (generation) *generation = s_settingsGeneration;
     portEXIT_CRITICAL(&s_settingsMux);
     return copy;
+}
+
+static bool resolveAutomaticAccount(FirebaseSettings &settings, bool create)
+{
+    return state_device_account(settings.fb_project, telemetryRead().hardwareId,
+                                settings.fb_email, settings.fb_pass, create);
+}
+
+String firebaseSavedPassword()
+{
+    auto settings = firebaseReadConfig();
+    if (!settings.fb_email[0] && !resolveAutomaticAccount(settings, false)) return "";
+    return String(settings.fb_pass);
+}
+
+String firebaseAutomaticEmail()
+{
+    auto settings = firebaseReadConfig();
+    if (settings.fb_email[0] || !resolveAutomaticAccount(settings, false)) return "";
+    return String(settings.fb_email);
 }
 
 void firebaseSetEnabled(bool enabled)
@@ -158,232 +201,152 @@ static bool firebaseClockReady()
     return time(nullptr) >= 1735689600; // 2025-01-01, reject unset epoch
 }
 
-// On-demand connectivity check for the Settings > Cloud Provisioning
-// "Test Connection" button (test_firebase command, command_handlers.cpp).
-// Performs a REAL sign-in against Identity Toolkit with whatever is
-// currently saved in currentConfig (not a hand-typed value from the form —
-// the button only makes sense after Save Credentials has run), and a real
-// Firestore GET against the configured project/collection/device document so
-// the reported result reflects genuine reachability, not just "the fields
-// are non-empty". Deliberately does NOT touch/reuse firebaseUploadCycle()'s
-// cached token (s_fbIdToken) — a stale cached token from *before* a
-// credential change could report "ok" for credentials that no longer work,
-// which would defeat the entire point of a manual test. errorOut is only
-// written when this returns false.
+struct FirebaseIdentity
+{
+    String token, uid, serviceError, error;
+    int status = 0;
+    unsigned expiresIn = 3600;
+};
+
+static FirebaseIdentity firebaseAuthRequest(const FirebaseSettings &settings, bool signup)
+{
+    FirebaseIdentity result;
+    WiFiClientSecure client;
+    client.setCACert(FIREBASE_ROOT_CA);
+    client.setHandshakeTimeout(5);
+    HTTPClient http;
+    http.setConnectTimeout(5000);
+    http.setTimeout(5000);
+    const String url = "https://identitytoolkit.googleapis.com/v1/accounts:" +
+        String(signup ? "signUp" : "signInWithPassword") + "?key=" + settings.fb_api_key;
+    if (!http.begin(client, url))
+    {
+        result.error = "Could not start Firebase authentication.";
+        return result;
+    }
+    http.addHeader("Content-Type", "application/json");
+    JsonDocument request;
+    request["email"] = settings.fb_email;
+    request["password"] = settings.fb_pass;
+    request["returnSecureToken"] = true;
+    String payload;
+    serializeJson(request, payload);
+    result.status = http.POST(payload);
+
+    JsonDocument reply;
+    const auto parsed = deserializeJson(reply, http.getString());
+    http.end();
+    if (result.status == 200)
+    {
+        const char *uid = reply["localId"] | "";
+        const char *token = reply["idToken"] | "";
+        if (!parsed && token[0] && safePathId(uid, 128))
+        {
+            result.uid = uid;
+            result.token = token;
+            const unsigned seconds = strtoul(reply["expiresIn"] | "3600", nullptr, 10);
+            if (seconds > 0 && seconds <= 86400) result.expiresIn = seconds;
+        }
+        else result.error = "Firebase returned an invalid identity.";
+    }
+    else
+    {
+        result.serviceError = reply["error"]["message"] | "";
+        result.error = String(signup ? "Device account setup: " : "Firebase sign-in: ") +
+            (result.serviceError.length() ? result.serviceError : "HTTP " + String(result.status));
+    }
+    return result;
+}
+
+static FirebaseIdentity firebaseAuthenticate(FirebaseSettings settings)
+{
+    FirebaseIdentity result;
+    if (!settings.fb_api_key[0] || !settings.fb_project[0])
+    {
+        result.status = 400;
+        result.error = "Enter the Firebase Project ID and Web API Key.";
+        return result;
+    }
+    if (!firebaseClockReady())
+    {
+        result.error = "Waiting for network time for TLS validation.";
+        return result;
+    }
+    const bool automatic = !settings.fb_email[0];
+    if (automatic && !resolveAutomaticAccount(settings, true))
+    {
+        result.error = "Could not save the device's Firebase account.";
+        return result;
+    }
+    if (!settings.fb_pass[0])
+    {
+        result.status = 400;
+        result.error = "Enter the Firebase password or leave Email blank for automatic setup.";
+        return result;
+    }
+    result = firebaseAuthRequest(settings, false);
+    if (automatic && result.status == 400 &&
+        (result.serviceError == "EMAIL_NOT_FOUND" || result.serviceError == "INVALID_LOGIN_CREDENTIALS"))
+        result = firebaseAuthRequest(settings, true);
+    return result;
+}
+
+static String firestoreDocumentPath(const FirebaseSettings &settings, const String &uid)
+{
+    const String collection = settings.fb_collection[0] ? settings.fb_collection : "devices";
+    return "projects/" + String(settings.fb_project) + "/databases/(default)/documents/" + collection + "/" + uid;
+}
+
+// A manual test refreshes authentication independently of the cached worker token.
 bool firebaseTestConnection(String &errorOut)
 {
-    const auto settings = firebaseReadConfig();
-    if (String(settings.fb_api_key).length() == 0 ||
-        String(settings.fb_email).length() == 0 ||
-        String(settings.fb_pass).length() == 0)
-    {
-        errorOut = "Missing Web API Key, Email, or Password.";
-        return false;
-    }
-    if (String(settings.fb_project).length() == 0)
-    {
-        errorOut = "Missing Project ID.";
-        return false;
-    }
     if (WiFi.status() != WL_CONNECTED)
     {
         errorOut = "Device is not connected to Wi-Fi.";
         return false;
     }
-
-    if (!firebaseClockReady())
+    const auto settings = firebaseReadConfig();
+    const auto identity = firebaseAuthenticate(settings);
+    if (!identity.token.length())
     {
-        errorOut = "Waiting for network time for TLS certificate validation.";
-        return false;
-    }
-
-    // 1. Sign in - proves the API key + email/password are valid together.
-    WiFiClientSecure signInClient;
-    signInClient.setCACert(FIREBASE_ROOT_CA);
-    signInClient.setHandshakeTimeout(2);
-    HTTPClient signInHttps;
-    signInHttps.setConnectTimeout(2000);
-    signInHttps.setTimeout(3000);
-
-    String signInUrl = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + String(settings.fb_api_key);
-    if (!signInHttps.begin(signInClient, signInUrl))
-    {
-        errorOut = "Could not start sign-in request.";
-        return false;
-    }
-    signInHttps.addHeader("Content-Type", "application/json");
-
-    JsonDocument signInBody;
-    signInBody["email"] = settings.fb_email;
-    signInBody["password"] = settings.fb_pass;
-    signInBody["returnSecureToken"] = true;
-    String signInBodyStr;
-    serializeJson(signInBody, signInBodyStr);
-
-    int signInCode = signInHttps.POST(signInBodyStr);
-    String testToken;
-
-    if (signInCode == 200)
-    {
-        JsonDocument resp;
-        DeserializationError err = deserializeJson(resp, signInHttps.getString());
-        if (!err && resp["idToken"].is<const char *>())
-        {
-            testToken = String((const char *)resp["idToken"]);
-        }
-        else
-        {
-            signInHttps.end();
-            errorOut = "Sign-in succeeded but returned a malformed response.";
-            return false;
-        }
-    }
-    else
-    {
-        String body = signInHttps.getString();
-        signInHttps.end();
-        // Identity Toolkit's error payload has {"error":{"message":"..."}}
-        // with short, stable machine-readable codes — surface that directly
-        // instead of just the HTTP status, e.g. "INVALID_PASSWORD" /
-        // "EMAIL_NOT_FOUND" / "API key not valid" are far more actionable
-        // than "HTTP 400".
-        JsonDocument errDoc;
-        String reason = "HTTP " + String(signInCode);
-        if (!deserializeJson(errDoc, body) && errDoc["error"]["message"].is<const char *>())
-        {
-            reason = String((const char *)errDoc["error"]["message"]);
-        }
-        errorOut = "Sign-in failed: " + reason;
-        return false;
-    }
-    signInHttps.end();
-
-    // 2. A lightweight authenticated Firestore GET — proves the Project ID
-    // is real and this account can actually reach it, not just that the
-    // Identity Toolkit login worked in isolation (a valid login against the
-    // wrong project would otherwise report a false "ok").
-    String collection = String(settings.fb_collection).length() > 0 ? String(settings.fb_collection) : "devices";
-    const auto snapshot = telemetryRead();
-    String docId = snapshot.deviceId;
-
-    WiFiClientSecure fsClient;
-    fsClient.setCACert(FIREBASE_ROOT_CA);
-    fsClient.setHandshakeTimeout(2);
-    HTTPClient fsHttps;
-    fsHttps.setConnectTimeout(2000);
-    fsHttps.setTimeout(3000);
-
-    String fsUrl = "https://firestore.googleapis.com/v1/projects/" + String(settings.fb_project) +
-                   "/databases/(default)/documents/" + collection + "/" + docId +
-                   "?key=" + String(settings.fb_api_key);
-    if (!fsHttps.begin(fsClient, fsUrl))
-    {
-        errorOut = "Signed in, but could not start the Firestore check.";
-        return false;
-    }
-    fsHttps.addHeader("Authorization", "Bearer " + testToken);
-
-    int fsCode = fsHttps.GET();
-    String fsBody = fsHttps.getString();
-    fsHttps.end();
-
-    // A GET on a document that doesn't exist YET (204/404-shaped 200 with no
-    // fields, or a genuine 404) is still a successful connection — it means
-    // the project/credentials/permissions are all correct and the very next
-    // upload cycle will simply create that document. Only treat this as a
-    // failure for errors that mean the connection itself didn't work
-    // (bad project id, permission denied, etc).
-    if (fsCode == 200 || fsCode == 404)
-    {
-        return true;
-    }
-
-    JsonDocument errDoc;
-    String reason = "HTTP " + String(fsCode);
-    if (!deserializeJson(errDoc, fsBody) && errDoc["error"]["message"].is<const char *>())
-    {
-        reason = String((const char *)errDoc["error"]["message"]);
-    }
-    errorOut = "Signed in, but Firestore check failed: " + reason;
-    return false;
-}
-
-// Exchange fb_email/fb_pass for a Firebase Identity Toolkit ID token.
-// Caches the token and its expiry so normal upload cycles don't sign in
-// every time — only when the cache is empty or has expired.
-static bool firebaseEnsureIdToken(const FirebaseSettings &settings)
-{
-    s_signInFailureCode = 0;
-    if (s_fbIdToken.length() > 0 && (int32_t)(millis() - s_fbTokenExpiryMs) < 0)
-    {
-        return true; // cached token still valid
-    }
-
-    if (String(settings.fb_api_key).length() == 0 ||
-        String(settings.fb_email).length() == 0 ||
-        String(settings.fb_pass).length() == 0)
-    {
-        s_signInFailureCode = 400;
-        firebaseUpdateStatus(false, "Missing Firebase email/password/API key");
-        return false;
-    }
-
-    if (!firebaseClockReady())
-    {
-        firebaseUpdateStatus(false, "Waiting for network time for TLS validation");
+        errorOut = identity.error;
         return false;
     }
     WiFiClientSecure client;
     client.setCACert(FIREBASE_ROOT_CA);
     client.setHandshakeTimeout(5);
-    HTTPClient https;
-    https.setConnectTimeout(5000);
-    https.setTimeout(5000);
-
-    String url = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + String(settings.fb_api_key);
-    if (!https.begin(client, url))
+    HTTPClient http;
+    http.setConnectTimeout(5000);
+    http.setTimeout(5000);
+    if (!http.begin(client, "https://firestore.googleapis.com/v1/" + firestoreDocumentPath(settings, identity.uid)))
     {
-        firebaseUpdateStatus(false, "signIn: HTTPClient begin() failed");
+        errorOut = "Signed in, but could not start the Firestore check.";
         return false;
     }
-    https.addHeader("Content-Type", "application/json");
+    http.addHeader("Authorization", "Bearer " + identity.token);
+    const int status = http.GET();
+    http.end();
+    if (status == 200 || status == 404) return true;
+    errorOut = "Signed in, but Firestore check returned HTTP " + String(status) + ".";
+    return false;
+}
 
-    JsonDocument body;
-    body["email"] = settings.fb_email;
-    body["password"] = settings.fb_pass;
-    body["returnSecureToken"] = true;
-    String bodyStr;
-    serializeJson(body, bodyStr);
+static bool firebaseEnsureIdToken(const FirebaseSettings &settings)
+{
+    s_signInFailureCode = 0;
+    if (s_fbIdToken.length() && (int32_t)(millis() - s_fbTokenExpiryMs) < 0) return true;
 
-    int code = https.POST(bodyStr);
-    s_signInFailureCode = code;
-    bool ok = false;
-
-    if (code == 200)
+    const auto identity = firebaseAuthenticate(settings);
+    s_signInFailureCode = identity.status;
+    if (!identity.token.length())
     {
-        JsonDocument resp;
-        DeserializationError err = deserializeJson(resp, https.getString());
-        if (!err && resp["idToken"].is<const char *>())
-        {
-            s_fbIdToken = String((const char *)resp["idToken"]);
-            long expiresIn = resp["expiresIn"] | 3600; // seconds, Firebase default 1hr tokens
-            // Refresh a little early (80% of lifetime) to avoid racing expiry mid-upload.
-            s_fbTokenExpiryMs = millis() + (uint32_t)(expiresIn * 800UL);
-            ok = true;
-        }
-        else
-        {
-            firebaseUpdateStatus(false, "signIn: malformed token response");
-        }
+        firebaseUpdateStatus(false, identity.error.c_str());
+        return false;
     }
-    else
-    {
-        String err = "signIn HTTP " + String(code);
-        firebaseUpdateStatus(false, err.c_str());
-    }
-
-    https.end();
-    return ok;
+    s_fbIdToken = identity.token;
+    s_fbDeviceUid = identity.uid;
+    s_fbTokenExpiryMs = millis() + static_cast<uint32_t>(identity.expiresIn * 800UL);
+    return true;
 }
 
 // Failures from older credentials cannot disable freshly saved settings.
@@ -415,15 +378,8 @@ static void firebaseRegisterFailure(int code, uint32_t generation)
     }
 }
 
-// Called exclusively by the cloud worker. Upload the newest complete sensor
-// cycle after sign-in, with the exact same JSON fields as GET /status.
-void firebaseUploadCycle()
+static void firebaseSyncWorkerGeneration(uint32_t generation)
 {
-    uint32_t generation;
-    const auto settings = firebaseReadConfig(&generation);
-    if (!settings.firebase_enabled || WiFi.status() != WL_CONNECTED ||
-        !settings.fb_project[0] || !settings.fb_api_key[0]) return;
-
     if (generation != s_workerGeneration)
     {
         s_fbIdToken = "";
@@ -431,8 +387,78 @@ void firebaseUploadCycle()
         s_fbConsecutiveFailures = 0;
         s_retryDelayMs = 0;
         s_nextAttemptMs = 0;
+        s_nextNameCheckMs = 0;
+        portENTER_CRITICAL(&s_settingsMux);
+        s_cloudTimestamp[0] = '\0';
+        portEXIT_CRITICAL(&s_settingsMux);
         s_workerGeneration = generation;
     }
+}
+
+struct CloudName
+{
+    String name, updateTime;
+    int status = 0;
+};
+
+static CloudName firebaseReadCloudName(const String &documentPath)
+{
+    CloudName current;
+    WiFiClientSecure client;
+    client.setCACert(FIREBASE_ROOT_CA);
+    client.setHandshakeTimeout(5);
+    HTTPClient http;
+    http.setConnectTimeout(5000);
+    http.setTimeout(5000);
+    if (!http.begin(client, "https://firestore.googleapis.com/v1/" + documentPath + "?mask.fieldPaths=name"))
+        return current;
+    http.addHeader("Authorization", "Bearer " + s_fbIdToken);
+    current.status = http.GET();
+    if (current.status == 200)
+    {
+        JsonDocument response;
+        if (deserializeJson(response, http.getString())) current.status = 0;
+        else
+        {
+            current.name = response["fields"]["name"]["stringValue"] | "";
+            current.updateTime = response["updateTime"] | "";
+        }
+    }
+    http.end();
+    return current;
+}
+
+static void rememberCloudName(const char *name, uint32_t generation)
+{
+    if (!firebaseValidDeviceName(name)) return;
+    portENTER_CRITICAL(&s_settingsMux);
+    if (generation == s_settingsGeneration)
+    {
+        strlcpy(s_liveCloudName, name, sizeof(s_liveCloudName));
+        s_cloudNameGeneration = generation;
+    }
+    portEXIT_CRITICAL(&s_settingsMux);
+}
+
+String firebaseLastUpdated()
+{
+    char stamp[sizeof(s_cloudTimestamp)];
+    portENTER_CRITICAL(&s_settingsMux);
+    memcpy(stamp, s_cloudTimestamp, sizeof(stamp));
+    portEXIT_CRITICAL(&s_settingsMux);
+    return String(stamp);
+}
+
+// Called exclusively by the cloud worker. Upload the newest complete sensor
+// cycle after sign-in using the Firestore sensor groups.
+void firebaseUploadCycle()
+{
+    uint32_t generation;
+    const auto settings = firebaseReadConfig(&generation);
+    if (!settings.firebase_enabled || WiFi.status() != WL_CONNECTED ||
+        !settings.fb_project[0] || !settings.fb_api_key[0]) return;
+
+    firebaseSyncWorkerGeneration(generation);
     if (telemetryUptimeMs() < s_nextAttemptMs) return;
     if (!firebaseEnsureIdToken(settings))
     {
@@ -448,9 +474,27 @@ void firebaseUploadCycle()
     const auto snapshot = telemetryRead();
     if (!snapshot.sampleSequence) return; // startup has not produced a real cycle
 
-    const String collection = settings.fb_collection[0] ? settings.fb_collection : "devices";
-    const String documentPath = "projects/" + String(settings.fb_project) +
-        "/databases/(default)/documents/" + collection + "/" + snapshot.deviceId;
+    const String documentPath = firestoreDocumentPath(settings, s_fbDeviceUid);
+    CloudName currentName;
+    bool initializeName = false;
+    if (telemetryUptimeMs() >= s_nextNameCheckMs)
+    {
+        currentName = firebaseReadCloudName(documentPath);
+        if (currentName.status == 404 || (currentName.status == 200 && !currentName.name.length() && currentName.updateTime.length()))
+            initializeName = true;
+        else if (currentName.status == 200 && currentName.name.length())
+        {
+            rememberCloudName(currentName.name.c_str(), generation);
+            s_nextNameCheckMs = telemetryUptimeMs() + 60000;
+        }
+        else
+        {
+            firebaseUpdateStatus(false, "Could not read the Firebase device name.");
+            if (currentName.status == 401) s_fbTokenExpiryMs = 0;
+            firebaseRegisterFailure(currentName.status, generation);
+            return;
+        }
+    }
     const String url = "https://firestore.googleapis.com/v1/projects/" + String(settings.fb_project) +
         "/databases/(default)/documents:commit?key=" + String(settings.fb_api_key);
     WiFiClientSecure client;
@@ -469,8 +513,17 @@ void firebaseUploadCycle()
     https.addHeader("Authorization", "Bearer " + s_fbIdToken);
 
     JsonDocument doc;
-    JsonObject write = doc["writes"].to<JsonArray>().add<JsonObject>();
-    if (!writeTelemetryFirestore(write, snapshot, telemetryUptimeMs(), documentPath.c_str()) || doc.overflowed())
+    JsonArray writes = doc["writes"].to<JsonArray>();
+    JsonObject write = writes.add<JsonObject>();
+    const bool built = writeTelemetryFirestore(write, snapshot, telemetryUptimeMs(), documentPath.c_str());
+    if (built && initializeName)
+    {
+        write["update"]["fields"]["name"]["stringValue"] = snapshot.deviceId;
+        write["updateMask"]["fieldPaths"].as<JsonArray>().add("name");
+        if (currentName.status == 404) write["currentDocument"]["exists"] = false;
+        else write["currentDocument"]["updateTime"] = currentName.updateTime;
+    }
+    if (!built || doc.overflowed())
     {
         https.end();
         firebaseUpdateStatus(false, "Could not build Firestore payload.");
@@ -482,6 +535,15 @@ void firebaseUploadCycle()
     const int code = https.POST(payload);
     if (code >= 200 && code < 300)
     {
+        if (initializeName) s_nextNameCheckMs = telemetryUptimeMs() + 60000;
+        JsonDocument receipt;
+        if (!deserializeJson(receipt, https.getString()))
+        {
+            const char *stamp = receipt["writeResults"][0]["transformResults"][0]["timestampValue"] | "";
+            portENTER_CRITICAL(&s_settingsMux);
+            if (generation == s_settingsGeneration) strlcpy(s_cloudTimestamp, stamp, sizeof(s_cloudTimestamp));
+            portEXIT_CRITICAL(&s_settingsMux);
+        }
         firebaseUpdateStatus(true);
         s_fbConsecutiveFailures = 0;
         s_retryDelayMs = 0;
@@ -493,9 +555,182 @@ void firebaseUploadCycle()
         firebaseUpdateStatus(false, error.c_str());
         if (code == 401) s_fbTokenExpiryMs = 0; // force a fresh token next time
         webLog(0, LOG_ERR, "Firebase upload failed: " + error);
-        firebaseRegisterFailure(code, generation);
+        // A simultaneous first upload or app rename can win the precondition.
+        firebaseRegisterFailure(initializeName && (code == 400 || code == 409 || code == 412) ? 0 : code, generation);
     }
     https.end();
+}
+
+static String pairingPageToken(const char *token)
+{
+    String encoded;
+    for (const unsigned char *c = reinterpret_cast<const unsigned char *>(token); *c; ++c)
+    {
+        char escape[4];
+        snprintf(escape, sizeof(escape), "%%%02X", static_cast<unsigned>(*c));
+        encoded += escape;
+    }
+    return encoded;
+}
+
+static bool firebasePair(const PairRequest &request, JsonObject result, String &error)
+{
+    uint32_t generation;
+    const auto settings = firebaseReadConfig(&generation);
+    if (settings.fb_collection[0] && strcmp(settings.fb_collection, "devices") != 0)
+    {
+        error = "Set the Firestore collection to devices before pairing.";
+        return false;
+    }
+    firebaseSyncWorkerGeneration(generation);
+    if (WiFi.status() != WL_CONNECTED || !settings.fb_project[0] || !settings.fb_api_key[0] ||
+        !firebaseEnsureIdToken(settings))
+    {
+        error = "Connect Wi-Fi and verify the saved Firebase credentials.";
+        return false;
+    }
+
+    uint32_t latestGeneration;
+    firebaseReadConfig(&latestGeneration);
+    if (generation != latestGeneration)
+    {
+        error = "Device settings changed. Try again.";
+        return false;
+    }
+
+    if (!s_fbDeviceUid.length())
+    {
+        error = "The Firebase upload account did not return a UID.";
+        return false;
+    }
+
+    const String root = "projects/" + String(settings.fb_project) + "/databases/(default)/documents";
+    const String devicePath = firestoreDocumentPath(settings, s_fbDeviceUid);
+    const String base = "https://firestore.googleapis.com/v1/";
+    String url;
+    JsonDocument body;
+    if (request.action == PairAction::Owners)
+    {
+        url = base + devicePath + "/owners?pageSize=20";
+        if (request.argument[0]) url += "&pageToken=" + pairingPageToken(request.argument);
+    }
+    else if (request.action == PairAction::ReadName)
+        url = base + devicePath + "?mask.fieldPaths=name";
+    else
+    {
+        url = base + root + ":commit";
+        JsonObject write = body["writes"].to<JsonArray>().add<JsonObject>();
+        JsonArray mask = write["updateMask"]["fieldPaths"].to<JsonArray>();
+        if (request.action == PairAction::Show)
+        {
+            if (!s_pairingHash[0] && !state_pairing_identity(s_pairingCode, s_pairingHash, true))
+            {
+                error = "Could not save the device pairing code.";
+                return false;
+            }
+            write["update"]["name"] = root + "/pairingDevices/" + s_fbDeviceUid;
+            write["update"]["fields"]["codeHash"]["stringValue"] = s_pairingHash;
+            mask.add("codeHash");
+        }
+        else if (request.action == PairAction::Rename)
+        {
+            write["update"]["name"] = devicePath;
+            write["update"]["fields"]["name"]["stringValue"] = String(request.argument);
+            mask.add("name");
+            write["currentDocument"]["exists"] = true;
+        }
+        else
+        {
+            write["update"]["name"] = devicePath + "/owners/" + request.argument;
+            write["update"]["fields"]["blocked"]["booleanValue"] = request.action == PairAction::Block;
+            mask.add("blocked");
+            write["currentDocument"]["exists"] = true;
+        }
+    }
+    if (body.overflowed())
+    {
+        error = "Could not prepare the pairing request.";
+        return false;
+    }
+
+    WiFiClientSecure client;
+    client.setCACert(FIREBASE_ROOT_CA);
+    client.setHandshakeTimeout(5);
+    HTTPClient https;
+    https.setConnectTimeout(5000);
+    https.setTimeout(5000);
+    if (!https.begin(client, url))
+    {
+        error = "Could not reach Firestore.";
+        return false;
+    }
+    https.addHeader("Authorization", "Bearer " + s_fbIdToken);
+    int status;
+    if (request.action != PairAction::Owners && request.action != PairAction::ReadName)
+    {
+        https.addHeader("Content-Type", "application/json");
+        String payload;
+        serializeJson(body, payload);
+        status = https.POST(payload);
+    }
+    else status = https.GET();
+
+    if (status < 200 || status >= 300)
+    {
+        if (status == 401) s_fbTokenExpiryMs = 0;
+        https.end();
+        error = "Pairing request failed (HTTP " + String(status) + ").";
+        return false;
+    }
+
+    result["type"] = "command_result";
+    result["command"] = "pairing";
+    result["ok"] = true;
+    result["deviceUid"] = s_fbDeviceUid;
+    if (request.action == PairAction::Show) result["code"] = String(s_pairingCode);
+    else if (request.action == PairAction::Rename)
+    {
+        rememberCloudName(request.argument, generation);
+        result["name"] = String(request.argument);
+    }
+    else if (request.action == PairAction::ReadName)
+    {
+        JsonDocument response;
+        if (deserializeJson(response, https.getString()))
+        {
+            https.end();
+            error = "Could not read the device name.";
+            return false;
+        }
+        const char *name = response["fields"]["name"]["stringValue"] | "";
+        if (firebaseValidDeviceName(name)) rememberCloudName(name, generation);
+        result["name"] = String(name);
+    }
+    else if (request.action == PairAction::Owners)
+    {
+        JsonDocument response;
+        const auto parsing = deserializeJson(response, https.getString());
+        if (parsing)
+        {
+            error = "Could not read the linked accounts.";
+            https.end();
+            return false;
+        }
+        JsonArray owners = result["owners"].to<JsonArray>();
+        for (JsonObjectConst owner : response["documents"].as<JsonArrayConst>())
+        {
+            const char *path = owner["name"] | "";
+            const char *slash = strrchr(path, '/');
+            if (!slash || !safePathId(slash + 1, 128)) continue;
+            JsonObject entry = owners.add<JsonObject>();
+            entry["uid"] = String(slash + 1);
+            entry["label"] = String(owner["fields"]["label"]["stringValue"] | "");
+            entry["blocked"] = owner["fields"]["blocked"]["booleanValue"] | false;
+        }
+        result["nextPageToken"] = String(response["nextPageToken"] | "");
+    }
+    https.end();
+    return true;
 }
 
 static void firebaseWorker(void *)
@@ -509,6 +744,8 @@ static void firebaseWorker(void *)
         s_cloudBusy = true;
         const uint32_t testClientId = s_testClientId;
         s_testClientId = 0;
+        const PairRequest pairing = s_pairRequest;
+        s_pairRequest.clientId = 0;
         const uint32_t generation = s_settingsGeneration;
         portEXIT_CRITICAL(&s_settingsMux);
         if (testClientId)
@@ -527,6 +764,28 @@ static void firebaseWorker(void *)
             s_resultOk = ok;
             strlcpy(s_resultError, error.c_str(), sizeof(s_resultError));
             s_resultClientId = testClientId;
+            portEXIT_CRITICAL(&s_settingsMux);
+        }
+        else if (pairing.clientId)
+        {
+            JsonDocument result;
+            String error;
+            bool ok = firebasePair(pairing, result.to<JsonObject>(), error);
+            uint32_t latest;
+            firebaseReadConfig(&latest);
+            if (generation != latest || result.overflowed())
+            {
+                ok = false;
+                error = "Pairing settings changed or the response was too large. Try again.";
+            }
+            auto *reply = new (std::nothrow) PairReply{pairing.clientId, ok, error};
+            if (reply && ok)
+            {
+                reply->payload = "";
+                serializeJson(result, reply->payload);
+            }
+            portENTER_CRITICAL(&s_settingsMux);
+            s_pairReply = reply;
             portEXIT_CRITICAL(&s_settingsMux);
         }
         else firebaseUploadCycle();
@@ -550,7 +809,7 @@ void firebaseStartWorker()
 void firebaseRequestUpload()
 {
     portENTER_CRITICAL(&s_settingsMux);
-    const bool ready = !s_cloudBusy && !s_testClientId;
+    const bool ready = !s_cloudBusy && !s_testClientId && !s_pairRequest.clientId;
     portEXIT_CRITICAL(&s_settingsMux);
     if (ready && s_uploadWorker && currentConfig.firebase_enabled && WiFi.status() == WL_CONNECTED)
         xTaskNotifyGive(s_uploadWorker);
@@ -560,8 +819,30 @@ bool firebaseRequestTest(uint32_t clientId)
 {
     if (!s_uploadWorker || !clientId) return false;
     portENTER_CRITICAL(&s_settingsMux);
-    const bool available = !s_cloudBusy && !s_testClientId && !s_resultClientId;
+    const bool available = !s_cloudBusy && !s_testClientId && !s_resultClientId && !s_pairRequest.clientId;
     if (available) s_testClientId = clientId;
+    portEXIT_CRITICAL(&s_settingsMux);
+    if (available) xTaskNotifyGive(s_uploadWorker);
+    return available;
+}
+
+bool firebaseRequestPairing(uint32_t clientId, const char *action, const char *argument)
+{
+    if (!s_uploadWorker || !clientId || strlen(argument) >= sizeof(s_pairRequest.argument)) return false;
+    PairRequest request{};
+    request.clientId = clientId;
+    if (strcmp(action, "show") == 0) request.action = PairAction::Show;
+    else if (strcmp(action, "owners") == 0) request.action = PairAction::Owners;
+    else if (strcmp(action, "block") == 0 && safePathId(argument, 128)) request.action = PairAction::Block;
+    else if (strcmp(action, "unblock") == 0 && safePathId(argument, 128)) request.action = PairAction::Unblock;
+    else if (strcmp(action, "read_name") == 0) request.action = PairAction::ReadName;
+    else if (strcmp(action, "rename") == 0 && firebaseValidDeviceName(argument)) request.action = PairAction::Rename;
+    else return false;
+    strlcpy(request.argument, argument, sizeof(request.argument));
+
+    portENTER_CRITICAL(&s_settingsMux);
+    const bool available = !s_cloudBusy && !s_testClientId && !s_pairRequest.clientId && !s_pairReply;
+    if (available) s_pairRequest = request;
     portEXIT_CRITICAL(&s_settingsMux);
     if (available) xTaskNotifyGive(s_uploadWorker);
     return available;
@@ -573,7 +854,15 @@ void firebaseNetworkLoop()
     const bool persistDisable = s_pendingDisableGeneration &&
         s_pendingDisableGeneration == s_settingsGeneration && !currentConfig.firebase_enabled;
     s_pendingDisableGeneration = 0;
+    char cloudName[sizeof(s_liveCloudName)]{};
+    if (s_cloudNameGeneration == s_settingsGeneration) memcpy(cloudName, s_liveCloudName, sizeof(cloudName));
+    s_liveCloudName[0] = '\0';
     portEXIT_CRITICAL(&s_settingsMux);
+    if (cloudName[0] && strcmp(cloudName, currentConfig.device_id) != 0 && state_save_device_id(cloudName))
+    {
+        telemetrySetDeviceId(cloudName);
+        broadcastConfig();
+    }
     if (persistDisable)
     {
         state_save();
@@ -587,7 +876,19 @@ void firebaseNetworkLoop()
     ok = s_resultOk;
     memcpy(error, s_resultError, sizeof(error));
     s_resultClientId = 0;
+    PairReply *pairing = s_pairReply;
+    s_pairReply = nullptr;
     portEXIT_CRITICAL(&s_settingsMux);
+    if (pairing)
+    {
+        auto *client = ws.client(pairing->clientId);
+        if (client && client->status() == WS_CONNECTED && wsClientIsAuthed(pairing->clientId))
+        {
+            if (pairing->ok) client->text(pairing->payload);
+            else sendCmdAck(client, "pairing", false, pairing->payload);
+        }
+        delete pairing;
+    }
     if (!clientId) return;
     webLog(0, ok ? LOG_INFO : LOG_ERR, ok ? "Firebase connection test succeeded." : "Firebase connection test failed: " + String(error));
     // Resolve the client again after the request; never retain a WS pointer

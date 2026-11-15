@@ -4,7 +4,7 @@
 #include "state.h"
 #include <ArduinoJson.h>
 
-#define HYGROW_FIRMWARE_VERSION "3.1.6"
+#define HYGROW_FIRMWARE_VERSION "3.1.7"
 constexpr unsigned HYGROW_SCHEMA_VERSION = 1;
 
 // No credentials or network-dependent fields in a sensor snapshot. Only
@@ -24,11 +24,14 @@ struct TelemetrySnapshot
 };
 
 void telemetryInit(); // once, before the server or sensor task starts
+void telemetrySetDeviceId(const char *id);
 void telemetryPublish(const bool simulated[S_COUNT]); // sensor task only
 TelemetrySnapshot telemetryRead();
 uint64_t telemetryUptimeMs();
 uint8_t telemetrySensorStatus(const TelemetrySnapshot &snapshot, SensorID id);
 void writeTelemetryJson(JsonObject out, const TelemetrySnapshot &snapshot, uint64_t nowMs);
+bool writeStatusTelemetry(JsonObject out, const TelemetrySnapshot &snapshot,
+                          uint64_t nowMs, const String &lastUpdated);
 void writeDashboardTelemetry(JsonObject out, const TelemetrySnapshot &snapshot, uint64_t nowMs);
 bool writeTelemetryFirestore(JsonObject write, const TelemetrySnapshot &snapshot,
                              uint64_t nowMs, const char *documentPath);

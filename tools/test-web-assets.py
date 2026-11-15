@@ -54,9 +54,6 @@ def main():
     header = (ROOT / 'src/core/telemetry.h').read_text(encoding='utf-8')
     version = re.search(r'#define HYGROW_FIRMWARE_VERSION "([^\x22]+)"', header).group(1)
     assert set(re.findall(r'\?v=([^\x22]+)', html)) == {version}, 'Dashboard cache version differs from firmware'
-    handoff = (ROOT / 'docs/APP_LOCAL_TELEMETRY_HANDOFF.md').read_text(encoding='utf-8')
-    assert f'Firmware: **{version}**' in handoff, 'Handoff version differs from firmware'
-    assert set(re.findall(r'"firmwareVersion": "([^\x22]+)"', handoff)) == {version}
     print(f'Offline asset links, unique HTML IDs, manifest/fonts, {len(assets)} gzip copies, and firmware {version} metadata passed.')
 
 

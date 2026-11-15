@@ -186,13 +186,15 @@ void broadcastConfig()
     doc["fb_api"] = currentConfig.fb_api_key;
     doc["fb_proj"] = currentConfig.fb_project;
     doc["fb_email"] = currentConfig.fb_email;
+    doc["fb_auto_email"] = firebaseAutomaticEmail();
     doc["fb_col"] = currentConfig.fb_collection;
     doc["dev_id"] = currentConfig.device_id;
     doc["ph_off"] = currentConfig.ph_offset;
     doc["ph_slope"] = currentConfig.ph_slope;
     doc["tds_k"] = currentConfig.tds_k;
 
-    // Saved passwords are write-only; never return them to browser sessions.
+    // Saved passwords stay out of configuration broadcasts. Admins can
+    // request a specific password with the reveal control.
 
     // Feature flags — no reboot required for either of these.
     doc["demo"] = currentConfig.demo_mode;

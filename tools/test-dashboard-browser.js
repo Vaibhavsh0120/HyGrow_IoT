@@ -22,11 +22,60 @@ fs.mkdirSync(output, { recursive: true });
                 const msg = JSON.parse(frame);
                 commands.push(msg);
                 if (msg.command === 'auth') ws.send(JSON.stringify({ type: 'auth_result', ok: true, token: 'browser-test-token' }));
+                if (msg.command === 'pairing') {
+                    const reply = {type:'command_result', command:'pairing', ok:true, deviceUid:'device-auth'};
+                    if (msg.action === 'owners') reply.owners = [{uid:'account-a', label:'Farm account', blocked:false}];
+                    if (msg.action === 'show') reply.code = 'a'.repeat(32);
+                    ws.send(JSON.stringify(reply));
+                }
+                if (msg.command === 'reveal_password')
+                    ws.send(JSON.stringify({type:'command_result', command:msg.command, ok:true, password:'test-' + msg.field}));
             });
             setTimeout(() => ws.send(JSON.stringify({ type: 'auth_status', setup_required: false, boot_id: 701 })), 40);
         });
         await page.goto(process.env.HYGROW_QA_URL || 'http://127.0.0.1:8766/');
         await page.waitForFunction(() => document.getElementById('auth-overlay').classList.contains('hidden'));
+        await page.evaluate(() => switchTab(8));
+        await page.setViewportSize({width:390,height:844});
+        for (const [field, label, id] of [
+            ['wifi','Wi-Fi Password','cfg-wifi-pass'],
+            ['recovery','SoftAP Recovery Password','cfg-ap-pass'],
+            ['admin','Current Password','cfg-pass-current'],
+            ['firebase','Firebase Password','cfg-fb-pass'],
+        ]) {
+            await page.getByRole('button', {name:'Show ' + label, exact:true}).click();
+            const input = page.locator('#' + id);
+            await page.waitForFunction(({id,field}) => document.getElementById(id).placeholder === 'test-' + field, {id,field});
+            assert.equal(await input.inputValue(), '');
+            await page.getByRole('button', {name:'Hide ' + label, exact:true}).click();
+            assert.equal(await input.getAttribute('type'), 'password');
+            assert.notEqual(await input.getAttribute('placeholder'), 'test-' + field);
+        }
+        for (const id of ['cfg-pass-new','cfg-pass-confirm']) {
+            assert.equal(await page.locator('#' + id).inputValue(), '');
+            assert.equal(await page.locator('#' + id).getAttribute('placeholder'), 'Empty');
+        }
+        await page.getByRole('textbox', {name:'Device Name'}).fill('Greenhouse North');
+        await page.getByRole('button', {name:'Save Device Name'}).click();
+        await page.getByText('Device name saved', {exact:true}).waitFor();
+        assert.ok(commands.some(cmd => cmd.action === 'rename' && cmd.argument === 'Greenhouse North'));
+        await page.getByRole('tab', {name:'Pair', exact:true}).click();
+        await page.getByText('Farm account', {exact:true}).waitFor();
+        await page.getByRole('button', {name:'Show pairing QR'}).click();
+        await page.getByRole('img', {name:'Device pairing QR code'}).waitFor();
+        assert.equal(await page.locator('#pair-code').innerText(), 'a'.repeat(32));
+        for (const width of [320,390]) {
+            await page.setViewportSize({width,height:844});
+            assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+        }
+        await page.getByRole('button', {name:'Block Farm account'}).click();
+        await page.getByText('Account blocked.', {exact:true}).waitFor();
+        await page.getByRole('button', {name:'Unblock Farm account'}).click();
+        await page.getByText('Account unblocked.', {exact:true}).waitFor();
+        assert.ok(commands.some(cmd => cmd.action === 'block' && cmd.argument === 'account-a'));
+        assert.ok(commands.some(cmd => cmd.action === 'unblock' && cmd.argument === 'account-a'));
+        await page.getByRole('button', {name:'Back to Settings'}).click();
+        await page.setViewportSize({width:1440,height:1000});
         await page.evaluate(() => switchTab(9));
         await page.evaluate(() => {
             onMessage({ data: JSON.stringify({ type: 'log_batch', entries: [

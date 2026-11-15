@@ -7,8 +7,8 @@
 // 1. UI STATE & NAVIGATION
 // ============================================================================
 const tabsData = {
-    labels: ["Dashboard & Vitals", "TDS", "Air Temp & Hum", "Water Temp", "Light", "Water Level", "pH", "Live Calibration", "System Settings", "Terminal"],
-    icons: ["monitoring", "water_drop", "thermostat", "device_thermostat", "light_mode", "waves", "science", "settings_input_component", "settings", "terminal"],
+    labels: ["Dashboard & Vitals", "TDS", "Air Temp & Hum", "Water Temp", "Light", "Water Level", "pH", "Live Calibration", "System Settings", "Terminal", "Pair Device"],
+    icons: ["monitoring", "water_drop", "thermostat", "device_thermostat", "light_mode", "waves", "science", "settings_input_component", "settings", "terminal", "settings_input_component"],
     activeStyle: "text-white font-bold bg-white/10 rounded-2xl shadow-inner",
     inactiveStyle: "text-on-surface-variant font-medium hover:bg-white/10 hover:text-white rounded-2xl transition-colors duration-200",
     // #sideNav only ever renders at lg (1024px+) now — see the breakpoint
@@ -247,6 +247,7 @@ const bottomNavItems = [
     { index: 7, icon: 'settings_input_component', label: 'Calibration' },
     { index: 9, icon: 'terminal', label: 'Terminal' },
     { index: 8, icon: 'settings', label: 'Settings' },
+    { index: 10, icon: 'settings_input_component', label: 'Pair' },
 ];
 
 function initBottomNav() {
@@ -260,7 +261,7 @@ function initBottomNav() {
         btn.setAttribute('role', 'tab');
         btn.setAttribute('aria-selected', index === 0 ? 'true' : 'false');
         btn.setAttribute('aria-label', label);
-        // flex-1 so all 4 buttons share the bar evenly; py-2 gives a real
+        // flex-1 so the buttons share the bar evenly; py-2 gives a real
         // tap target without the label wrapping on narrow iPhone widths.
         btn.className = `flex-1 flex flex-col items-center justify-center gap-1 py-2 transition-colors duration-300 ${index === 0 ? 'text-white' : 'text-on-surface-variant'}`;
         btn.innerHTML = `
@@ -344,7 +345,9 @@ function switchTab(index, element) {
     // highlighting, none of which needs to re-run for a no-op tap.
     if (isReTap) return;
 
+    if (currentTabId === 8) clearSavedPasswordReveals();
     currentTabId = index;
+    if (index === 10) refreshPairingOwners?.();
     const navTabsContainer = document.getElementById('nav-tabs');
 
     // element is optional (chunk 4d) — callers outside the sidebar itself
@@ -395,7 +398,7 @@ function switchTab(index, element) {
     const dualSensorPage = document.getElementById('page-dual-sensor');
     const sensorCanvasContainer = document.getElementById('sensor-canvas-container');
 
-    if (index === 0 || index === 7 || index === 8 || index === 9) {
+    if (index === 0 || index === 7 || index === 8 || index === 9 || index === 10) {
         const page = document.getElementById(`page-${index}`);
         if(page) {
             page.classList.remove('hidden');
@@ -821,6 +824,7 @@ let lastAuthStatusSetupRequired = false;
 let silentTokenAuthPending = false;
 
 function handleAuthStatus(msg) {
+    clearSavedPasswordReveals();
     lastAuthStatusSetupRequired = !!msg.setup_required;
     if (typeof msg.boot_id === 'number') {
         if (pendingRestart && pendingRestart.bootId !== null && msg.boot_id !== pendingRestart.bootId) {
@@ -916,6 +920,7 @@ function handleChangePasswordResult(msg) {
     const btn = document.getElementById('btn-change-password');
     const errEl = document.getElementById('cfg-pass-error');
     if (msg.ok) {
+        clearSavedPasswordReveals();
         if (msg.token) setStoredAuthToken(msg.token); // old token was just invalidated server-side
         if (errEl) errEl.classList.add('hidden');
         if (btn) {
@@ -944,6 +949,7 @@ function handleChangePasswordResult(msg) {
 // still returning the stale value), get rejected, and only then fall back to
 // the login screen. Clearing it here skips straight there.
 function handleLogoutResult(msg) {
+    if (msg.ok) { clearPairingCode(); clearSavedPasswordReveals(); }
     if (!msg.ok) return; // nothing to clean up client-side if the server didn't confirm
     setStoredAuthToken('');
     deviceAuthenticated = false;
@@ -1010,6 +1016,9 @@ function onOpen(event) {
 }
 
 function onClose(event) {
+    clearSavedPasswordReveals();
+    clearPairingCode();
+    document.getElementById('pair-owners')?.replaceChildren();
     if (linkStatusTimer) clearTimeout(linkStatusTimer);
     deviceAuthenticated = false;
     lastTelemetry = null;
@@ -1061,7 +1070,7 @@ const ACK_TIMEOUT_MS = 5000;
 // Toolkit sign-in + a Firestore GET), each capped at 7s on the device — so
 // the client timeout has to comfortably exceed that worst case, or a
 // successful device-side check could still show up as "timed out" here.
-const COMMAND_TIMEOUT_OVERRIDES = { test_firebase: 16000 };
+const COMMAND_TIMEOUT_OVERRIDES = { test_firebase: 16000, pairing: 20000 };
 let pendingCommands = []; // { id, command, resolve, reject, timer }
 let nextPendingId = 1;
 // Separate from pendingCommands above: reset_sensor_pin only acks on
@@ -1650,6 +1659,12 @@ function updateConfigForm(msg) {
             if (el.value !== oldValue && !blankKeepsSecret) draftFields.add(id);
         });
     });
+    const deviceId = document.getElementById('cfg-device-name');
+    if (deviceId && (!hasConfigSnapshot || deviceId.value === (globalConfigCache.dev_id || ''))) {
+        deviceId.value = msg.dev_id || '';
+    }
+    const account = document.getElementById('cfg-fb-email');
+    if (account) account.placeholder = msg.fb_auto_email || 'Created automatically when blank';
     globalConfigCache = msg; // Cache for CSV export
     hasConfigSnapshot = true;
 
@@ -1994,7 +2009,196 @@ function renderTerminal(forceBottom = false) {
 // ============================================================================
 // 4. EVENT LISTENERS & DOM BINDING
 // ============================================================================
+function clearPairingCode() {
+    const canvas = document.getElementById('pair-qr');
+    if (canvas) {
+        canvas.hidden = true;
+        canvas.width = 1;
+        canvas.height = 1;
+    }
+    const code = document.getElementById('pair-code');
+    if (code) {
+        code.hidden = true;
+        code.textContent = '';
+    }
+    const status = document.getElementById('pair-status');
+    if (status) status.textContent = '';
+}
+
+function showPairingCode(result) {
+    clearPairingCode();
+    const canvas = document.getElementById('pair-qr');
+    const code = document.getElementById('pair-code');
+    const status = document.getElementById('pair-status');
+    const url = 'hygrow://pair?deviceUid=' + encodeURIComponent(result.deviceUid) + '&code=' + encodeURIComponent(result.code);
+    const qr = qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    const cells = qr.getModuleCount();
+    const scale = 6;
+    const margin = 4;
+    canvas.width = canvas.height = (cells + 2 * margin) * scale;
+    const context = canvas.getContext('2d');
+    if (context) {
+        context.fillStyle = '#fff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.fillStyle = '#000';
+        for (let row = 0; row < cells; row++) {
+            for (let column = 0; column < cells; column++) {
+                if (qr.isDark(row, column)) context.fillRect((column + margin) * scale, (row + margin) * scale, scale, scale);
+            }
+        }
+        canvas.hidden = false;
+    }
+    code.textContent = result.code;
+    code.hidden = false;
+    status.textContent = 'Scan this QR in HyGrow. You can use the same code again.';
+}
+
+let refreshPairingOwners;
+
+function initPairingPage() {
+    const open = document.getElementById('btn-open-pairing');
+    if (!open) return;
+    const input = document.getElementById('cfg-device-name');
+    const save = document.getElementById('btn-save-device-name');
+    const owners = document.getElementById('pair-owners');
+    const ownersStatus = document.getElementById('pair-owners-status');
+    const qrStatus = document.getElementById('pair-status');
+    const generate = document.getElementById('pair-generate');
+    const refresh = document.getElementById('pair-refresh');
+    const more = document.getElementById('pair-more');
+    let nextPage = '';
+    let busy = false;
+
+    save.addEventListener('click', () => {
+        input.value = input.value.trim();
+        if (!input.value) {
+            input.reportValidity();
+            return;
+        }
+        runSaveButton(save, {command:'pairing', action:'rename', argument:input.value},
+            'Device name saved', 'Save Device Name');
+    });
+
+    async function request(action, argument, status, apply) {
+        if (busy) return;
+        busy = true;
+        status.textContent = 'Contacting Firebase…';
+        try {
+            const result = await sendCommand({command:'pairing', action, argument});
+            status.textContent = '';
+            apply(result);
+        } catch (error) {
+            status.textContent = error.message;
+        } finally {
+            busy = false;
+        }
+    }
+
+    function loadOwners(pageToken = '') {
+        if (busy) return;
+        if (!pageToken) {
+            owners.replaceChildren();
+            more.hidden = true;
+        }
+        void request('owners', pageToken, ownersStatus, result => {
+            nextPage = result.nextPageToken;
+            more.hidden = !nextPage;
+            for (const owner of result.owners) {
+                const item = document.createElement('li');
+                item.className = 'flex items-center justify-between gap-4';
+                const label = document.createElement('span');
+                label.style.overflowWrap = 'anywhere';
+                label.textContent = owner.label || owner.uid;
+                const toggle = document.createElement('button');
+                toggle.type = 'button';
+                toggle.className = 'bg-white/10 font-label-md px-4 py-2 rounded-xl';
+                const account = owner.label || owner.uid;
+                const update = () => {
+                    label.textContent = owner.blocked ? account + ' (blocked)' : account;
+                    toggle.textContent = owner.blocked ? 'Unblock' : 'Block';
+                    toggle.setAttribute('aria-label', toggle.textContent + ' ' + account);
+                };
+                toggle.addEventListener('click', () => {
+                    const blocked = !owner.blocked;
+                    void request(blocked ? 'block' : 'unblock', owner.uid, ownersStatus, () => {
+                        owner.blocked = blocked;
+                        update();
+                        ownersStatus.textContent = blocked ? 'Account blocked.' : 'Account unblocked.';
+                    });
+                });
+                update();
+                item.append(label, toggle);
+                owners.appendChild(item);
+            }
+            if (!owners.children.length) ownersStatus.textContent = 'No accounts linked yet.';
+        });
+    }
+
+    refreshPairingOwners = loadOwners;
+    open.addEventListener('click', () => switchTab(10));
+    document.getElementById('pair-back').addEventListener('click', () => { clearPairingCode(); switchTab(8); });
+    generate.addEventListener('click', () => { void request('show', '', qrStatus, showPairingCode); });
+    refresh.addEventListener('click', () => loadOwners());
+    more.addEventListener('click', () => { if (nextPage) loadOwners(nextPage); });
+}
+
+const revealedSavedPasswords = new Map();
+let passwordRevealGeneration = 0;
+
+function setPasswordReveal(input, button, visible) {
+    input.type = visible ? 'text' : 'password';
+    button.querySelector('.material-symbols-outlined')?.setAttribute('data-icon', visible ? 'visibility_off' : 'visibility');
+    const label = (button.getAttribute('aria-label') || '').replace(/^(Show|Hide) /, '');
+    button.setAttribute('aria-label', (visible ? 'Hide ' : 'Show ') + label);
+}
+
+function clearSavedPasswordReveals() {
+    passwordRevealGeneration++;
+    for (const [input, {placeholder, button}] of revealedSavedPasswords) {
+        input.placeholder = placeholder;
+        setPasswordReveal(input, button, false);
+    }
+    revealedSavedPasswords.clear();
+}
+
+async function togglePasswordReveal(button) {
+    const input = document.getElementById(button.dataset.revealTarget);
+    if (!input) return;
+    if (input.type === 'text') {
+        const previous = revealedSavedPasswords.get(input);
+        if (previous) input.placeholder = previous.placeholder;
+        revealedSavedPasswords.delete(input);
+        setPasswordReveal(input, button, false);
+        return;
+    }
+    if (!button.dataset.savedPassword || input.value) {
+        setPasswordReveal(input, button, true);
+        return;
+    }
+
+    const generation = passwordRevealGeneration;
+    button.disabled = true;
+    button.removeAttribute('title');
+    try {
+        const reply = await sendCommand({ command:'reveal_password', field:button.dataset.savedPassword });
+        if (generation !== passwordRevealGeneration || !deviceAuthenticated) return;
+        if (!input.value) {
+            // Display a saved value without filling the input or marking it as a change.
+            revealedSavedPasswords.set(input, {placeholder:input.placeholder, button});
+            input.placeholder = reply.password || 'Empty';
+        }
+        setPasswordReveal(input, button, true);
+    } catch {
+        button.title = 'Could not show the saved password. Try again.';
+    } finally {
+        button.disabled = false;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    initPairingPage();
     setInterval(() => {
         if (lastTelemetry) { refreshSensorStatuses(); renderCurrentReadings(); }
     }, 1000);
@@ -2065,17 +2269,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // the input id it controls; toggling swaps type password<->text and
     // swaps the Material icon between "visibility" and "visibility_off".
     // ------------------------------------------------------------------
-    document.querySelectorAll('.hg-secret-toggle').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            const targetId = btn.getAttribute('data-reveal-target');
-            const input = targetId && document.getElementById(targetId);
-            if (!input) return;
-            const icon = btn.querySelector('.material-symbols-outlined');
-            const revealed = input.type === 'text';
-            input.type = revealed ? 'password' : 'text';
-            if (icon) icon.setAttribute('data-icon', revealed ? 'visibility' : 'visibility_off');
-            btn.setAttribute('aria-label', (revealed ? 'Show ' : 'Hide ') + (btn.getAttribute('aria-label') || '').replace(/^(Show|Hide) /, ''));
-        });
+    document.querySelectorAll('.hg-secret-toggle').forEach(btn => {
+        btn.addEventListener('click', () => void togglePasswordReveal(btn));
     });
 
     // ------------------------------------------------------------------

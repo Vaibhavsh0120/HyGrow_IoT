@@ -163,6 +163,10 @@ void state_init();          // mount NVS, load config (defaults from config.h if
 // (the command handlers in src/core/command_handlers.cpp) surface a real
 // "Failed to save" to the client instead of an unconditional ack.
 bool state_save();
+bool state_save_device_id(const char *id);
+bool state_pairing_identity(char (&code)[33], char (&hash)[65], bool create);
+bool state_device_account(const char *project, const char *hardwareId, char (&email)[64],
+                          char (&password)[64], bool create);
 void state_factory_reset(); // wipe NVS + reboot
 
 // ---------- Crash / reboot diagnostics ----------
@@ -199,6 +203,7 @@ String state_get_last_reset_reason();
 void auth_init();                          // mount the auth NVS namespace, load state into RAM
 bool auth_is_configured();                 // true once an admin password has been set
 bool auth_check_password(const String &candidate);
+String auth_read_password();               // for explicit admin-only Web Doctor reveal
 void auth_set_password(const String &newPass); // first-time setup OR admin-initiated change; also issues a fresh session token
 String auth_issue_token();                 // generates + persists a new random session token, returns it
 bool auth_check_token(const String &candidate);

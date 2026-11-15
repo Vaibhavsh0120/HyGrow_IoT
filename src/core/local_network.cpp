@@ -1,5 +1,6 @@
 #include "local_network.h"
 #include "local_protocol.h"
+#include "task_network_internal.h"
 #include <AsyncUDP.h>
 #include <ESPAsyncWebServer.h>
 #include <WiFi.h>
@@ -48,7 +49,12 @@ static void sendStatus(AsyncWebServerRequest *request)
 {
     JsonDocument doc;
     const auto snapshot = telemetryRead();
-    writeTelemetryJson(doc.to<JsonObject>(), snapshot, telemetryUptimeMs());
+    if (!writeStatusTelemetry(doc.to<JsonObject>(), snapshot, telemetryUptimeMs(), firebaseLastUpdated()) ||
+        doc.overflowed())
+    {
+        request->send(503);
+        return;
+    }
     String payload;
     serializeJson(doc, payload);
     auto *response = request->beginResponse(200, "application/json", payload);

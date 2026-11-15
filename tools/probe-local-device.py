@@ -88,7 +88,7 @@ def main():
         raise SystemExit("No HyGrow reply. Check shared Wi-Fi, client isolation, firewall, broadcast address and local permissions.")
     for device in devices:
         status = get_status(device["ip"], args.timeout)
-        if status.get("deviceId") != device["deviceId"] or status.get("hardwareId") != device["hardwareId"]:
+        if status.get("device", {}).get("hardwareId", status.get("hardwareId")) != device["hardwareId"]:
             raise SystemExit("Discovery/status identity mismatch; rediscover before using this endpoint.")
         print(json.dumps({"discovery": device, "status": status}, indent=2))
 

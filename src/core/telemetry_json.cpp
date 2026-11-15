@@ -75,18 +75,23 @@ void writeDashboardTelemetry(JsonObject out, const TelemetrySnapshot &s, uint64_
         codes.add(telemetrySensorStatus(s, static_cast<SensorID>(i)));
 }
 
-static JsonObject groupedSensor(JsonObject sensors, JsonObjectConst health,
-                                const char *name, const char *localName)
+static JsonObject cloudSensor(JsonObject sensors, JsonObjectConst health,
+                              const char *name, const char *localName)
 {
     JsonObject sensor = sensors[name].to<JsonObject>();
-    sensor["health"].set(health[localName]);
+    sensor["state"].set(health[localName]["state"]);
+    sensor["simulated"].set(health[localName]["simulated"]);
     return sensor;
 }
 
-// Project the same values already used by /status and legacy cloud readers.
-static void writeGroupedTelemetry(JsonObject out, JsonObjectConst local)
+// Project the LAN snapshot into one group per physical sensor.
+static void writeCompactTelemetry(JsonObject out, JsonObjectConst local)
 {
-    out["schemaVersion"] = 2;
+    out["status"] = "Online";
+    JsonObject device = out["device"].to<JsonObject>();
+    device["hardwareId"].set(local["hardwareId"]);
+    device["firmwareVersion"].set(local["firmwareVersion"]);
+
     JsonObject sample = out["sample"].to<JsonObject>();
     sample["bootId"].set(local["bootId"]);
     sample["sequence"].set(local["sampleSequence"]);
@@ -96,19 +101,32 @@ static void writeGroupedTelemetry(JsonObject out, JsonObjectConst local)
 
     const JsonObjectConst health = local["sensorStatus"].as<JsonObjectConst>();
     JsonObject sensors = out["sensors"].to<JsonObject>();
-    JsonObject air = groupedSensor(sensors, health, "air", "dht");
-    air["readings"]["temperatureC"].set(local["temp_c"]);
-    air["readings"]["humidityPercent"].set(local["humidity"]);
-    air["readings"]["vpdKpa"].set(local["vpd_kpa"]);
-    JsonObject tds = groupedSensor(sensors, health, "tds", "tds");
-    tds["readings"]["ppm"].set(local["tds_ppm"]);
+    JsonObject dht = cloudSensor(sensors, health, "dht", "dht");
+    dht["temperatureC"].set(local["temp_c"]);
+    dht["humidityPercent"].set(local["humidity"]);
+    dht["vpdKpa"].set(local["vpd_kpa"]);
+    JsonObject tds = cloudSensor(sensors, health, "tds", "tds");
+    tds["ppm"].set(local["tds_ppm"]);
     tds["usesFallbackWaterTemperature"].set(local["tds_comp_using_fake_water_temp"]);
-    JsonObject ph = groupedSensor(sensors, health, "ph", "ph");
-    ph["readings"]["value"].set(local["ph_val"]);
-    ph["readings"]["voltageMv"].set(local["ph_voltage_mv"]);
-    groupedSensor(sensors, health, "waterTemperature", "water_temp")["readings"]["temperatureC"].set(local["water_temp_c"]);
-    groupedSensor(sensors, health, "waterLevel", "water_level")["readings"]["percent"].set(local["wl_percent"]);
-    groupedSensor(sensors, health, "light", "light")["readings"]["lux"].set(local["lux"]);
+    JsonObject ph = cloudSensor(sensors, health, "ph", "ph");
+    ph["value"].set(local["ph_val"]);
+    ph["voltageMv"].set(local["ph_voltage_mv"]);
+    cloudSensor(sensors, health, "waterTemperature", "water_temp")["temperatureC"].set(local["water_temp_c"]);
+    cloudSensor(sensors, health, "waterLevel", "water_level")["percent"].set(local["wl_percent"]);
+    cloudSensor(sensors, health, "light", "light")["lux"].set(local["lux"]);
+}
+
+bool writeStatusTelemetry(JsonObject out, const TelemetrySnapshot &s,
+                          uint64_t nowMs, const String &lastUpdated)
+{
+    JsonDocument local;
+    writeTelemetryJson(local.to<JsonObject>(), s, nowMs);
+    if (local.overflowed()) return false;
+    writeCompactTelemetry(out, local.as<JsonObjectConst>());
+    out["name"] = s.deviceId;
+    if (lastUpdated.length()) out["lastUpdated"] = lastUpdated;
+    else out["lastUpdated"] = nullptr;
+    return true;
 }
 
 // Encode JSON in Firestore's REST typed Value representation.
@@ -135,26 +153,27 @@ static void firestoreValue(JsonObject out, JsonVariantConst value)
 bool writeTelemetryFirestore(JsonObject write, const TelemetrySnapshot &s,
                              uint64_t nowMs, const char *documentPath)
 {
-    JsonDocument canonical;
-    writeTelemetryJson(canonical.to<JsonObject>(), s, nowMs);
-    writeGroupedTelemetry(canonical["telemetry"].to<JsonObject>(), canonical.as<JsonObjectConst>());
-    if (canonical.overflowed()) return false;
+    JsonDocument local, cloud;
+    writeTelemetryJson(local.to<JsonObject>(), s, nowMs);
+    writeCompactTelemetry(cloud.to<JsonObject>(), local.as<JsonObjectConst>());
+    if (local.overflowed() || cloud.overflowed()) return false;
+
     JsonArray paths = write["updateMask"]["fieldPaths"].to<JsonArray>();
     write["update"]["name"] = documentPath;
     JsonObject fields = write["update"]["fields"].to<JsonObject>();
-    for (JsonPairConst pair : canonical.as<JsonObjectConst>())
+    for (JsonPairConst pair : cloud.as<JsonObjectConst>())
     {
         paths.add(pair.key().c_str());
         firestoreValue(fields[pair.key().c_str()].to<JsonObject>(), pair.value());
     }
-    paths.add("status");
-    fields["status"]["stringValue"] = "Online";
-    JsonArray transforms = write["updateTransforms"].to<JsonArray>();
-    for (const char *path : {"lastUpdated", "telemetry.uploadedAt"})
-    {
-        JsonObject transform = transforms.add<JsonObject>();
-        transform["fieldPath"] = path;
-        transform["setToServerValue"] = "REQUEST_TIME";
-    }
+
+    // A masked field omitted from the payload is deleted. Clear known legacy
+    // fields while preserving Firebase-provisioned owner and upload accounts.
+    for (JsonPairConst pair : local.as<JsonObjectConst>()) paths.add(pair.key().c_str());
+    paths.add("telemetry");
+
+    JsonObject transform = write["updateTransforms"].to<JsonArray>().add<JsonObject>();
+    transform["fieldPath"] = "lastUpdated";
+    transform["setToServerValue"] = "REQUEST_TIME";
     return true;
 }

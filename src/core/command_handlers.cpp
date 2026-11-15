@@ -33,6 +33,7 @@
 #include "task_network_internal.h"
 #include "state.h"
 #include "pin_safety.h"
+#include "telemetry.h"
 
 // Sends a per-command acknowledgement directly to the requesting client only
 // (never broadcast) — the frontend's real-ack save flow (app.js sendCommand())
@@ -194,7 +195,29 @@ static bool isRealisticPhCalibration(float offset, float slope)
 // websocket.cpp).
 void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDocument &doc)
 {
-    if (cmd == "save_wifi")
+    if (cmd == "reveal_password")
+    {
+        // Developer choice: keep saved-password reveal for authenticated
+        // Web Doctor admins. Send only the requested password to that client.
+        const String field = doc["field"] | "";
+        JsonDocument reply;
+        if (field == "wifi") reply["password"] = currentConfig.wifi_pass;
+        else if (field == "recovery") reply["password"] = currentConfig.ap_pass;
+        else if (field == "admin") reply["password"] = auth_read_password();
+        else if (field == "firebase") reply["password"] = firebaseSavedPassword();
+        else
+        {
+            sendCmdAck(client, cmd, false, "Unknown password field.");
+            return;
+        }
+        reply["type"] = "command_result";
+        reply["command"] = "reveal_password";
+        reply["ok"] = true;
+        String payload;
+        serializeJson(reply, payload);
+        client->text(payload);
+    }
+    else if (cmd == "save_wifi")
     {
         String ssid = doc["ssid"] | "";
         // An empty SSID can't usefully be connected to — this used to save
@@ -256,6 +279,14 @@ void handleDeviceCommand(AsyncWebSocketClient *client, const String &cmd, JsonDo
         webLog(0, LOG_INFO, changingApPass ? "WiFi config + AP recovery password saved. Reboot to apply."
                                             : "WiFi config saved. Reboot to apply.");
         sendCmdAck(client, cmd, true);
+    }
+    else if (cmd == "pairing")
+    {
+        const JsonVariantConst argument = doc["argument"];
+        const char *value = argument | "";
+        if ((!argument.isNull() && argument.as<JsonString>().size() != strlen(value)) ||
+            !firebaseRequestPairing(client->id(), doc["action"] | "", value))
+            sendCmdAck(client, cmd, false, "Pairing request unavailable. Check the request and try again.");
     }
     else if (cmd == "save_firebase")
     {
