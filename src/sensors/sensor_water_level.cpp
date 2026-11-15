@@ -12,6 +12,7 @@
  */
 #include "../core/state.h"
 #include <Arduino.h>
+#include "analog_input.h"
 
 // 12-bit ADC on ESP32-S3 (replaced with hardware mv)
 #define MAX_VOLTAGE_MV 3300.0f
@@ -65,7 +66,7 @@ float readWaterLevel()
 
     // 2. Keep every conversion inside one bounded power pulse. Discard the
     // first conversion after power-on/channel switching, then collect a
-    // burst. Cut power before filtering; the nominal on-time is ~66ms plus
+    // burst. Cut power before filtering; the nominal on-time is ~86ms plus
     // ADC conversion time, with the probe off between sensor cycles.
     digitalWrite(s_powerPin, HIGH);
     delay(WL_SETTLE_MS);
@@ -79,7 +80,12 @@ float readWaterLevel()
             delay(WL_SAMPLE_GAP_MS);
     }
 
+    // Check the powered output after acquisition so residual charge from
+    // the weak pulls never enters the level sample.
+    const bool connected = analog_input::isDriven(s_signalPin);
     digitalWrite(s_powerPin, LOW);
+    if (!connected)
+        return NAN;
 
     // Sort this small stack buffer and use its middle value. Zero remains
     // a valid sample: sustained dry readings must still reach the graph.
@@ -96,22 +102,11 @@ float readWaterLevel()
     }
     int raw_mv = samples[WL_SAMPLE_COUNT / 2];
 
-    // 3. Sanity check the raw ADC value. A dry/disconnected probe typically
-    // floats near 0; a short or fully-submerged high-conductivity probe can
-    // pin near the rail. Both extremes are still valid physical readings, so
-    // we don't treat them as errors — just clamp the final percentage.
-    if (raw_mv < 0)
-    {
-        webLog(1, LOG_ERR, "Water level ADC read failed!");
-        return NAN;
-    }
-
-    // 4. Map raw ADC counts to a 0-100% float. Empty tank -> ~0 counts, full
-    // tank -> ~MAX_VOLTAGE_MV counts, for a typical resistive strip probe wired as
-    // a voltage divider against a fixed pull-down.
+    // Map ADC voltage to the nominal output range. Calibration against the
+    // installed probe and actual water depth is needed for a tank percentage.
     float percent = (raw_mv / MAX_VOLTAGE_MV) * 100.0f;
 
-    // 5. Clamp to a sane 0-100 range.
+    // Clamp to a 0-100 range.
     if (percent < 0.0f)
         percent = 0.0f;
     else if (percent > 100.0f)

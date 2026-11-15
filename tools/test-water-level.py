@@ -25,6 +25,7 @@ void pinMode(int, int);
 void digitalWrite(int, int);
 void delay(unsigned long);
 uint32_t analogReadMilliVolts(uint8_t);
+int analogRead(uint8_t);
 """
 
 STATE = r"""
@@ -51,6 +52,9 @@ static unsigned long now = 0, powerOn = 0, onDuration = 0, warmup = 0;
 static unsigned sampleIndex = 0, pulses = 0;
 static std::vector<uint32_t> samples;
 static bool mutatePinsDuringPulse = false;
+static bool connected = true;
+int analogPull = 0;
+static bool biasSeen = false;
 
 static void require(bool ok, const char* message) {
     if (!ok) { std::cerr << message << '\n'; std::exit(1); }
@@ -61,7 +65,7 @@ void digitalWrite(int pin, int value) {
     require(pin == 5, "Wrong initialized power gate pin");
     if (value == HIGH) {
         require(!powered, "Probe was left powered between reads");
-        powered = true; powerOn = now; ++pulses;
+        powered = true; powerOn = now; biasSeen = false; ++pulses;
     } else {
         if (powered) onDuration = now - powerOn;
         powered = false;
@@ -75,7 +79,13 @@ uint32_t analogReadMilliVolts(uint8_t pin) {
     require(pin == 1, "Wrong initialized signal pin");
     require(powered, "ADC sampled while probe was off");
     if (now - powerOn < warmup) return 0;
+    if (biasSeen) return 3300; // Residual charge after the weak pull-up.
     return samples[std::min<size_t>(sampleIndex++, samples.size() - 1)];
+}
+int analogRead(uint8_t pin) {
+    require(pin == 1 && powered, "Bias check must run on the powered signal pin");
+    biasSeen = true;
+    return connected ? 240 : analogPull < 0 ? 16 : 4000;
 }
 static float read(std::vector<uint32_t> values, unsigned long settle = 0) {
     samples = values; sampleIndex = 0; warmup = settle;
@@ -116,6 +126,11 @@ int main() {
     require(read({0}) == 0.0f, "A genuinely empty tank must still report zero");
     require(read({3300}) == 100.0f, "Full tank must report 100 percent");
     require(read({4000}) == 100.0f, "Percentage must stay within bounds");
+    connected = false;
+    require(!sensor_wl_read(percent) && std::isnan(percent), "Disconnected input must report unavailable");
+    require(!powered && analogPull == 0, "Fault must release both probe power and the bias");
+    connected = true;
+    require(read({0}) == 0.0f, "A connected dry probe must recover without a reboot");
     std::cout << "Water-level settling, glitches, real changes, and power gating passed.\n";
 }
 """
@@ -132,7 +147,19 @@ def main():
         (work / "src" / "core").mkdir()
         shutil.copyfile(root / "src/sensors/sensor_water_level.cpp",
                         work / "src/sensors/sensor_water_level.cpp")
+        shutil.copyfile(root / "src/sensors/analog_input.h", work / "src/sensors/analog_input.h")
         (work / "Arduino.h").write_text(ARDUINO)
+        (work / "esp_idf_version.h").write_text('#define ESP_IDF_VERSION_MAJOR 5\n')
+        (work / "driver").mkdir()
+        (work / "driver" / "rtc_io.h").write_text('''#pragma once
+using gpio_num_t=int;
+constexpr int ESP_OK=0;
+extern int analogPull;
+inline int rtc_gpio_pulldown_en(gpio_num_t){analogPull=-1;return ESP_OK;}
+inline int rtc_gpio_pulldown_dis(gpio_num_t){if(analogPull<0)analogPull=0;return ESP_OK;}
+inline int rtc_gpio_pullup_en(gpio_num_t){analogPull=1;return ESP_OK;}
+inline int rtc_gpio_pullup_dis(gpio_num_t){if(analogPull>0)analogPull=0;return ESP_OK;}
+''')
         (work / "src/core/state.h").write_text(STATE)
         (work / "test.cpp").write_text(TEST)
         executable = work / "water-level-test.exe"

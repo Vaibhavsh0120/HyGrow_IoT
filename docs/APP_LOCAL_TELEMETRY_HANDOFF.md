@@ -1,6 +1,6 @@
 # HyGrow app integration: local discovery and sensor status
 
-Firmware: **3.1.5**, telemetry schema: **1**, discovery protocol: **1**.
+Firmware: **3.1.6**, telemetry schema: **1**, discovery protocol: **1**.
 Implementation scope is `HyGrow_IoT`; no app or AI code was changed.
 
 ## Message to the app developer
@@ -51,7 +51,7 @@ and source port, through the same network interface:
   "requestId": "scan_7fd94",
   "deviceId": "grow-01",
   "hardwareId": "esp32-aabbccddeeff",
-  "firmwareVersion": "3.1.5",
+  "firmwareVersion": "3.1.6",
   "ip": "192.168.0.42",
   "port": 80,
   "statusPath": "/status",
@@ -94,7 +94,7 @@ Example values below are illustrative, not measurements from a physical board:
   "deviceId": "grow-01",
   "hardwareId": "esp32-aabbccddeeff",
   "bootId": "c9573122a7152930",
-  "firmwareVersion": "3.1.5",
+  "firmwareVersion": "3.1.6",
   "sampleSequence": 42,
   "sampledUptimeMs": 84000,
   "sampleAgeMs": 350,

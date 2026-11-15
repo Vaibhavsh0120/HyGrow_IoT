@@ -36,6 +36,7 @@ with tempfile.TemporaryDirectory(prefix='hygrow-validity-') as folder:
  w=Path(folder);(w/'src/sensors').mkdir(parents=True);(w/'src/core').mkdir()
  names=['sensor_dht22.cpp','sensor_light.cpp','sensor_water_temp.cpp','sensor_tds.cpp']
  for name in names:shutil.copyfile(root/'src/sensors'/name,w/'src/sensors'/name)
+ shutil.copyfile(root/'src/sensors/analog_input.h',w/'src/sensors/analog_input.h')
  shutil.copyfile(root/'src/core/state.h',w/'src/core/state.h')
  import re
  enum=re.search(r'enum SensorID\s*\{[^}]+\};',(root/'config.h').read_text()).group()

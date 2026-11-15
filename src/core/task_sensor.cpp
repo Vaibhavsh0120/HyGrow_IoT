@@ -292,8 +292,8 @@ static bool bringUpI2CAndProbeLight()
 // ----------------------------------------------------------------------------
 // For every sensor whose feature flag (sensor_enabled[]) is on, attempt up
 // to STARTUP_RETRY_COUNT reads. The first successful read commits the
-// sensor as live and moves on. The removable TDS module stays enabled on
-// failure so that a later reconnection can recover in the steady-state loop.
+// sensor as live and moves on. Removable analog sensors can stay enabled
+// after failure so that a later reconnection recovers in the read loop.
 static void validateSensor(SensorID id, const char *name, bool (*readFn)(), bool autoDisableOnFailure = true)
 {
   if (!currentConfig.sensor_enabled[id])
@@ -420,7 +420,7 @@ static void initAllSensors()
 
   if (!sensorPinIsDemo(S_WL))
     validateSensor(S_WL, "Water Level", []() -> bool
-                   { float v; return sensor_wl_read(v); });
+                   { float v; return sensor_wl_read(v); }, false);
 
   // Any sensor that WAS in demo mode still needs its first simulated
   // reading populated now, same as the all-demo early-return path above did

@@ -65,7 +65,7 @@ Physical pump control and irrigation automation are not implemented.
 
 | Sensor and example purchase link | Protocol | Default ESP32-S3 pins | Jumper cable colors | Note |
 | --- | --- | --- | --- | --- |
-| [Water level sensor](https://amzn.in/d/0cKf4nuQ) | Analog | GPIO1 S / analog output, GPIO5 power control | White signal, orange power control | Power is switched on briefly for each reading to reduce corrosion. |
+| [Water level sensor](https://amzn.in/d/0cKf4nuQ) | Analog | GPIO1 S / analog output, GPIO5 power control | White signal, orange power control | Power is switched on briefly to reduce corrosion. Firmware 3.1.6 checks for an open input after each reading. The percentage is a nominal voltage scale until the installed probe is calibrated against known water depths. |
 | [BH1750 light sensor](https://amzn.in/d/09NZHxCq) | I2C | GPIO8 SDA, GPIO9 SCL | Purple SDA, grey SCL | Ambient light sensor. |
 | [DFRobot Gravity analog TDS](https://robocraze.com/products/dfrobot-gravity-analog-tds-water-quality-sensor-meter-for-arduino) | Analog | GPIO2 A / analog output | Yellow | Readings are median-filtered. Firmware 3.1.5 publishes null when the ADC input behaves like an open lead and resumes after reconnection. |
 | [Hexonix DHT22 AM2302](https://amzn.in/d/07a1dbpF) | Digital | GPIO6 DATA | Green | Air temperature and humidity. |
