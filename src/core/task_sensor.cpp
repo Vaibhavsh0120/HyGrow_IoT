@@ -292,10 +292,9 @@ static bool bringUpI2CAndProbeLight()
 // ----------------------------------------------------------------------------
 // For every sensor whose feature flag (sensor_enabled[]) is on, attempt up
 // to STARTUP_RETRY_COUNT reads. The first successful read commits the
-// sensor as "live" and moves on; if all attempts fail, the sensor is
-// auto-disabled so the steady-state loop never has to deal with a sensor
-// that was never actually there.
-static void validateSensor(SensorID id, const char *name, bool (*readFn)())
+// sensor as live and moves on. The removable TDS module stays enabled on
+// failure so that a later reconnection can recover in the steady-state loop.
+static void validateSensor(SensorID id, const char *name, bool (*readFn)(), bool autoDisableOnFailure = true)
 {
   if (!currentConfig.sensor_enabled[id])
     return;
@@ -332,7 +331,8 @@ static void validateSensor(SensorID id, const char *name, bool (*readFn)())
   if (progressLineShown)
     webLogProgressDone();
   markErr(id, "startup validation failed");
-  autoDisable(id, name);
+  if (autoDisableOnFailure)
+    autoDisable(id, name);
 }
 
 static void initAllSensors()
@@ -408,7 +408,7 @@ static void initAllSensors()
 
   if (!sensorPinIsDemo(S_TDS))
     validateSensor(S_TDS, "TDS", []() -> bool
-                   { float v; return sensor_tds_read(sensorPinIsDemo(S_WTEMP) ? 25.0f : currentSensors.water_temp_c, currentConfig.tds_k, v); });
+                   { float v; return sensor_tds_read(sensorPinIsDemo(S_WTEMP) ? 25.0f : currentSensors.water_temp_c, currentConfig.tds_k, v); }, false);
 
   if (!sensorPinIsDemo(S_PH))
     validateSensor(S_PH, "pH", []() -> bool
@@ -495,7 +495,8 @@ static void readAll()
     }
     else
     {
-      markErr(S_TDS, "read failed");
+      currentSensors.tds_comp_using_fake_water_temp = false;
+      markErr(S_TDS, "analog input open or read failed");
     }
   }
 

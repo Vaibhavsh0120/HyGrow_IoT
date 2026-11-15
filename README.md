@@ -67,7 +67,7 @@ Physical pump control and irrigation automation are not implemented.
 | --- | --- | --- | --- | --- |
 | [Water level sensor](https://amzn.in/d/0cKf4nuQ) | Analog | GPIO1 S / analog output, GPIO5 power control | White signal, orange power control | Power is switched on briefly for each reading to reduce corrosion. |
 | [BH1750 light sensor](https://amzn.in/d/09NZHxCq) | I2C | GPIO8 SDA, GPIO9 SCL | Purple SDA, grey SCL | Ambient light sensor. |
-| [DFRobot Gravity analog TDS](https://robocraze.com/products/dfrobot-gravity-analog-tds-water-quality-sensor-meter-for-arduino) | Analog | GPIO2 A / analog output | Yellow | Readings are median-filtered in firmware. |
+| [DFRobot Gravity analog TDS](https://robocraze.com/products/dfrobot-gravity-analog-tds-water-quality-sensor-meter-for-arduino) | Analog | GPIO2 A / analog output | Yellow | Readings are median-filtered. Firmware 3.1.5 publishes null when the ADC input behaves like an open lead and resumes after reconnection. |
 | [Hexonix DHT22 AM2302](https://amzn.in/d/07a1dbpF) | Digital | GPIO6 DATA | Green | Air temperature and humidity. |
 | [DFRobot Gravity Lab pH V2](https://robu.in/product/dfrobot-gravity-lab-grade-analog-ph-sensor-meter-kit-v2/) | Analog | GPIO7 signal | — | Starts disabled until enabled and calibrated; supports 3.3 V. |
 | [amiciSense DS18B20 kit](https://amzn.in/d/0exQsfGD) | OneWire | GPIO4 DATA / DQ | Blue | Waterproof water-temperature probe. |

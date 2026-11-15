@@ -4,7 +4,7 @@
 #include "state.h"
 #include <ArduinoJson.h>
 
-#define HYGROW_FIRMWARE_VERSION "3.1.4"
+#define HYGROW_FIRMWARE_VERSION "3.1.5"
 constexpr unsigned HYGROW_SCHEMA_VERSION = 1;
 
 // No credentials or network-dependent fields in a sensor snapshot. Only
