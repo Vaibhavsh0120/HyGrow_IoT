@@ -9,6 +9,24 @@ concurrency:
   group: quality-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  native:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install pinned Flutter SDK
+        run: |
+          git clone --depth 1 --branch 3.47.4 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 9584c6713b324636289d067944a46fd6b49df14b
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - run: flutter config --no-analytics
+      - run: flutter pub get --enforce-lockfile
+        working-directory: app
+      - run: dart format --output=none --set-exit-if-changed lib test
+        working-directory: app
+      - run: flutter analyze
+        working-directory: app
+      - run: flutter test
+        working-directory: app
   firmware:
     runs-on: ubuntu-24.04
     steps:
@@ -109,7 +127,7 @@ jobs:
       - run: python -m unittest discover -s tools/tests -p test_manager.py -v
   publish:
     if: github.ref == 'refs/heads/main'
-    needs: [firmware, api, secrets, manager]
+    needs: [firmware, api, secrets, manager, native]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

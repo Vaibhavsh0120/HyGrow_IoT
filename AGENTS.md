@@ -16,6 +16,17 @@
   health checks and reproducible regression tests. Never swallow failures to pass CI.
 - UI should load cached content promptly, refresh in the background with accurate
   freshness labels, provide immediate feedback and respect reduced motion.
+- Flutter lives directly in `app/`; deliver Android APK and unsigned iOS device
+  release IPA. No desktop app. A separate PC/iPad-landscape web intro comes later.
+- App identifier is `dev.vaibhavsh0120.hygrow` on Android/iOS. Use the single
+  canonical brand asset in `app/assets/branding/`; do not keep duplicate light/dark
+  logo PNGs. Screen artwork belongs under `app/assets/artwork/<feature>/`.
+- Follow supplied native screen references. Work outside to inside and complete
+  one screen/item with rendered verification before advancing. Use one reusable
+  floating liquid-glass navbar with equal selection geometry, spring feedback,
+  long-press drag preview and reduced-motion behavior. Doctor has no Pair tab.
+- End-user setup offers BLE and automatic LAN discovery, never manual IP entry.
+  Account/global settings are not an extra Farmer tab. Avoid developer headers.
 - Pairing is BLE/LAN with authorization, never QR. UID alone is not proof.
 - Dark surfaces use neutral charcoal. Never send water-level anomaly alerts.
 - Fetch current library/platform documentation through Context7 before API work.

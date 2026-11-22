@@ -20,13 +20,39 @@ The repository remains **HyGrow_IoT**. Sibling projects are independent and unto
   Email/photo/archive jobs will be added with their corresponding features.
 - **Diagnostics:** server-generated request IDs, JSON response/error logs with
   route/status/duration/source version, and safe local diagnostic reports.
+- **Native entry:** Android/iOS project in `app/`, canonical launcher branding,
+  light/charcoal native splash and responsive Welcome/Role Selection. The Farmer
+  entry opens the authentication form; account endpoints are the next milestone.
 
-The new native Flutter app, secure ownership/BLE onboarding, Oracle Doctor,
+Native account integration, secure ownership/BLE onboarding, Oracle Doctor,
 Plant Tracker and cloud website are **V1 work in progress**. Existing LAN `/status`
 is a legacy unauthenticated endpoint; secure account-bound LAN access is not yet
 implemented. The embedded Doctor stays available during migration.
 AI is planned for **V2**, seller tools for **V3**, and buyer commerce for **V4**.
 No physical pump automation is currently implemented.
+
+## Versioned delivery plan
+
+Finish and check one screen or feature at a time, outside to inside. Patch
+versions carry bounded finished items and repairs within each milestone.
+
+| Version | Deliverable and acceptance boundary |
+|---|---|
+| 0.3.x | Native identity/branding, launcher, safe splash and Welcome/Role Selection; real emulator light/dark and responsive checks |
+| 0.4.x | Farmer signup/OTP, login/secure sessions, recovery/Google, then account and global settings; API/database/email integration tests |
+| 0.5.x | Devices and secure BLE/LAN onboarding; hardware proof, claims and approved access, no QR or manual IP entry |
+| 0.6.x | Doctor Dashboard/Calibration/Terminal/Settings with local/cloud/offline behavior; owner management, transfers and protected reset/reclaim |
+| 0.7.x | Latest/history separation, five-minute defaults, persistent 72-hour backlog, thresholds and alerts; unchanged Firebase and no water-level anomaly alerts |
+| 0.8.x | Collaborative Plant Tracker, photos, completion/verified archive, corrections/reopen, reminders and 30-day trash/privacy |
+| 0.9.x | Separate cloud-only website/desktop introduction, live deployment, backup/restore and security hardening |
+| 1.0.0 | V1 acceptance release after end-to-end gates pass; disclose remaining physical-device evidence explicitly |
+| 2 / 3 / 4 | Actual AI tools, Seller Market, then Buyer Market, with truthful availability gates |
+
+APK and unsigned device-release IPA pipelines enter during the native milestones
+and are verified throughout; GHCR already publishes source-linked images after
+quality gates. A written workflow or UI is not evidence of a working integration.
+See tags, commit history and Actions for delivered versions rather than treating
+this plan as a completion report.
 
 ## Architecture
 
@@ -114,6 +140,7 @@ targets fail clearly until their implementation is delivered.
 |---|---|
 | [`firmware/`](firmware/) | PlatformIO/Arduino source, sensors, Web Doctor and host regression suite |
 | [`services/api/`](services/api/) | Modular TypeScript backend and database migrations |
+| [`app/`](app/) | Flutter Android/iPhone/iPad client; identifier `dev.vaibhavsh0120.hygrow` |
 | [`infra/`](infra/) | Isolated development and disposable test services |
 | [`Dev.ps1`](Dev.ps1), [`tools/`](tools/) | Windows manager and secret handling |
 | [`config/secrets.manifest.json`](config/secrets.manifest.json) | Public recipient and exact secret-file mapping |

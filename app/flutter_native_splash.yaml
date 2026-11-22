@@ -1,0 +1,12 @@
+flutter_native_splash:
+  color: '#F4F8FA'
+  color_dark: '#171717'
+  # Launcher generator derives this density-sized mark from the canonical asset.
+  image: android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png
+  image_dark: android/app/src/main/res/drawable-xxxhdpi/ic_launcher_foreground.png
+  android: true
+  ios: true
+  web: false
+  android_12:
+    color: '#F4F8FA'
+    color_dark: '#171717'
