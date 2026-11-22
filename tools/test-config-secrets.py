@@ -13,6 +13,7 @@ struct { int count() { return 1; } } ws;
 String payload;
 void wsTextAllAuthed(const String& value) { payload=value; }
 String auth_get_password_for_ws() { return "fixture-admin"; }
+String firebaseAutomaticEmail() { return "fixture-device@devices.hygrow"; }
 '''+serializer+r'''
 int main() {
 strcpy(currentConfig.wifi_pass,"fixture-wifi"); strcpy(currentConfig.ap_pass,"fixture-ap"); strcpy(currentConfig.fb_pass,"fixture-cloud");
