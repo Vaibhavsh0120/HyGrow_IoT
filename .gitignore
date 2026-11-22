@@ -6,7 +6,7 @@ build/
 *.bin
 *.elf
 /.vscode
-/.pio
+**/.pio/
 HyGrow_IoT.ino.cpp
 
 # Firebase — never commit service-account keys, local runtime config,
@@ -36,3 +36,21 @@ __pycache__/
 
 # Encrypted environment backup (public recipient; plaintext remains ignored)
 !.env.age
+!**/.env.age
+.secrets-backup/
+*.pending
+*.jks
+*.keystore
+*.key
+*.p8
+*.mobileprovision
+node_modules/
+.dart_tool/
+.flutter-plugins-dependencies
+**/android/local.properties
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+dist/
+.dev/

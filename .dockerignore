@@ -1,0 +1,10 @@
+**
+!services/
+!services/api/
+!services/api/package.json
+!services/api/package-lock.json
+!services/api/tsconfig.json
+!services/api/src/
+!services/api/src/**
+!services/api/migrations/
+!services/api/migrations/**

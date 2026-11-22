@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="title desc">
+  <title id="title">HyGrow</title><desc id="desc">Connected hydroponics, from sensor to harvest. Neutral charcoal banner with a mint plant mark.</desc>
+  <rect width="1280" height="320" rx="24" fill="#171717"/>
+  <path d="M80 231h112M136 229v-77c-33 0-52-18-52-51 35 0 52 19 52 51 0-43 24-69 68-69 0 43-25 69-68 69" fill="none" stroke="#9be4c4" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="270" y="149" font-family="Segoe UI,Arial,sans-serif" font-size="82" font-weight="700" fill="#f5f5f5">HyGrow</text>
+  <text x="274" y="202" font-family="Segoe UI,Arial,sans-serif" font-size="27" fill="#d4d4d4">Connected hydroponics, from sensor to harvest.</text>
+  <text x="276" y="253" font-family="Segoe UI,Arial,sans-serif" font-size="17" letter-spacing="3" fill="#9be4c4">SENSE · UNDERSTAND · GROW</text>
+  <g fill="none" stroke="#404040" stroke-width="2"><path d="M1000 80h180v160h-180zM1024 204l30-42 30 18 32-58 36 23"/><circle cx="1116" cy="122" r="5" fill="#9be4c4" stroke="none"/></g>
+</svg>

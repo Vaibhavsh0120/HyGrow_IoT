@@ -1,27 +1,149 @@
-name: Verify firmware
+name: Quality and containers
 on:
   push:
     branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   firmware:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
       - name: Check dashboard assets
-        run: python tools/test-web-assets.py
+        run: python firmware/tools/test-web-assets.py
       - run: pip install platformio==6.1.18
       - name: Compile with example configuration
+        working-directory: firmware
         run: |
           cp example.secrets.h secrets.h
           pio run -e esp32-s3-n16r8
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '22'
+          node-version: '24'
       - name: Run firmware regression suite
-        run: python tools/test-all.py
+        run: python firmware/tools/test-all.py
+  api:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.7-bookworm
+        env:
+          POSTGRES_USER: hygrow_test
+          POSTGRES_PASSWORD: local-disposable-tests-only
+          POSTGRES_DB: hygrow_test
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U hygrow_test -d hygrow_test" --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:8.2.2-bookworm
+        ports: ['6379:6379']
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      HYGROW_TEST_DATABASE_URL: postgres://hygrow_test:local-disposable-tests-only@127.0.0.1:5432/hygrow_test
+      HYGROW_TEST_REDIS_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: services/api/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: services/api
+      - run: npm test
+        working-directory: services/api
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: services/api
+      - name: Validate Compose configuration
+        run: |
+          printf 'LOCAL_DATABASE_PASSWORD=disposable-ci-only\nLOCAL_REDIS_PASSWORD=disposable-ci-only\n' > .env
+          docker compose --env-file .env -f infra/compose.yaml config --quiet
+          docker compose -f infra/compose.test.yaml config --quiet
+      - name: Build and smoke test actual production container
+        run: |
+          docker compose --env-file .env -f infra/compose.yaml up -d --build --wait --wait-timeout 120
+          curl --fail --silent http://localhost:8088/health/ready
+          test "$(docker compose --env-file .env -f infra/compose.yaml exec -T api id -u)" != 0
+      - name: Stop disposable CI services
+        if: always()
+        run: docker compose --env-file .env -f infra/compose.yaml down
+  secrets:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Test real age encryption and manifest safety
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y age
+          python -m unittest discover -s tools/tests -p test_secrets.py -v
+          python tools/project_secrets.py check
+      - name: Secret scan with checksum-verified gitleaks
+        run: |
+          cd "$RUNNER_TEMP"
+          base=https://github.com/gitleaks/gitleaks/releases/download/v8.30.1
+          curl -fsSL "$base/gitleaks_8.30.1_linux_x64.tar.gz" -o gitleaks.tar.gz
+          curl -fsSL "$base/gitleaks_8.30.1_checksums.txt" -o checksums.txt
+          expected=$(awk '/linux_x64.tar.gz$/ { print $1 }' checksums.txt)
+          test -n "$expected"
+          printf '%s  gitleaks.tar.gz\n' "$expected" | sha256sum --check
+          tar -xzf gitleaks.tar.gz gitleaks
+          cd "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/gitleaks" dir . --redact --no-banner
+  manager:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tools/tests -p test_manager.py -v
+  publish:
+    if: github.ref == 'refs/heads/main'
+    needs: [firmware, api, secrets, manager]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: metadata
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}-api" >> "$GITHUB_OUTPUT"
+          echo "version=$(tr -d '\r\n' < VERSION)" >> "$GITHUB_OUTPUT"
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: image
+        with:
+          context: .
+          file: services/api/Dockerfile
+          push: true
+          tags: ${{ steps.metadata.outputs.image }}:sha-${{ github.sha }}
+          build-args: SOURCE_REVISION=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.metadata.outputs.version }}
+            org.opencontainers.image.created=${{ steps.metadata.outputs.created }}
+            org.opencontainers.image.description=HyGrow Fastify API
+          provenance: true
+          sbom: true
+      - name: Record immutable image and source
+        run: |
+          echo 'Image: `${{ steps.metadata.outputs.image }}@${{ steps.image.outputs.digest }}`' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Source: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Publishing an image does not verify Oracle deployment.' >> "$GITHUB_STEP_SUMMARY"

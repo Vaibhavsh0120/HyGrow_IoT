@@ -1,0 +1,432 @@
+# HyGrow IoT
+
+The ecosystem is being developed incrementally in this repository on `main`.
+`VERSION` identifies these development milestones; the firmware has its own
+version. The separate sibling projects are maintained independently.
+
+Run all hardware-independent firmware checks with `python tools/test-all.py`
+after a PlatformIO build has installed the pinned libraries. This compiles real
+production code against host fixtures; physical hardware behavior still needs
+device testing.
+
+HyGrow IoT is ESP32-S3 firmware for six hydroponic sensors. The board hosts
+its own web dashboard, so you can view readings and change settings on a
+local connection. Internet access is only needed for optional Firestore
+uploads.
+
+Apps can discover the board on the local network over UDP **39400**, then
+read the latest sensor JSON at **`http://<device-ip>/status`**. This works on
+Wi-Fi even when the router has no internet. See the
+[app developer integration handoff](docs/APP_LOCAL_TELEMETRY_HANDOFF.md) for
+the discovery messages, JSON fields and mobile permissions.
+
+Sensor reading and networking run on separate FreeRTOS cores. Settings,
+calibration, and pin assignments are saved on the board across normal reboots.
+
+## System architecture
+
+```mermaid
+flowchart LR
+    Sensors["DHT22, DS18B20, BH1750, TDS, pH and water-level sensors"]
+
+    subgraph Controller["ESP32-S3 controller"]
+        Sampling["Sensor task: sampling and calibration"]
+        Snapshot["Shared telemetry snapshot"]
+        Network["Network task and web services"]
+        NVS["NVS: saved settings, calibration and pins"]
+        Files["LittleFS: dashboard assets"]
+        Sampling --> Snapshot
+        Snapshot --> Network
+        NVS -->|Sensor configuration| Sampling
+        NVS <-->|Load and save settings| Network
+        Files -->|Serve dashboard| Network
+    end
+
+    Sensors --> Sampling
+    Network <-->|Authenticated dashboard WebSocket| Browser["Browser: local dashboard"]
+    Network -->|Read-only GET /status| Client["LAN client: configured device address"]
+    Discovery["Discovery client"] <-->|UDP port 39400| Network
+    Network -->|Optional telemetry uploads| Cloud["Firebase / Firestore"]
+```
+
+The sensor task produces readings independently of network work. Local HTTP,
+WebSocket telemetry, and cloud uploads share the same measurement snapshot.
+Settings persist in NVS; the dashboard files live in LittleFS. The local dashboard
+and LAN telemetry work without internet; cloud uploads require configured access.
+
+Demo Mode supplies labelled simulated readings for setup. Sensor health and sample
+freshness remain separate from network reachability. The firmware provides UDP
+discovery, while the current HyGrow app uses a configured `/status` URL.
+Physical pump control and irrigation automation are not implemented.
+
+## What you need
+
+- An **ESP32-S3 N16R8** board (16 MB flash, 8 MB PSRAM).
+- The sensors you plan to use. You can start with **Demo Mode** before wiring
+  them.
+- [PlatformIO](https://platformio.org/) (recommended), or an Arduino IDE
+  with the ESP32-S3 board package and the libraries listed in
+  [`platformio.ini`](platformio.ini).
+- Python 3 to refresh the compressed dashboard files before a filesystem
+  upload.
+
+## Default wiring
+
+| Sensor and example purchase link | Protocol | Default ESP32-S3 pins | Jumper cable colors | Note |
+| --- | --- | --- | --- | --- |
+| [Water level sensor](https://amzn.in/d/0cKf4nuQ) | Analog | GPIO1 S / analog output, GPIO5 power control | White signal, orange power control | Power is switched on briefly to reduce corrosion. Firmware 3.1.6 checks for an open input after each reading. The percentage is a nominal voltage scale until the installed probe is calibrated against known water depths. |
+| [BH1750 light sensor](https://amzn.in/d/09NZHxCq) | I2C | GPIO8 SDA, GPIO9 SCL | Purple SDA, grey SCL | Ambient light sensor. |
+| [DFRobot Gravity analog TDS](https://robocraze.com/products/dfrobot-gravity-analog-tds-water-quality-sensor-meter-for-arduino) | Analog | GPIO2 A / analog output | Yellow | Readings are median-filtered. Firmware 3.1.5 publishes null when the ADC input behaves like an open lead and resumes after reconnection. |
+| [Hexonix DHT22 AM2302](https://amzn.in/d/07a1dbpF) | Digital | GPIO6 DATA | Green | Air temperature and humidity. |
+| [DFRobot Gravity Lab pH V2](https://robu.in/product/dfrobot-gravity-lab-grade-analog-ph-sensor-meter-kit-v2/) | Analog | GPIO7 signal | — | Starts disabled until enabled and calibrated; supports 3.3 V. |
+| [amiciSense DS18B20 kit](https://amzn.in/d/0exQsfGD) | OneWire | GPIO4 DATA / DQ | Blue | Waterproof water-temperature probe. |
+| Built-in RGB LED | NeoPixel | GPIO48 (reserved) | — | Onboard WS2812 status light. |
+
+Use **red** cables from **3V3** to sensor **VCC** (except switched water-level
+power), and **black** cables from **GND** to every sensor's **GND**. These
+colors are the project's jumper-cable convention; follow terminal labels
+when connecting a sensor's existing leads.
+
+Water-level VCC comes from the switched 3.3 V supply controlled by GPIO5.
+GPIO5 is HIGH during a reading and LOW otherwise. Use an active-high 3.3 V
+load switch to supply the sensor unless its current draw has been confirmed
+safe for direct GPIO powering.
+
+These GPIO values are the firmware defaults for first boot, factory reset,
+and each sensor's **Reset** action. Previously saved pin settings override
+the defaults. You can change sensor pins and enabled states in
+**Settings → Sensor Implementation Config** after connecting to the device;
+save and reboot to apply changes. The pH sensor starts disabled.
+
+<details>
+<summary>Which pins cannot be used for sensors?</summary>
+
+The dashboard and firmware reject these pins on this ESP32-S3 N16R8 board:
+
+| Pins | Why they are not allowed |
+| --- | --- |
+| GPIO0, GPIO3, GPIO45, GPIO46 | Boot pins. A sensor connected here could change how the board starts. |
+| GPIO19, GPIO20 | USB data pins. Using them can break the board's USB connection. |
+| GPIO22–37 | Not available for sensor wiring on this board; some are used by flash or PSRAM. |
+| GPIO48 | Reserved for the onboard RGB status LED. |
+| GPIO49 and above | Not valid sensor GPIOs on this board. |
+
+TDS, pH, and the water-level signal also need an **ADC1 pin (GPIO1–10)**
+because they are analog inputs. GPIO3 is still forbidden even though it falls
+in that range. Each assigned sensor pin must be unique. See the
+[ESP32-S3 DevKitC-1 board guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.0.html)
+and [hardware pin guidance](https://docs.espressif.com/projects/esp-hardware-design-guidelines/en/latest/esp32s3/schematic-checklist.html)
+for the board details.
+
+</details>
+
+## First setup
+
+1. Copy [`example.secrets.h`](example.secrets.h) to `secrets.h` in the project
+   root. Fill in the values you want at first boot. The SoftAP recovery
+   password must be empty (open network) or at least eight characters. An
+   empty admin password starts first-time password setup in the dashboard.
+   `secrets.h` is ignored by Git. These defaults are read again after a
+   factory reset.
+2. Build the firmware with PlatformIO:
+
+   ```powershell
+   pio run -e esp32-s3-n16r8
+   ```
+
+3. Generate the dashboard's compressed files, then build and upload its
+   LittleFS image:
+
+   ```powershell
+   python tools/build-web-assets.py
+   pio run -e esp32-s3-n16r8 -t uploadfs
+   ```
+
+4. Upload the firmware:
+
+   ```powershell
+   pio run -e esp32-s3-n16r8 -t upload
+   ```
+
+5. If the board cannot join Wi-Fi, connect your phone or computer to its
+   `HyGrow-Setup` network and open **http://192.168.4.1**. If it joined your
+   configured Wi-Fi, use the board's address on that network instead. Set or
+   enter the admin password when prompted.
+
+The dashboard and firmware are uploaded separately. If you only upload the
+firmware, the web page may still be an older version. The board keeps saved
+settings in NVS across normal reboots.
+
+### PlatformIO troubleshooting
+
+The project pins Espressif32 7.1.3 and the library versions below.
+
+On Windows, the build selects the ESP32-S3 assembler and linker directly
+from PlatformIO's Espressif package. This prevents
+`as: unrecognized option '--longcalls'` when toolchain aliases are missing
+and a host assembler such as MSYS2's `as.exe` is on `PATH`.
+Reinstall the toolchain if PlatformIO reports missing ESP32-S3 binutils.
+
+```powershell
+pio pkg install --global --tool "espressif/toolchain-xtensa-esp32s3@8.4.0+2021r2-patch5" --force
+pio run -e esp32-s3-n16r8
+```
+
+If a build reports `sdkconfig.h: No such file or directory` and VS Code also
+reports missing ESP32 SDK folders, reinstall the incomplete framework package,
+then regenerate IntelliSense:
+
+```powershell
+pio pkg install -g -t "platformio/framework-arduinoespressif32@~4.20017.0" --force
+pio project init --ide vscode -e esp32-s3-n16r8
+pio run -e esp32-s3-n16r8
+```
+
+If VS Code repeatedly installs PlatformIO when opening the project, first
+check that your existing `platformio --version` works. In local workspace
+settings, turn off `platformio-ide.useBuiltinPIOCore` and set
+`platformio-ide.customPATH` to the directory containing that working CLI.
+Keep this machine-specific path in the ignored `.vscode/settings.json`.
+Reload the VS Code window after changing those settings.
+
+### Using Arduino IDE
+
+Select **ESP32S3 Dev Module** with these board settings:
+
+| Setting | Value |
+| --- | --- |
+| USB CDC on boot | Enabled |
+| CPU frequency | 240 MHz |
+| Flash mode | QIO 80 MHz |
+| Flash size | 16 MB |
+| Partition scheme | 16 MB flash, 3 MB app, about 9.9 MB filesystem |
+| PSRAM | OPI PSRAM |
+| Upload mode | UART0 / Hardware CDC |
+
+Install the dependencies from [`platformio.ini`](platformio.ini). Upload the
+sketch and use a LittleFS upload plugin to flash `data/`. Run the same Python
+asset command before the filesystem upload.
+
+For Arduino IDE or CLI, install these libraries. PlatformIO installs them
+from `platformio.ini` automatically.
+
+| Library | Author | Version |
+| --- | --- | --- |
+| ESPAsyncWebServer | ESP32Async | 3.12.1 |
+| AsyncTCP | ESP32Async | 3.5.0 |
+| ArduinoJson | Benoit Blanchon | 7.4.3 |
+| Adafruit NeoPixel | Adafruit | 1.15.5 |
+| Adafruit Unified Sensor | Adafruit | 1.1.15 |
+| DHT sensor library | Adafruit | 1.4.7 |
+| DallasTemperature | Miles Burton | 4.0.6 |
+| OneWire | Paul Stoffregen | 2.3.8 |
+| BH1750 | Christopher Laws | 1.3.0 |
+
+Arduino CLI can compile with the matching board settings:
+
+```powershell
+arduino-cli compile --fqbn esp32:esp32:esp32s3:UploadSpeed=115200,USBMode=hwcdc,CDCOnBoot=cdc,FlashMode=qio,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi,CPUFreq=240,UploadMode=default .\HyGrow_IoT.ino
+```
+
+## Using the dashboard
+
+- **Dashboard:** view current readings and device connection state. A green
+  sensor dot means a healthy real reading; purple means simulated Demo Mode;
+  red means a read error; gray means disabled or device offline. A waiting
+  sensor uses amber until its first successful reading or when its last sample
+  becomes stale. A missing or failed
+  reading shows `--` instead of an old value.
+- **Sensor pages:** see a sensor's reading, pin, state, Demo Mode switch, and
+  power switch. A sensor can be enabled yet still have a read error.
+- **Calibration:** use the one-point TDS and two-point pH guides, but only
+  after a healthy real reading.
+  Demo, disabled, failed, stale, and offline sensors cannot be calibrated.
+  The pH guide captures raw probe voltage, so it also works before the first
+  calibration. Graph history contains completed sensor cycles; CSV exports
+  retain sample identity and sensor state, with blanks for missing values.
+- **Settings:** change Wi-Fi, password, cloud credentials, Demo Mode, sensor
+  pins, and timing. An **Unsaved changes** control stays visible across pages
+  when Settings edits are pending; open it to save or discard each section.
+- **Terminal:** search device messages and filter warnings/errors. Consecutive
+  repeats collapse with a count, and timestamps show time since device startup.
+  Pause freezes the view while retaining incoming messages; Resume catches up.
+  Copy visible works over local HTTP and respects filters. The browser retains
+  up to 200 grouped rows from a bounded 800-event window; the device replays its
+  latest 40 messages in one batch after login. Serial uses the same readable
+  time, severity and Device/Sensors labels.
+
+Global Demo Mode simulates every sensor and requires a reboot to apply.
+Turning it off leaves all sensors enabled. Individual sensor pages also have
+a Demo Mode switch for that sensor. The dashboard reports **rebooting** and
+then **reconnected** when a requested restart completes. A banner explains
+reconnect attempts if the board remains offline. You can close the connecting
+screen to inspect the offline dashboard; device actions still need a live
+connection.
+
+**Network recovery:** if the board cannot join your saved Wi-Fi, it starts
+the `HyGrow-Setup` network. Reconnect to it and return to 192.168.4.1 to
+correct the settings.
+
+Passwords are write-only in Settings. Leave Wi-Fi, recovery AP and Firebase
+password fields blank to retain saved values. Changing the admin password
+requires typing the current password. Saved passwords are not returned in
+config frames or boot logs.
+
+## Cloud upload (optional)
+
+Cloud connections verify Google TLS certificate chains. The cloud worker starts
+network time synchronization and waits for a valid clock without blocking the
+local dashboard. Networks that block SNTP can therefore prevent cloud uploads;
+local telemetry remains available. Public trust anchors live in
+`src/core/firebase_tls.h` and need updating before CA rotation or June 2036.
+
+The device can update one Firestore document at `devices/{firebaseUid}` by
+default. You can change the collection in Cloud Provisioning. The document
+holds current readings and status, **not** a reading history. A disabled or
+failed sensor sends `null` for its reading; it does not make the whole device
+offline. `uptime_s` is measured in seconds since the current boot.
+
+1. Create a Firebase project and enable Firestore.
+2. Enable Email/Password sign-in. For a new board, leave the Firebase Email
+   field blank to create a persistent device account automatically.
+3. Enroll the device account under the project’s Firestore authorization rules.
+4. In **Settings → Cloud Provisioning**, enter the Project ID, Web API Key,
+   email, password, and collection. Save, then use **Test Connection**.
+5. Enable **Firebase Upload** in the same card and save it. The default upload
+   interval is 10 seconds; you can change it in Settings.
+
+The device cannot write an “Offline” update after it loses power or network
+access. A separate reader must compare `lastUpdated` against the current
+time to detect stale devices. A failed sensor does not mean the whole device
+is offline.
+
+Local status, dashboard updates and cloud uploads use the same completed
+sensor sample. Cloud requests run on a separate worker so internet timeouts
+do not hold up local updates. Internet outages keep the Firebase toggle on
+and retry with a capped backoff; repeated permanent credentials/permission
+errors can still turn it off. Firestore also receives sample freshness and
+per-sensor demo/health metadata alongside the existing reading fields.
+
+### Device name and pairing
+
+With the default collection, the ESP32 publishes to `devices/{firebaseUid}`.
+The UID comes from the board’s Firebase Auth account. The **Device Name**
+field in **System Settings → Cloud Provisioning** changes the displayed name
+without changing the document path. Newly provisioned boards derive their
+Firebase email from their permanent hardware ID and save a generated password
+on the board.
+
+Open **Pair Device** from the Web Doctor sidebar or **Pair** from the mobile
+navigation. A signed-in Web Doctor admin can show the device’s permanent QR
+and block or unblock linked HyGrow accounts. Farmers scan the QR in HyGrow
+while signed in. Each account can link multiple devices. Each device can link
+multiple accounts.
+
+### Telemetry layout
+
+```text
+devices/{firebaseUid}
+  name              Device Name
+  status            Connection status
+  lastUpdated       Firestore server time of the latest upload
+  device            hardwareId, firmwareVersion
+  sample            bootId, sequence, sampledUptimeMs, ageMs, readIntervalMs
+  sensors
+    dht             state, simulated, temperatureC, humidityPercent, vpdKpa
+    tds             state, simulated, ppm, usesFallbackWaterTemperature
+    ph              state, simulated, value, voltageMv
+    light           state, simulated, lux
+    waterTemperature state, simulated, temperatureC
+    waterLevel      state, simulated, percent
+```
+
+The firmware fills missing telemetry fields and refreshes its sensor maps
+with each sample. Unavailable readings are `null`. LAN `GET /status` uses the
+same JSON layout. Its `lastUpdated` is an ISO timestamp from the latest
+confirmed Firebase upload, or `null` if none is known. LAN sample timing
+continues updating whenever the board can read its sensors.
+
+Deploy the matching Firestore rules and app reader before flashing this
+firmware.
+
+## Recovery and troubleshooting
+
+| Problem | What to do |
+| --- | --- |
+| Forgot the admin password | Hold the board's BOOT button for 10 seconds to reset only authentication. |
+| Need a full reset | Hold BOOT for 20 seconds, or use **Factory Reset** in Settings and type `RESET`. This erases saved Wi-Fi, cloud, pins, calibration, and password. |
+| Sensor disabled after boot | Check wiring. Then use that sensor's **Reset** action in Settings or enable it and save. The firmware can disable a sensor after five failed startup attempts. |
+| Dashboard missing or old | Regenerate compressed assets and upload the LittleFS image again. |
+| Filesystem mount failed | Reflash the LittleFS image. The onboard LED shows solid magenta at boot for this problem. |
+
+### Onboard LED signals
+
+| LED | Meaning |
+| --- | --- |
+| Off | All enabled sensors read successfully. |
+| Solid red | Water level failed. |
+| Solid yellow | Light sensor failed. |
+| Solid purple | TDS failed. |
+| Solid orange | DHT22 failed. |
+| Solid blue | pH failed. |
+| Solid cyan | Water temperature failed. |
+| Fast white strobe | Two or more enabled sensors failed. |
+| Solid magenta at boot | LittleFS mount failed; reflash the filesystem image. |
+
+Disabled sensors do not count as failures.
+
+## For future developers
+
+### Regenerate web assets every time the dashboard changes
+
+The board may serve `.gz` copies instead of the source files. **After editing
+HTML, CSS, JavaScript, or Material Symbols, regenerate their compressed
+files before building or uploading LittleFS:**
+
+```powershell
+python tools/build-web-assets.py
+pio run -e esp32-s3-n16r8 -t buildfs
+```
+
+The script regenerates `index.html.gz`, `style.css.gz`, `app.js.gz`,
+`charts.js.gz`, and `symbols.woff2.gz`, then checks that
+each expands to the current source. When adding or changing icon names,
+update the font with [`tools/build-icon-font.py`](tools/build-icon-font.py)
+first; that script requires an upstream Material Symbols font path (see its
+header for the exact command). Keep asset filenames short enough for
+LittleFS; the longer former font filename could not be packaged with `.gz`.
+
+### Where code lives
+
+| Path | Purpose |
+| --- | --- |
+| [`HyGrow_IoT.ino`](HyGrow_IoT.ino) | Boot sequence and task startup |
+| [`config.h`](config.h) | Sensor IDs, default pins, and intervals |
+| [`example.secrets.h`](example.secrets.h) | Template for first-boot private settings |
+| [`platformio.ini`](platformio.ini) | Board, libraries, and build settings |
+| [`partitions.csv`](partitions.csv) | App and LittleFS flash layout |
+| [`src/core/`](src/core/) | State, authentication, commands, networking, cloud sync, and sensor task |
+| [`src/sensors/`](src/sensors/) | Hardware reads for each sensor |
+| [`src/utils/`](src/utils/) | Onboard status LED |
+| [`data/index.html`](data/index.html) | Dashboard markup |
+| [`data/js/app.js`](data/js/app.js) | Dashboard state and interactions |
+| [`data/css/style.css`](data/css/style.css) | Dashboard styles |
+| [`data/manifest.json`](data/manifest.json) | Web app manifest |
+
+## License
+
+This repository has no license file yet. Add one before redistributing the
+project if you want to state what others may do with the code.
+
+## Connected-board verification (31 October 2026)
+
+The incomplete local Arduino framework package was reinstalled, followed by a
+clean successful build. Firmware 3.1.4 and LittleFS were uploaded to the connected
+ESP32-S3, with flash hashes verified. NVS settings were preserved and Firebase
+settings updated through the authenticated device interface. Encrypted
+`secrets.h.age` backs up ignored `secrets.h` using the owner's existing age key.
+
+Fresh local and canonical Firestore readings were verified before removing the
+obsolete telemetry document and rule. See
+`docs/HARDWARE_VERIFICATION_2026_10_31.json` for artifact hashes and the browser
+LAN-only test boundary.

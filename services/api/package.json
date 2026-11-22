@@ -1,0 +1,17 @@
+{
+  "name": "hygrow-api",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "npm run build && node --watch dist/server.js",
+    "migrate": "node dist/migrate.js",
+    "test": "npm run build && node --test test/*.test.js",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": { "fastify": "5.12.8", "pg": "8.16.3", "redis": "6.3.1" },
+  "devDependencies": { "typescript": "6.0.3", "@types/node": "24.10.1", "@types/pg": "8.15.6" }
+}

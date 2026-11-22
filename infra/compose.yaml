@@ -1,0 +1,60 @@
+name: hygrow-local
+services:
+  db:
+    image: postgres:17.7-bookworm
+    environment:
+      POSTGRES_DB: hygrow_dev
+      POSTGRES_USER: hygrow
+      POSTGRES_PASSWORD: ${LOCAL_DATABASE_PASSWORD:?Run Dev.ps1 -Action Setup first}
+    ports:
+      - "127.0.0.1:5548:5432"
+    volumes:
+      - local-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hygrow -d hygrow_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+    logging:
+      options: { max-size: "10m", max-file: "3" }
+  api:
+    restart: unless-stopped
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+    environment:
+      DATABASE_URL: postgres://hygrow:${LOCAL_DATABASE_PASSWORD}@db:5432/hygrow_dev
+      SOURCE_REVISION: local-development
+      NODE_ENV: development
+      REDIS_URL: redis://:${LOCAL_REDIS_PASSWORD:?Run Dev.ps1 -Action Setup first}@redis:6379
+    command: ["sh", "-c", "node dist/migrate.js && node dist/server.js"]
+    ports:
+      - "127.0.0.1:8088:8080"
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    mem_limit: 256m
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      options: { max-size: "10m", max-file: "3" }
+  redis:
+    image: redis:8.2.2-bookworm
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction", "--requirepass", "${LOCAL_REDIS_PASSWORD}"]
+    environment:
+      REDISCLI_AUTH: ${LOCAL_REDIS_PASSWORD}
+    volumes: ["local-redis:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 256m
+    logging:
+      options: { max-size: "10m", max-file: "3" }
+volumes:
+  local-db:
+  local-redis:
