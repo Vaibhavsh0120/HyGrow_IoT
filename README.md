@@ -1,5 +1,14 @@
 # HyGrow IoT
 
+The ecosystem is being developed incrementally in this repository on `main`.
+`VERSION` identifies these development milestones; the firmware has its own
+version. The separate sibling projects are maintained independently.
+
+Run all hardware-independent firmware checks with `python tools/test-all.py`
+after a PlatformIO build has installed the pinned libraries. This compiles real
+production code against host fixtures; physical hardware behavior still needs
+device testing.
+
 HyGrow IoT is ESP32-S3 firmware for six hydroponic sensors. The board hosts
 its own web dashboard, so you can view readings and change settings on a
 local connection. Internet access is only needed for optional Firestore
