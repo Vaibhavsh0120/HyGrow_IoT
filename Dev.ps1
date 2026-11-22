@@ -27,7 +27,8 @@ Setup: -SkipSecrets keeps existing secrets; -SkipContainers omits Docker startup
 Decrypt: hidden terminal identity prompt; -ReplaceSecrets preserves a backup.
 StartLocal: isolated local PostgreSQL/API/Redis; data survives StopLocal.
 RunMobileLive / BuildAndroid: -Device <flutter device ID>, -ApiBaseUrl <https URL>.
-CI opens build links. APK/unsigned release IPA delivery is a later milestone.
+CI shows build links. Successful versioned builds publish signed APKs and unsigned
+iOS device-release IPAs with source metadata and checksums in GitHub Releases.
 Clean removes only generated build caches; never source, secrets or DB volumes.
 '@
 }

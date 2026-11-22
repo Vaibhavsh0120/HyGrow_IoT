@@ -162,6 +162,19 @@ Quality checks and a production container build/publish run on `main`. The sourc
 image is `ghcr.io/vaibhavsh0120/hygrow_iot-api:sha-<full-commit-sha>`;
 the workflow summary records its immutable digest. This is separate from a live deployment.
 
+Native delivery runs on Linux for APKs and macOS for an **unsigned ARM64 device
+release IPA**. Android signing uses a persistent project certificate, whose public
+fingerprint is in `config/android-signing.json`. Its keystore and properties are
+manifest-mapped age ciphertexts; plaintext stays ignored and CI uses encrypted
+GitHub secrets. Release builds fail if signing configuration is missing.
+
+The workflow verifies package identity, version and signing state, records the
+full source SHA, and publishes versioned development releases only after the
+quality jobs pass. APKs are split by ABI. The IPA requires signing/sideloading;
+an iOS build is not evidence of runtime behavior on an iPhone/iPad. Download the
+artifacts, build metadata and `SHA256SUMS` from
+[GitHub Releases](https://github.com/Vaibhavsh0120/HyGrow_IoT/releases).
+
 Android APK, **unsigned iOS device release IPA**, and Coolify deployment are
 delivery goals still being implemented. An unsigned IPA
 requires a compatible later signing process to install on a stock iOS device.

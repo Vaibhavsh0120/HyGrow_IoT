@@ -1,0 +1,12 @@
+name: Pinned HyGrow Flutter
+description: Install the same verified Flutter revision on native build hosts
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        git clone --depth 1 --branch 3.47.4 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+        test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 9584c6713b324636289d067944a46fd6b49df14b
+        echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+        "$RUNNER_TEMP/flutter/bin/flutter" config --no-analytics

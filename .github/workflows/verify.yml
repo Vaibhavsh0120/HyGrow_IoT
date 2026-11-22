@@ -13,12 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - name: Install pinned Flutter SDK
-        run: |
-          git clone --depth 1 --branch 3.47.4 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
-          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = 9584c6713b324636289d067944a46fd6b49df14b
-          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
-      - run: flutter config --no-analytics
+      - uses: ./.github/actions/setup-flutter
       - run: flutter pub get --enforce-lockfile
         working-directory: app
       - run: dart format --output=none --set-exit-if-changed lib test
@@ -27,6 +22,82 @@ jobs:
         working-directory: app
       - run: flutter test
         working-directory: app
+  android:
+    needs: native
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/setup-flutter
+      - name: Restore release signing in private ephemeral files
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PROPERTIES: ${{ secrets.ANDROID_SIGNING_PROPERTIES_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          for name, relative in [('KEYSTORE', 'app/android/hygrow-release.jks'), ('PROPERTIES', 'app/android/key.properties')]:
+              value = os.environ.get(name)
+              if not value:
+                  raise SystemExit('Release signing secret is missing: ' + name)
+              path = Path(relative)
+              with path.open('xb') as output:
+                  path.chmod(0o600)
+                  output.write(base64.b64decode(value, validate=True))
+          PY
+      - run: flutter pub get --enforce-lockfile
+        working-directory: app
+      - name: Build actual signed release APKs
+        run: |
+          python3 tools/native_artifacts.py stamp --revision "${{ github.sha }}"
+          cd app
+          flutter build apk --release --split-per-abi --dart-define=API_BASE_URL=https://hygrow-india.duckdns.org
+      - name: Verify signer, identity and version; record source and checksums
+        run: |
+          mkdir -p delivery
+          version=$(tr -d '\r\n' < VERSION)
+          for abi in armeabi-v7a arm64-v8a x86_64; do
+            cp "app/build/app/outputs/flutter-apk/app-$abi-release.apk" "delivery/HyGrow-$version-$abi.apk"
+          done
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          python3 tools/native_artifacts.py android --input delivery/*.apk --revision "${{ github.sha }}" --output delivery/android-build.json --apksigner "$build_tools/apksigner" --aapt "$build_tools/aapt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-android
+          path: delivery/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Remove ephemeral signing material
+        if: always()
+        run: rm -f app/android/hygrow-release.jks app/android/key.properties
+  ios:
+    needs: native
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: ./.github/actions/setup-flutter
+      - run: xcodebuild -version
+      - run: flutter pub get --enforce-lockfile
+        working-directory: app
+      - name: Build unsigned release for actual iOS devices
+        run: |
+          python3 tools/native_artifacts.py stamp --revision "${{ github.sha }}"
+          cd app
+          flutter build ios --release --no-codesign --dart-define=API_BASE_URL=https://hygrow-india.duckdns.org
+      - name: Package and verify unsigned device IPA
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r\n' < VERSION)
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" delivery
+          ditto app/build/ios/iphoneos/Runner.app "$RUNNER_TEMP/ipa/Payload/Runner.app"
+          ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/ipa/Payload" "delivery/HyGrow-$version-unsigned.ipa"
+          python3 tools/native_artifacts.py ios --input delivery/*.ipa --revision "${{ github.sha }}" --output delivery/ios-build.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-ios-unsigned
+          path: delivery/*
+          if-no-files-found: error
+          retention-days: 30
   firmware:
     runs-on: ubuntu-24.04
     steps:
@@ -104,6 +175,7 @@ jobs:
           sudo apt-get install -y age
           python -m unittest discover -s tools/tests -p test_secrets.py -v
           python -m unittest discover -s tools/tests -p test_diagnostics.py -v
+          python -m unittest discover -s tools/tests -p test_native_artifacts.py -v
           python tools/project_secrets.py check
       - name: Secret scan with checksum-verified gitleaks
         run: |
@@ -127,7 +199,7 @@ jobs:
       - run: python -m unittest discover -s tools/tests -p test_manager.py -v
   publish:
     if: github.ref == 'refs/heads/main'
-    needs: [firmware, api, secrets, manager, native]
+    needs: [firmware, api, secrets, manager, native, android, ios]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -166,3 +238,45 @@ jobs:
           echo 'Image: `${{ steps.metadata.outputs.image }}@${{ steps.image.outputs.digest }}`' >> "$GITHUB_STEP_SUMMARY"
           echo 'Source: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}' >> "$GITHUB_STEP_SUMMARY"
           echo 'Publishing an image does not verify Oracle deployment.' >> "$GITHUB_STEP_SUMMARY"
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: [firmware, api, secrets, manager, native, android, ios]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Fetch verified build artifacts from this exact run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ github.run_id }}" --name native-android --dir delivery
+          gh run download "${{ github.run_id }}" --name native-ios-unsigned --dir delivery
+      - name: Publish versioned development release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(tr -d '\r\n' < VERSION)
+          tag="v$version"
+          git fetch --depth 1 origin "refs/tags/$tag"
+          test "$(git rev-parse 'FETCH_HEAD^{}')" = "${{ github.sha }}"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          for name in ['android', 'ios']:
+              record = json.loads(Path(f'delivery/{name}-build.json').read_text())
+              assert record['sourceRevision'] == os.environ['GITHUB_SHA'], 'Artifact source mismatch'
+          PY
+          (cd delivery && sha256sum *.apk *.ipa > SHA256SUMS)
+          cat > "$RUNNER_TEMP/release-notes.md" <<'EOF'
+          Development checkpoint. See the root README's current capability boundaries and version plan.
+
+          Android APKs use the persistent HyGrow release key. Choose arm64-v8a for most modern phones; x86_64 is for compatible emulators/devices.
+
+          The IPA is an **unsigned ARM64 device release**, not an App Store upload or simulator package. Signing/sideloading is required before installation. An iOS CI build does not prove runtime behavior on an iPhone/iPad.
+
+          Source revisions, bundle identities, versions, signing state and SHA-256 hashes are recorded in the attached build metadata and SHA256SUMS.
+          EOF
+          gh release create "$tag" delivery/* --verify-tag --prerelease --title "HyGrow $version" --notes-file "$RUNNER_TEMP/release-notes.md"
