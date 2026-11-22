@@ -14,7 +14,7 @@ test('real PostgreSQL migrations, rollback and identity constraints', { skip: !u
   t.after(() => pool.end());
   await migrate(pool);
   await migrate(pool);
-  assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count, '1');
+  assert.equal((await pool.query("SELECT version FROM schema_migrations WHERE version='001_identity.sql'")).rowCount, 1);
   const id = randomUUID();
   const email = `${id}@example.test`;
   await assert.rejects(transaction(pool, async client => {

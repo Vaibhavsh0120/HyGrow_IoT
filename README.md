@@ -15,6 +15,11 @@ The repository remains **HyGrow_IoT**. Sibling projects are independent and unto
   encryption/decryption, regression checks and isolated local services.
 - **Backend foundation:** Fastify 5 + TypeScript, PostgreSQL migrations, Redis
   coordination/rate limiting, liveness and dependency readiness endpoints.
+- **Background work:** BullMQ worker with durable PostgreSQL job records,
+  bounded retries, duplicate protection and an OTP-expiration maintenance job.
+  Email/photo/archive jobs will be added with their corresponding features.
+- **Diagnostics:** server-generated request IDs, JSON response/error logs with
+  route/status/duration/source version, and safe local diagnostic reports.
 
 The new native Flutter app, secure ownership/BLE onboarding, Oracle Doctor,
 Plant Tracker and cloud website are **V1 work in progress**. Existing LAN `/status`
@@ -80,6 +85,7 @@ flowchart TD
 .\Dev.ps1 -Action Setup -SkipSecrets -SkipContainers -NonInteractive
 .\Dev.ps1 -Action StartLocal -NonInteractive
 .\Dev.ps1 -Action Status
+.\Dev.ps1 -Action Diagnostics -NonInteractive
 .\Dev.ps1 -Action Test -NonInteractive
 .\Dev.ps1 -Action StopLocal
 ```
@@ -125,9 +131,19 @@ private identity through a hidden terminal prompt and supplies it to age via
 stdin. Existing plaintext requires `-ReplaceSecrets`; restricted ignored backups
 are retained. All files are authenticated before replacement begins.
 
-Android APK, **unsigned iOS device release IPA**, source-linked GHCR images and
-Coolify deployment are delivery goals still being implemented. An unsigned IPA
+Quality checks and a production container build/publish run on `main`. The source-linked
+image is `ghcr.io/vaibhavsh0120/hygrow_iot-api:sha-<full-commit-sha>`;
+the workflow summary records its immutable digest. This is separate from a live deployment.
+
+Android APK, **unsigned iOS device release IPA**, and Coolify deployment are
+delivery goals still being implemented. An unsigned IPA
 requires a compatible later signing process to install on a stock iOS device.
 No App Store signing account is required to generate the requested artifact.
 Features are only reported as verified after relevant checks; local simulation,
 CI builds, deployed services and physical-device validation are distinct.
+
+For a bug report, run `Dev.ps1 -Action Diagnostics`, include the app/API version
+and request ID, then check the matching JSON log in Docker/Coolify. Reports are
+saved under ignored `.dev/` and contain no secret-file values. `health/live`
+checks the process, `health/ready` checks PostgreSQL/Redis, and `health/worker`
+checks the background dispatch heartbeat. Readiness failure is not a fake success.

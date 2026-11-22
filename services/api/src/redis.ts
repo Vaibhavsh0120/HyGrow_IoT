@@ -1,7 +1,7 @@
 import { createClient } from 'redis';
 
 export async function createRedis(url: string) {
-  const client = createClient({ url, disableOfflineQueue: true, socket: { connectTimeout: 5000, reconnectStrategy: retries => retries > 8 ? new Error('Redis reconnect limit reached') : Math.min(100 * 2 ** retries, 5000) } });
+  const client = createClient({ url, disableOfflineQueue: true, socket: { connectTimeout: 5000, reconnectStrategy: retries => Math.min(100 * 2 ** Math.min(retries, 6), 5000) } });
   client.on('error', () => { /* Health/failed requests report availability; never log connection strings. */ });
   await client.connect();
   return client;

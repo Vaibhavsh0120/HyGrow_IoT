@@ -10,6 +10,12 @@
 - Never commit plaintext credentials. The secret mapping is
   `config/secrets.manifest.json`; private age identities are terminal input only.
 - Mobile target is Flutter Android/iPhone/iPad; website is cloud only.
+- Backend: Fastify 5 + TypeScript + PostgreSQL + Redis; background jobs use BullMQ.
+  Keep durable job records in PostgreSQL and secrets out of Redis job payloads/logs.
+- Build traceable diagnostics: stable error codes, request IDs, versioned logs,
+  health checks and reproducible regression tests. Never swallow failures to pass CI.
+- UI should load cached content promptly, refresh in the background with accurate
+  freshness labels, provide immediate feedback and respect reduced motion.
 - Pairing is BLE/LAN with authorization, never QR. UID alone is not proof.
 - Dark surfaces use neutral charcoal. Never send water-level anomaly alerts.
 - Fetch current library/platform documentation through Context7 before API work.

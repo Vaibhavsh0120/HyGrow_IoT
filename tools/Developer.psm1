@@ -80,7 +80,7 @@ function Assert-HyGrowApi([string]$BaseUrl) {
 }
 
 function Invoke-Mobile([string]$Root,[string]$BaseUrl,[string]$Target,[bool]$Build) {
-    $directory = Join-Path $Root 'apps/mobile'
+    $directory = Join-Path $Root 'app'
     if (-not (Test-Path (Join-Path $directory 'pubspec.yaml'))) { throw 'Flutter app is not yet implemented in this milestone.' }
     Invoke-InDirectory $directory {
         if ($Build) { Invoke-Checked 'flutter' @('build','apk','--release',('--dart-define=API_BASE_URL='+$BaseUrl)) }
@@ -94,7 +94,7 @@ function Invoke-Mobile([string]$Root,[string]$BaseUrl,[string]$Target,[bool]$Bui
 
 function Clear-ProjectCaches([string]$Root) {
     $resolvedRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\','/')+[IO.Path]::DirectorySeparatorChar
-    foreach ($relative in @('firmware/.pio/build','apps/mobile/build','apps/mobile/.dart_tool')) {
+    foreach ($relative in @('firmware/.pio/build','app/build','app/.dart_tool')) {
         $target = Join-Path $Root $relative
         if (-not (Test-Path -LiteralPath $target)) { continue }
         $resolved = (Resolve-Path -LiteralPath $target).Path

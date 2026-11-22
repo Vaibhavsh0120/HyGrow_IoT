@@ -1,7 +1,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('Menu','Help','Doctor','Setup','Encrypt','Decrypt','StartLocal','StopLocal','Status','Test','BuildFirmware','BuildAndroid','RunMobileLive','RunWebLive','CI','Health','Clean')]
+    [ValidateSet('Menu','Help','Doctor','Diagnostics','Setup','Encrypt','Decrypt','StartLocal','StopLocal','Status','Test','BuildFirmware','BuildAndroid','RunMobileLive','RunWebLive','CI','Health','Clean')]
     [string]$Action = 'Menu',
     [switch]$Help,
     [switch]$NonInteractive,
@@ -20,7 +20,7 @@ function Show-Help {
     Write-Host @'
 HyGrow Developer Manager (PowerShell 5.1 or 7)
 Usage: .\Dev.ps1 -Action <name> [-NonInteractive]
-Actions: Doctor, Setup, Encrypt, Decrypt, StartLocal, StopLocal, Status,
+Actions: Doctor, Diagnostics, Setup, Encrypt, Decrypt, StartLocal, StopLocal, Status,
          Test, BuildFirmware, BuildAndroid, RunMobileLive, RunWebLive,
          CI, Health, Clean, Help
 Setup: -SkipSecrets keeps existing secrets; -SkipContainers omits Docker startup.
@@ -36,6 +36,7 @@ function Invoke-Action([string]$Selected) {
     switch ($Selected) {
         'Help' { Show-Help }
         'Doctor' { Show-Prerequisites }
+        'Diagnostics' { Invoke-Checked 'python' @((Join-Path $projectRoot 'tools/diagnostics.py')) }
         'Encrypt' { Invoke-SecretAction $projectRoot 'encrypt' $NonInteractive $ReplaceSecrets }
         'Decrypt' { Invoke-SecretAction $projectRoot 'decrypt' $NonInteractive $ReplaceSecrets }
         'Setup' {
@@ -48,8 +49,8 @@ function Invoke-Action([string]$Selected) {
             }
             Initialize-LocalEnvironment $projectRoot
             Invoke-Checked 'npm' @('ci','--prefix',(Join-Path $projectRoot 'services/api'))
-            if (Test-Path (Join-Path $projectRoot 'apps/mobile/pubspec.yaml')) {
-                Invoke-InDirectory (Join-Path $projectRoot 'apps/mobile') { Invoke-Checked 'flutter' @('pub','get') }
+            if (Test-Path (Join-Path $projectRoot 'app/pubspec.yaml')) {
+                Invoke-InDirectory (Join-Path $projectRoot 'app') { Invoke-Checked 'flutter' @('pub','get') }
             }
             if (-not $SkipContainers) { Invoke-LocalCompose $projectRoot @('up','-d','--build','--wait','--wait-timeout','120') }
             Invoke-Checked 'python' @((Join-Path $projectRoot 'tools/project_secrets.py'),'check')
@@ -68,8 +69,8 @@ function Invoke-Action([string]$Selected) {
                 Invoke-Checked 'python' @('firmware/tools/test-all.py')
                 Invoke-Checked 'python' @('-m','unittest','discover','-s','tools/tests','-v')
                 if (Test-Path 'services/api/package.json') { Invoke-ApiTests $projectRoot }
-                if (Test-Path 'apps/mobile/pubspec.yaml') {
-                    Invoke-InDirectory (Join-Path $projectRoot 'apps/mobile') {
+                if (Test-Path 'app/pubspec.yaml') {
+                    Invoke-InDirectory (Join-Path $projectRoot 'app') {
                         Invoke-Checked 'dart' @('format','--output=none','--set-exit-if-changed','lib','test')
                         Invoke-Checked 'flutter' @('analyze')
                         Invoke-Checked 'flutter' @('test')
@@ -99,7 +100,7 @@ try {
     if ($Help) { Show-Help; exit 0 }
     if ($Action -ne 'Menu') { Invoke-Action $Action; exit 0 }
     if ($NonInteractive) { throw 'Specify -Action when using -NonInteractive.' }
-    $choices = @('RunMobileLive','RunWebLive','StartLocal','Status','Setup','Encrypt','Decrypt','Test','BuildFirmware','BuildAndroid','CI','Health','Clean','StopLocal','Doctor')
+    $choices = @('RunMobileLive','RunWebLive','StartLocal','Status','Setup','Encrypt','Decrypt','Test','BuildFirmware','BuildAndroid','CI','Health','Clean','StopLocal','Doctor','Diagnostics')
     while ($true) {
         Write-Host "`n================ HyGrow Developer Manager ================" -ForegroundColor Cyan
         for ($index=0; $index -lt $choices.Count; $index++) { Write-Host ('{0,2}  {1}' -f ($index+1),$choices[$index]) }
