@@ -11,10 +11,12 @@ class ApiFailure implements Exception {
     this.message, {
     this.code = 'request_failed',
     this.requestId,
+    this.retryAfterSeconds,
   });
   final String message;
   final String code;
   final String? requestId;
+  final int? retryAfterSeconds;
   @override
   String toString() =>
       requestId == null ? message : '$message\nReference: $requestId';
@@ -42,6 +44,14 @@ class HttpHyGrowApi implements HyGrowApi {
     Map<String, dynamic>? body,
     String? token,
   }) async {
+    if (baseUrl.userInfo.isNotEmpty ||
+        baseUrl.hasQuery ||
+        baseUrl.hasFragment) {
+      throw const ApiFailure(
+        'The service configuration is invalid.',
+        code: 'invalid_api_configuration',
+      );
+    }
     final local = ['localhost', '127.0.0.1', '10.0.2.2'].contains(baseUrl.host);
     if (baseUrl.scheme != 'https' &&
         !(local &&
@@ -56,7 +66,8 @@ class HttpHyGrowApi implements HyGrowApi {
       final request = await _client
           .openUrl(method, baseUrl.resolve('/api/v1$path'))
           .timeout(const Duration(seconds: 10));
-      request.headers.contentType = ContentType.json;
+      request.followRedirects = false;
+      if (body != null) request.headers.contentType = ContentType.json;
       if (token != null) {
         request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
       }
@@ -73,7 +84,7 @@ class HttpHyGrowApi implements HyGrowApi {
       }
       final decoded = jsonDecode(utf8.decode(bytes));
       if (decoded is! Map<String, dynamic>) throw const FormatException();
-      if (response.statusCode >= 400) {
+      if (response.statusCode < 200 || response.statusCode >= 300) {
         final error = decoded['error'];
         throw ApiFailure(
           error is Map
@@ -83,6 +94,9 @@ class HttpHyGrowApi implements HyGrowApi {
               ? (error['code'] as String? ?? 'request_failed')
               : 'request_failed',
           requestId: decoded['requestId'] as String?,
+          retryAfterSeconds: int.tryParse(
+            response.headers.value('retry-after') ?? '',
+          ),
         );
       }
       return decoded;
@@ -107,6 +121,11 @@ class HttpHyGrowApi implements HyGrowApi {
       throw const ApiFailure(
         'The service returned an unexpected response. Please retry.',
         code: 'invalid_response',
+      );
+    } on HttpException {
+      throw const ApiFailure(
+        'The connection was interrupted. Please retry.',
+        code: 'offline',
       );
     }
   }
@@ -137,6 +156,12 @@ class AuthController extends ChangeNotifier {
   Map<String, dynamic>? _session;
   int _generation = 0;
   Future<void> _storageWrites = Future.value();
+  Future<void>? _refreshOperation;
+  int? _refreshGeneration;
+  String? lastSessionError;
+  String? signOutWarning;
+  String? _pendingLogoutToken;
+  Future<void>? _logoutOperation;
   bool restoring = true;
   bool offline = false;
   ThemeMode themeMode = ThemeMode.system;
@@ -174,41 +199,91 @@ class AuthController extends ChangeNotifier {
     restoring = false;
     notifyListeners();
     if (_session != null) {
-      final restoringSession = _session!;
       try {
-        final me = await api.request('/me', token: accessToken);
-        if (generation != _generation) return;
-        await _accept({...restoringSession, 'user': me['user']}, generation);
+        final me = await _authenticatedGet('/me');
+        if (generation != _generation || _session == null) return;
+        await _accept({..._session!, 'user': me['user']}, generation);
       } on ApiFailure catch (error) {
         if (generation != _generation) return;
-        if (error.code == 'unauthorized' || error.code == 'session_expired') {
-          try {
-            await _accept(
-              await api.request(
-                '/auth/refresh',
-                method: 'POST',
-                body: {'refreshToken': restoringSession['refreshToken']},
-              ),
-              generation,
-            );
-          } on ApiFailure catch (refreshError) {
-            if (generation != _generation) return;
-            if ([
-              'unauthorized',
-              'session_expired',
-              'invalid_refresh',
-              'refresh_reused',
-            ].contains(refreshError.code)) {
-              await signOut();
-            } else {
-              offline = true;
-            }
-          }
-        } else {
-          offline = true;
-        }
+        lastSessionError = error.code;
+        offline = true;
       }
       notifyListeners();
+    }
+  }
+
+  Future<void> _refresh(int generation) {
+    if (_refreshOperation != null && _refreshGeneration == generation) {
+      return _refreshOperation!;
+    }
+    final session = _session;
+    if (session == null || generation != _generation) {
+      return Future.error(
+        const ApiFailure('Please log in again.', code: 'unauthorized'),
+      );
+    }
+    final operation = () async {
+      try {
+        await _accept(
+          await api.request(
+            '/auth/refresh',
+            method: 'POST',
+            body: {'refreshToken': session['refreshToken']},
+          ),
+          generation,
+        );
+      } on ApiFailure catch (error) {
+        if (generation == _generation) {
+          lastSessionError = error.code;
+          if ([
+            'unauthorized',
+            'session_expired',
+            'invalid_refresh',
+            'refresh_reused',
+          ].contains(error.code)) {
+            await signOut();
+          } else {
+            offline = true;
+            notifyListeners();
+          }
+        }
+        rethrow;
+      }
+    }();
+    _refreshGeneration = generation;
+    _refreshOperation = operation;
+    return operation.whenComplete(() {
+      if (_refreshGeneration == generation) _refreshOperation = null;
+    });
+  }
+
+  Future<Map<String, dynamic>> _authenticatedGet(String path) async {
+    final generation = _generation;
+    final token = accessToken;
+    if (token == null) {
+      throw const ApiFailure('Please log in again.', code: 'unauthorized');
+    }
+    try {
+      final result = await api.request(path, token: token);
+      if (generation != _generation) {
+        throw const ApiFailure('Your session changed.', code: 'unauthorized');
+      }
+      return result;
+    } on ApiFailure catch (error) {
+      if (generation != _generation ||
+          !['unauthorized', 'session_expired'].contains(error.code)) {
+        rethrow;
+      }
+      // Another request may already have completed the shared refresh.
+      if (accessToken == token) await _refresh(generation);
+      if (generation != _generation || !signedIn) {
+        throw const ApiFailure('Please log in again.', code: 'unauthorized');
+      }
+      final result = await api.request(path, token: accessToken);
+      if (generation != _generation) {
+        throw const ApiFailure('Your session changed.', code: 'unauthorized');
+      }
+      return result;
     }
   }
 
@@ -225,6 +300,8 @@ class AuthController extends ChangeNotifier {
       if (generation != _generation) return;
       _session = session;
       offline = false;
+      lastSessionError = null;
+      signOutWarning = null;
       notifyListeners();
     });
   }
@@ -292,29 +369,81 @@ class AuthController extends ChangeNotifier {
     );
   }
 
+  Future<({String challengeId, int resendAfterSeconds})> resend(
+    String id,
+    String purpose,
+  ) async {
+    final response = await api.request(
+      '/auth/otp/resend',
+      method: 'POST',
+      body: {'challengeId': id, 'purpose': purpose},
+    );
+    return (
+      challengeId: response['challengeId'] as String,
+      resendAfterSeconds: (response['resendAfterSeconds'] as int).clamp(
+        1,
+        3600,
+      ),
+    );
+  }
+
   Future<List<dynamic>> devices() async =>
-      (await api.request('/devices', token: accessToken))['devices']
-          as List<dynamic>;
+      (await _authenticatedGet('/devices'))['devices'] as List<dynamic>;
   Future<void> setTheme(ThemeMode value) async {
     themeMode = value;
     notifyListeners();
     await store.write('hygrow.theme', value.name);
   }
 
-  Future<void> signOut() async {
-    ++_generation;
-    final token = accessToken;
+  Future<void> signOut() {
+    if (_logoutOperation != null) return _logoutOperation!;
+    final operation = _performSignOut();
+    _logoutOperation = operation;
+    return operation.whenComplete(() => _logoutOperation = null);
+  }
+
+  Future<void> _performSignOut() async {
+    final generation = ++_generation;
+    final token = accessToken ?? _pendingLogoutToken;
+    _pendingLogoutToken = token;
     _session = null;
     offline = false;
+    signOutWarning = null;
     notifyListeners();
-    await _serializeStorage(() => store.delete(_sessionKey));
-    if (token != null) {
-      unawaited(
-        api
-            .request('/auth/logout', method: 'POST', token: token)
-            .then<void>((_) {})
-            .catchError((Object _) {}),
-      );
+    // Revoke independently: a device keychain failure must never skip the server.
+    final remote = token == null
+        ? Future.value(true)
+        : api
+              .request('/auth/logout', method: 'POST', token: token)
+              .timeout(const Duration(seconds: 15))
+              .then((_) => true, onError: (Object _) => false);
+    var cleared = false;
+    final local =
+        _serializeStorage(() async {
+              try {
+                await store.delete(_sessionKey);
+                cleared = true;
+              } catch (_) {
+                // Some platform stores can overwrite an item when deletion fails.
+                try {
+                  await store.write(_sessionKey, 'null');
+                  cleared = true;
+                  lastSessionError = 'secure_delete_overwritten';
+                } catch (_) {
+                  lastSessionError = 'secure_session_cleanup_failed';
+                }
+              }
+            })
+            .timeout(const Duration(seconds: 3))
+            .then((_) => cleared, onError: (Object _) => false);
+    final outcomes = await Future.wait([local, remote]);
+    if (generation != _generation) return;
+    if (outcomes.every((value) => value)) {
+      _pendingLogoutToken = null;
+    } else {
+      signOutWarning =
+          'Sign-out is incomplete. Please retry before closing HyGrow.';
     }
+    notifyListeners();
   }
 }

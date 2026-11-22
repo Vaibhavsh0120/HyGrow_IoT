@@ -72,7 +72,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
                 const Padding(
                   padding: EdgeInsets.only(bottom: 16),
                   child: Text(
-                    'Offline. Account information is from your saved session.',
+                    'Showing your saved account. We could not refresh it.',
                   ),
                 ),
               FutureBuilder<List<dynamic>>(

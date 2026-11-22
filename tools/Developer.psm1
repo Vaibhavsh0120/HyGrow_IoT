@@ -40,7 +40,7 @@ function Initialize-LocalEnvironment([string]$Root) {
     if ((Test-Path -LiteralPath $destination) -and ((Get-Item -LiteralPath $destination -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Refusing linked local environment file.' }
     $contents = if (Test-Path -LiteralPath $destination) { [IO.File]::ReadAllText($destination) } else { '' }
     $changed = $false
-    foreach ($name in @('LOCAL_DATABASE_PASSWORD','LOCAL_REDIS_PASSWORD')) {
+    foreach ($name in @('LOCAL_DATABASE_PASSWORD','LOCAL_REDIS_PASSWORD','LOCAL_AUTH_OTP_PEPPER','LOCAL_AUTH_ENCRYPTION_KEY')) {
         if ($contents -match ('(?m)^'+$name+'=')) { continue }
         $bytes = New-Object byte[] 32
         $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
@@ -115,14 +115,17 @@ function Invoke-ApiTests([string]$Root) {
     $composeArgs = @('compose','-p','hygrow-tests','-f',(Join-Path $Root 'infra/compose.test.yaml'))
     $oldUrl = $env:HYGROW_TEST_DATABASE_URL
     $oldRedis = $env:HYGROW_TEST_REDIS_URL
+    $oldMailpit = $env:HYGROW_TEST_MAILPIT_URL
     try {
         Invoke-Checked 'docker' ($composeArgs + @('up','-d','--wait','--wait-timeout','90'))
         $env:HYGROW_TEST_DATABASE_URL = 'postgres://hygrow_test:local-disposable-tests-only@127.0.0.1:5549/hygrow_test'
         $env:HYGROW_TEST_REDIS_URL = 'redis://127.0.0.1:6389'
+        $env:HYGROW_TEST_MAILPIT_URL = 'http://127.0.0.1:8026'
         Invoke-Checked 'npm' @('--prefix',(Join-Path $Root 'services/api'),'test')
     } finally {
         $env:HYGROW_TEST_DATABASE_URL = $oldUrl
         $env:HYGROW_TEST_REDIS_URL = $oldRedis
+        $env:HYGROW_TEST_MAILPIT_URL = $oldMailpit
         # This project contains only the disposable tmpfs test database.
         Invoke-Checked 'docker' ($composeArgs + @('down'))
     }

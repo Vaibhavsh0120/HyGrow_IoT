@@ -67,8 +67,14 @@ class _HyGrowAppState extends State<HyGrowApp> {
         GoRoute(path: '/splash', builder: (_, _) => const _SplashScreen()),
         GoRoute(
           path: '/welcome',
-          builder: (context, _) =>
-              WelcomeScreen(onFarmer: () => context.push('/login')),
+          builder: (context, _) => ListenableBuilder(
+            listenable: widget.auth,
+            builder: (_, _) => WelcomeScreen(
+              onFarmer: () => context.push('/login'),
+              notice: widget.auth.signOutWarning,
+              onRetry: () => widget.auth.signOut(),
+            ),
+          ),
         ),
         GoRoute(
           path: '/login',

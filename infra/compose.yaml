@@ -1,5 +1,16 @@
 name: hygrow-local
 services:
+  mailpit:
+    image: axllent/mailpit:v1.32.0
+    ports: ["127.0.0.1:8025:8025"]
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 128m
+    logging:
+      options: { max-size: "10m", max-file: "3" }
   db:
     image: postgres:17.7-bookworm
     environment:
@@ -28,13 +39,18 @@ services:
       SOURCE_REVISION: local-development
       NODE_ENV: development
       REDIS_URL: redis://:${LOCAL_REDIS_PASSWORD:?Run Dev.ps1 -Action Setup first}@redis:6379
+      AUTH_OTP_PEPPER: ${LOCAL_AUTH_OTP_PEPPER:?Run Dev.ps1 -Action Setup first}
+      AUTH_ENCRYPTION_KEY: ${LOCAL_AUTH_ENCRYPTION_KEY:?Run Dev.ps1 -Action Setup first}
+      MAIL_MODE: mailpit
+      MAILPIT_URL: http://mailpit:8025
     command: ["sh", "-c", "node dist/migrate.js && node dist/server.js"]
     ports:
       - "127.0.0.1:8088:8080"
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
-    mem_limit: 256m
+      mailpit: { condition: service_healthy }
+    mem_limit: 512m
     read_only: true
     tmpfs: ["/tmp"]
     cap_drop: ["ALL"]
@@ -50,6 +66,10 @@ services:
       DATABASE_URL: postgres://hygrow:${LOCAL_DATABASE_PASSWORD}@db:5432/hygrow_dev
       REDIS_URL: redis://:${LOCAL_REDIS_PASSWORD}@redis:6379
       SOURCE_REVISION: local-development
+      NODE_ENV: development
+      AUTH_ENCRYPTION_KEY: ${LOCAL_AUTH_ENCRYPTION_KEY}
+      MAIL_MODE: mailpit
+      MAILPIT_URL: http://mailpit:8025
     command: ["node", "dist/worker.js"]
     depends_on:
       api: { condition: service_healthy }

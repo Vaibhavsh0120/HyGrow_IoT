@@ -3,8 +3,15 @@ import 'package:flutter/material.dart';
 import '../ui/glass.dart';
 
 class WelcomeScreen extends StatelessWidget {
-  const WelcomeScreen({super.key, required this.onFarmer});
+  const WelcomeScreen({
+    super.key,
+    required this.onFarmer,
+    this.notice,
+    this.onRetry,
+  });
   final VoidCallback onFarmer;
+  final String? notice;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -25,6 +32,26 @@ class WelcomeScreen extends StatelessWidget {
                     constraints: const BoxConstraints(maxWidth: 1100),
                     child: Column(
                       children: [
+                        if (notice != null) ...[
+                          GlassSurface(
+                            child: Column(
+                              children: [
+                                Semantics(
+                                  liveRegion: true,
+                                  child: Text(
+                                    notice!,
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: onRetry,
+                                  child: const Text('Retry sign-out'),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 24),
+                        ],
                         const BrandMark(size: 76, wordmark: false),
                         const SizedBox(height: 16),
                         Text(

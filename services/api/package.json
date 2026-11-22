@@ -1,6 +1,6 @@
 {
   "name": "hygrow-api",
-  "version": "0.2.1",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -12,7 +12,7 @@
     "worker": "node dist/worker.js",
     "dev": "npm run build && node --watch dist/server.js",
     "migrate": "node dist/migrate.js",
-    "test": "npm run build && node --test test/*.test.js",
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.js",
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

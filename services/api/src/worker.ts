@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import { createPool } from './db.js';
 import { createRedis } from './redis.js';
 import { createJobQueue, createJobWorker, submitJob, dispatchPending } from './jobs.js';
+import { mailSettingsFromEnv } from './mail.js';
 
 if (!process.env.REDIS_URL) throw new Error('REDIS_URL is required');
 const pool = createPool();
 const redis = await createRedis(process.env.REDIS_URL);
 const queue = createJobQueue(process.env.REDIS_URL);
-const worker = createJobWorker(pool, process.env.REDIS_URL);
+const worker = createJobWorker(pool, process.env.REDIS_URL, 'hygrow-background', mailSettingsFromEnv());
 let stopping = false;
 let timer: ReturnType<typeof setTimeout>;
 let running: Promise<void> | undefined;

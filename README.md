@@ -15,16 +15,21 @@ The repository remains **HyGrow_IoT**. Sibling projects are independent and unto
   encryption/decryption, regression checks and isolated local services.
 - **Backend foundation:** Fastify 5 + TypeScript, PostgreSQL migrations, Redis
   coordination/rate limiting, liveness and dependency readiness endpoints.
-- **Background work:** BullMQ worker with durable PostgreSQL job records,
-  bounded retries, duplicate protection and an OTP-expiration maintenance job.
-  Email/photo/archive jobs will be added with their corresponding features.
+- **Background work:** BullMQ worker with durable PostgreSQL records, bounded
+  retries, duplicate protection, email outbox delivery and OTP cleanup. Redis
+  jobs contain record IDs; email content is encrypted in PostgreSQL and erased
+  after delivery or expiry. Photo/archive jobs arrive with their features.
 - **Diagnostics:** server-generated request IDs, JSON response/error logs with
   route/status/duration/source version, and safe local diagnostic reports.
 - **Native entry:** Android/iOS project in `app/`, canonical launcher branding,
   light/charcoal native splash and responsive Welcome/Role Selection. The Farmer
-  entry opens the authentication form; account endpoints are the next milestone.
+  entry opens real email authentication forms.
+- **Email accounts, locally verified:** six-digit signup OTP, resend cooldown,
+  login, rotating hashed sessions, logout and password recovery. Pending signup
+  credentials are transaction-bound. Native emulator checks use a local Mailpit
+  inbox; no email is sent to real recipients by local development.
 
-Native account integration, secure ownership/BLE onboarding, Oracle Doctor,
+Google/account linking, full global settings, secure ownership/BLE onboarding, Oracle Doctor,
 Plant Tracker and cloud website are **V1 work in progress**. Existing LAN `/status`
 is a legacy unauthenticated endpoint; secure account-bound LAN access is not yet
 implemented. The embedded Doctor stays available during migration.
@@ -78,6 +83,10 @@ flowchart LR
 The local API/DB/Redis foundation can run with Compose. The planned Oracle host is
 `https://hygrow-india.duckdns.org`; a production deployment is not yet verified.
 The cloud website will have no BLE, UDP or direct private-LAN device controls.
+Production account/email delivery is not yet verified: the Brevo adapter exists,
+but a live sender/key and Oracle deployment still need verification. Local mail
+is forbidden in production. Native APK downloads currently exercise the released
+entry; their production authentication URL depends on that deployment.
 
 ## Planned device setup and connection flow
 
@@ -129,6 +138,9 @@ Compose database. Local services use `http://localhost:8088`; PostgreSQL binds
 only to `127.0.0.1:5548`, and Redis is private to the container network.
 Stopping services retains development volumes. Tests use separate disposable
 PostgreSQL/Redis instances and never the development or production database.
+Local account mail is visible only in [Mailpit](http://localhost:8025).
+`Setup` generates separate local OTP-HMAC and outbox-encryption keys; it never
+requires production Brevo credentials. Keep those keys stable for persisted data.
 
 `BuildFirmware`, `Encrypt`, `Decrypt`, `CI`, `Health` and `Clean` are available.
 Mobile/live frontend actions check prerequisites and API readiness; unavailable

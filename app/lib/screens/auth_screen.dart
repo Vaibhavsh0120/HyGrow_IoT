@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -14,11 +16,13 @@ class AuthScreen extends StatefulWidget {
     required this.step,
     this.challengeId,
     this.email,
+    this.now = DateTime.now,
   });
   final AuthController auth;
   final AuthStep step;
   final String? challengeId;
   final String? email;
+  final DateTime Function() now;
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
@@ -33,19 +37,78 @@ class _AuthScreenState extends State<AuthScreen> {
   bool _busy = false;
   bool _hidden = true;
   String? _error;
+  String? _challengeId;
+  Timer? _countdown;
+  DateTime? _resendDeadline;
+  int _resendSeconds = 0;
 
   @override
   void initState() {
     super.initState();
     _email.text = widget.email ?? '';
+    _challengeId = widget.challengeId;
+    if (_challengeId != null) _startCooldown(60);
   }
 
   @override
   void dispose() {
+    _countdown?.cancel();
     for (final item in [_name, _email, _password, _confirm, _code]) {
       item.dispose();
     }
     super.dispose();
+  }
+
+  void _startCooldown(int seconds) {
+    _resendDeadline = widget.now().add(Duration(seconds: seconds));
+    _resendSeconds = seconds;
+    _countdown?.cancel();
+    _countdown = Timer.periodic(const Duration(seconds: 1), (_) {
+      final remaining =
+          (_resendDeadline!.difference(widget.now()).inMilliseconds / 1000)
+              .ceil()
+              .clamp(0, 3600);
+      if (mounted && remaining != _resendSeconds) {
+        setState(() => _resendSeconds = remaining);
+      }
+      if (remaining == 0) _countdown?.cancel();
+    });
+  }
+
+  Future<void> _resend() async {
+    if (_busy || _resendSeconds > 0 || _challengeId == null) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.auth.resend(
+        _challengeId!,
+        widget.step == AuthStep.verify ? 'signup' : 'password_reset',
+      );
+      if (!mounted) return;
+      _challengeId = result.challengeId;
+      _code.clear();
+      _startCooldown(result.resendAfterSeconds);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('New code requested. Check your inbox.')),
+      );
+    } on ApiFailure catch (error) {
+      if (mounted) {
+        setState(() => _error = error.toString());
+        if (error.retryAfterSeconds != null) {
+          _startCooldown(error.retryAfterSeconds!.clamp(1, 3600));
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _error = 'We could not request another code. Please retry.',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   String get title => switch (widget.step) {
@@ -88,12 +151,12 @@ class _AuthScreenState extends State<AuthScreen> {
             );
           }
         case AuthStep.verify:
-          if (widget.challengeId == null) {
+          if (_challengeId == null) {
             throw const ApiFailure(
               'Start sign up again to request a new code.',
             );
           }
-          await widget.auth.verify(widget.challengeId!, _code.text);
+          await widget.auth.verify(_challengeId!, _code.text);
           if (mounted) context.go('/farmer/devices');
         case AuthStep.forgot:
           final id = await widget.auth.forgot(_email.text);
@@ -104,14 +167,10 @@ class _AuthScreenState extends State<AuthScreen> {
             );
           }
         case AuthStep.reset:
-          if (widget.challengeId == null) {
+          if (_challengeId == null) {
             throw const ApiFailure('Request a new reset code.');
           }
-          await widget.auth.reset(
-            widget.challengeId!,
-            _code.text,
-            _password.text,
-          );
+          await widget.auth.reset(_challengeId!, _code.text, _password.text);
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -144,6 +203,8 @@ class _AuthScreenState extends State<AuthScreen> {
       AuthStep.reset,
     ].contains(widget.step);
     final code = [AuthStep.verify, AuthStep.reset].contains(widget.step);
+    final titleScale = MediaQuery.textScalerOf(context).scale(32) / 32;
+    final largeText = titleScale > 1.3;
     return Scaffold(
       body: BotanicalCanvas(
         child: SafeArea(
@@ -174,31 +235,32 @@ class _AuthScreenState extends State<AuthScreen> {
                           ),
                         ),
                         const Spacer(),
-                        const BrandMark(size: 52),
+                        BrandMark(size: 52, wordmark: !largeText),
                         const Spacer(),
                         const SizedBox(width: 48),
                       ],
                     ),
                     const SizedBox(height: 32),
                     SizedBox(
-                      height: 170,
+                      height: largeText ? null : 170,
                       child: Stack(
                         children: [
-                          Positioned(
-                            right: -24,
-                            top: 0,
-                            bottom: 0,
-                            width: 240,
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(28),
-                              child: Image.asset(
-                                'assets/artwork/onboarding/greenhouse.png',
-                                fit: BoxFit.cover,
-                                alignment: Alignment.centerRight,
-                                cacheWidth: 600,
+                          if (!largeText)
+                            Positioned(
+                              right: -24,
+                              top: 0,
+                              bottom: 0,
+                              width: 240,
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(28),
+                                child: Image.asset(
+                                  'assets/artwork/onboarding/greenhouse.png',
+                                  fit: BoxFit.cover,
+                                  alignment: Alignment.centerRight,
+                                  cacheWidth: 600,
+                                ),
                               ),
                             ),
-                          ),
                           Positioned.fill(
                             child: DecoratedBox(
                               decoration: BoxDecoration(
@@ -218,7 +280,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           Align(
                             alignment: Alignment.centerLeft,
                             child: SizedBox(
-                              width: 245,
+                              width: largeText ? double.infinity : 245,
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -245,7 +307,9 @@ class _AuthScreenState extends State<AuthScreen> {
                                               .primary,
                                         ),
                                         const SizedBox(width: 6),
-                                        const Text('For farmers'),
+                                        const Flexible(
+                                          child: Text('For farmers'),
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -316,8 +380,8 @@ class _AuthScreenState extends State<AuthScreen> {
                               if (code) ...[
                                 Text(
                                   widget.email == null
-                                      ? 'Enter the six-digit code from your email.'
-                                      : 'Enter the six-digit code sent to ${widget.email}.',
+                                      ? 'Check your inbox and spam for a six-digit code.'
+                                      : 'If eligible, a code will arrive at ${widget.email}.',
                                   textAlign: TextAlign.center,
                                 ),
                                 const SizedBox(height: 20),
@@ -335,11 +399,16 @@ class _AuthScreenState extends State<AuthScreen> {
                                   textAlign: TextAlign.center,
                                   style: const TextStyle(
                                     fontSize: 25,
+                                    height: 1.1,
                                     fontWeight: FontWeight.w700,
                                     letterSpacing: 10,
                                   ),
                                   decoration: const InputDecoration(
                                     labelText: 'Verification code',
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
                                   ),
                                   validator: (value) => value?.length != 6
                                       ? 'Enter all six digits.'
@@ -461,7 +530,12 @@ class _AuthScreenState extends State<AuthScreen> {
                                           mainAxisAlignment:
                                               MainAxisAlignment.center,
                                           children: [
-                                            Text(action),
+                                            Flexible(
+                                              child: Text(
+                                                action,
+                                                textAlign: TextAlign.center,
+                                              ),
+                                            ),
                                             const SizedBox(width: 12),
                                             const Icon(
                                               Icons.arrow_forward_rounded,
@@ -471,6 +545,22 @@ class _AuthScreenState extends State<AuthScreen> {
                                         ),
                                 ),
                               ),
+                              if (code) ...[
+                                const SizedBox(height: 12),
+                                TextButton(
+                                  onPressed:
+                                      _busy ||
+                                          _resendSeconds > 0 ||
+                                          _challengeId == null
+                                      ? null
+                                      : _resend,
+                                  child: Text(
+                                    _resendSeconds > 0
+                                        ? 'Resend in ${_resendSeconds}s'
+                                        : 'Resend code',
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
