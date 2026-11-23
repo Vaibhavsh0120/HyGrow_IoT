@@ -1,0 +1,92 @@
+# Coolify: expose only api:8080 through its HTTPS proxy; no host port bindings.
+# Pin HYGROW_API_IMAGE to ghcr.io/...@sha256:<digest> from a verified Actions run.
+name: hygrow-production
+x-runtime: &runtime
+  image: ${HYGROW_API_IMAGE:?Set the verified immutable API image digest}
+  restart: unless-stopped
+  read_only: true
+  tmpfs: ["/tmp"]
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    options: { max-size: "10m", max-file: "3" }
+x-api-environment: &api-environment
+  NODE_ENV: production
+  SOURCE_REVISION: ${HYGROW_SOURCE_REVISION:?Set the full verified source SHA}
+  DATABASE_URL: postgres://hygrow:${HYGROW_DATABASE_PASSWORD:?Set a URL-safe random database password}@db:5432/hygrow
+  REDIS_URL: redis://:${HYGROW_REDIS_PASSWORD:?Set a URL-safe random Redis password}@redis:6379
+  AUTH_ENCRYPTION_KEY: ${HYGROW_AUTH_ENCRYPTION_KEY:?Set 32 random bytes in hex}
+  MAIL_MODE: brevo
+  MAIL_FROM: ${HYGROW_MAIL_FROM:?Configure a verified HyGrow sender}
+  BREVO_API_KEY: ${HYGROW_BREVO_API_KEY:?Configure the HyGrow runtime email key}
+services:
+  api:
+    <<: *runtime
+    environment:
+      <<: *api-environment
+      AUTH_OTP_PEPPER: ${HYGROW_AUTH_OTP_PEPPER:?Set separate 32 random bytes in hex}
+      TRUSTED_PROXIES: ${HYGROW_TRUSTED_PROXIES:?Set the observed Coolify proxy address}
+      SERVICE_URL_API_8080: ${SERVICE_URL_API_8080:-https://hygrow-india.duckdns.org}
+    command: ["sh", "-c", "node dist/migrate.js && node dist/server.js"]
+    expose: ["8080"]
+    networks: [data, proxy]
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    mem_limit: 512m
+  worker:
+    <<: *runtime
+    environment: *api-environment
+    command: ["node", "dist/worker.js"]
+    networks: [data, outbound]
+    depends_on:
+      api: { condition: service_healthy }
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://api:8080/health/worker').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+  db:
+    image: postgres:17.7-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hygrow
+      POSTGRES_USER: hygrow
+      POSTGRES_PASSWORD: ${HYGROW_DATABASE_PASSWORD}
+    volumes: ["database:/var/lib/postgresql/data"]
+    networks: [data]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hygrow -d hygrow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging:
+      options: { max-size: "10m", max-file: "3" }
+  redis:
+    image: redis:8.2.2-bookworm
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction", "--requirepass", "${HYGROW_REDIS_PASSWORD}"]
+    environment:
+      REDISCLI_AUTH: ${HYGROW_REDIS_PASSWORD}
+    volumes: ["redis:/data"]
+    networks: [data]
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging:
+      options: { max-size: "10m", max-file: "3" }
+networks:
+  data:
+    internal: true
+  outbound: {}
+  proxy:
+    external: true
+    name: coolify
+volumes:
+  database: {}
+  redis: {}

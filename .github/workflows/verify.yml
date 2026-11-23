@@ -164,6 +164,7 @@ jobs:
           PY
           docker compose --env-file .env -f infra/compose.yaml config --quiet
           docker compose -f infra/compose.test.yaml config --quiet
+          python3 -m unittest discover -s tools/tests -p test_deployment.py -v
       - name: Build and smoke test actual production container
         run: |
           docker compose --env-file .env -f infra/compose.yaml up -d --build --wait --wait-timeout 120
@@ -216,6 +217,9 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -232,6 +236,7 @@ jobs:
         with:
           context: .
           file: services/api/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.metadata.outputs.image }}:sha-${{ github.sha }}
           build-args: SOURCE_REVISION=${{ github.sha }}
@@ -243,6 +248,32 @@ jobs:
             org.opencontainers.image.description=HyGrow Fastify API
           provenance: true
           sbom: true
+      - name: Run the published image on both target architectures
+        env:
+          IMAGE: ${{ steps.metadata.outputs.image }}@${{ steps.image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            arch=x64
+            if [ "$platform" = linux/arm64 ]; then arch=arm64; fi
+            docker run --rm --platform "$platform" -e EXPECTED_ARCH="$arch" "$IMAGE" node --input-type=module -e '
+              import assert from "node:assert/strict";
+              import { createApp } from "./dist/app.js";
+              import { hashPassword, verifyPassword } from "./dist/auth/crypto.js";
+              import { Queue } from "bullmq";
+              assert.equal(process.arch, process.env.EXPECTED_ARCH);
+              assert.notEqual(process.getuid(), 0);
+              assert.equal(typeof Queue, "function");
+              const password = "disposable-architecture-smoke";
+              assert.equal(await verifyPassword(password, await hashPassword(password)), true);
+              const app = createApp({ pool: {}, version: process.env.SOURCE_REVISION });
+              const response = await app.inject({ method: "GET", url: "/health/live" });
+              assert.equal(response.statusCode, 200);
+              assert.match(response.json().version, /^[a-f0-9]{40}$/);
+              await app.close();
+              console.log(JSON.stringify({ architecture: process.arch, source: response.json().version, status: "passed" }));
+            '
+          done
       - name: Record immutable image and source
         run: |
           echo 'Image: `${{ steps.metadata.outputs.image }}@${{ steps.image.outputs.digest }}`' >> "$GITHUB_STEP_SUMMARY"

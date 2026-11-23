@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createApp } from '../dist/app.js';
+import { trustedProxiesFromEnv } from '../dist/proxy.js';
 
 async function serve(t, pool) {
   const app = createApp({ pool, version: 'test-revision' });
@@ -39,4 +40,27 @@ test('errors carry a server-generated request ID rather than trusting client inp
   assert.equal(payload.requestId, response.headers.get('x-request-id'));
   assert.notEqual(payload.requestId, 'untrusted-client-value');
   assert.match(payload.requestId, /^[0-9a-f-]{36}$/);
+});
+
+test('forwarded client addresses require an explicitly trusted immediate proxy', async t => {
+  for (const trustedProxies of [undefined, ['10.23.0.4']]) {
+    const app = createApp({ pool: {}, trustedProxies });
+    t.after(() => app.close());
+    app.get('/test-ip', request => ({ ip: request.ip }));
+    const result = await app.inject({ method: 'GET', url: '/test-ip', remoteAddress: '10.23.0.5', headers: { 'x-forwarded-for': '198.51.100.7' } });
+    assert.equal(result.json().ip, '10.23.0.5');
+  }
+  const app = createApp({ pool: {}, trustedProxies: ['10.23.0.4'] });
+  t.after(() => app.close());
+  app.get('/test-ip', request => ({ ip: request.ip }));
+  const result = await app.inject({ method: 'GET', url: '/test-ip', remoteAddress: '10.23.0.4', headers: { 'x-forwarded-for': '203.0.113.99, 198.51.100.7' } });
+  assert.equal(result.json().ip, '198.51.100.7', 'stop at the nearest untrusted hop');
+});
+
+test('proxy configuration fails closed for blanket or malformed trust', () => {
+  assert.deepEqual(trustedProxiesFromEnv(undefined), []);
+  assert.deepEqual(trustedProxiesFromEnv('10.23.0.4, fd00::4/128'), ['10.23.0.4', 'fd00::4/128']);
+  for (const value of ['true', '1', '*', '0.0.0.0/0', '::/0', '10.0.0.1/33', '::1/129', '10.0.0.1,', 'localhost']) {
+    assert.throws(() => trustedProxiesFromEnv(value), /TRUSTED_PROXIES/);
+  }
 });

@@ -6,10 +6,10 @@ import { registerAuth } from './auth/routes.js';
 import type { AuthSettings } from './auth/service.js';
 import { ApiError } from './errors.js';
 
-export type AppDependencies = { pool: Pool; redis?: RedisConnection; version?: string; logging?: boolean; auth?: AuthSettings };
+export type AppDependencies = { pool: Pool; redis?: RedisConnection; version?: string; logging?: boolean; auth?: AuthSettings; trustedProxies?: string[] };
 
-export function createApp({ pool, redis, auth, version = 'development', logging = false }: AppDependencies) {
-  const app = Fastify({ logger: logging, logController: new LogController({ disableRequestLogging: true }), genReqId: () => randomUUID(), requestIdHeader: false, bodyLimit: 65536, requestTimeout: 15000, ajv: { customOptions: { removeAdditional: false, coerceTypes: false } } });
+export function createApp({ pool, redis, auth, trustedProxies = [], version = 'development', logging = false }: AppDependencies) {
+  const app = Fastify({ trustProxy: trustedProxies.length ? trustedProxies : false, logger: logging, logController: new LogController({ disableRequestLogging: true }), genReqId: () => randomUUID(), requestIdHeader: false, bodyLimit: 65536, requestTimeout: 15000, ajv: { customOptions: { removeAdditional: false, coerceTypes: false } } });
   app.addHook('onSend', async (request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'same-origin');

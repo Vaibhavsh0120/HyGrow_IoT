@@ -82,6 +82,13 @@ flowchart LR
 
 The local API/DB/Redis foundation can run with Compose. The planned Oracle host is
 `https://hygrow-india.duckdns.org`; a production deployment is not yet verified.
+The host is ARM64. GHCR builds target both Linux AMD64 and ARM64 and run the
+published images' crypto/process checks on both architectures. The isolated
+[`production Compose stack`](infra/compose.production.yaml) requires a verified
+image digest, source SHA, separate random keys and a real Brevo sender/key.
+Only the API joins Coolify's proxy network; PostgreSQL/Redis use an internal
+network, and no service binds a host port. Set `HYGROW_TRUSTED_PROXIES` to the
+observed proxy IP; forwarding headers from other peers remain untrusted.
 The cloud website will have no BLE, UDP or direct private-LAN device controls.
 Production account/email delivery is not yet verified: the Brevo adapter exists,
 but a live sender/key and Oracle deployment still need verification. Local mail
@@ -187,8 +194,8 @@ an iOS build is not evidence of runtime behavior on an iPhone/iPad. Download the
 artifacts, build metadata and `SHA256SUMS` from
 [GitHub Releases](https://github.com/Vaibhavsh0120/HyGrow_IoT/releases).
 
-Android APK, **unsigned iOS device release IPA**, and Coolify deployment are
-delivery goals still being implemented. An unsigned IPA
+Android APKs and the **unsigned iOS device release IPA** are published at tested
+development checkpoints. Coolify deployment remains unverified. An unsigned IPA
 requires a compatible later signing process to install on a stock iOS device.
 No App Store signing account is required to generate the requested artifact.
 Features are only reported as verified after relevant checks; local simulation,
